@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-label="DeskPet">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#EAF2FE"/>
+      <stop offset="1" stop-color="#F7FAFF"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F3F8FF"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="300" rx="16" fill="url(#bg)"/>
+  <circle cx="1105" cy="52" r="90" fill="#549BFB" opacity="0.08"/>
+  <circle cx="1030" cy="250" r="60" fill="#93D6BD" opacity="0.10"/>
+  <text x="52" y="72" font-size="22" fill="#93A3B5" font-family="Segoe UI Emoji, sans-serif">✦</text>
+  <text x="1150" y="270" font-size="16" fill="#93A3B5" font-family="Segoe UI Emoji, sans-serif">✦</text>
+
+  <!-- 宠物（与产品内置矢量一致） -->
+  <g transform="translate(78, 40) scale(1.95)">
+    <path d="M86 84 C104 84 110 66 100 54" fill="none" stroke="#9CC3F7" stroke-width="9" stroke-linecap="round"/>
+    <ellipse cx="60" cy="80" rx="32" ry="24" fill="#9CC3F7"/>
+    <ellipse cx="60" cy="86" rx="18" ry="13" fill="#F3F8FF"/>
+    <ellipse cx="47" cy="102" rx="6.5" ry="3.5" fill="#F3F8FF"/>
+    <ellipse cx="73" cy="102" rx="6.5" ry="3.5" fill="#F3F8FF"/>
+    <path d="M38 42 L32 20 L54 33 Z" fill="#9CC3F7"/>
+    <path d="M82 42 L88 20 L66 33 Z" fill="#9CC3F7"/>
+    <path d="M40 38 L36 26 L50 34 Z" fill="#F6B6C2" opacity="0.55"/>
+    <path d="M80 38 L84 26 L70 34 Z" fill="#F6B6C2" opacity="0.55"/>
+    <circle cx="60" cy="50" r="27" fill="#9CC3F7"/>
+    <ellipse cx="50" cy="50" rx="3.8" ry="4.6" fill="#303B4D"/>
+    <ellipse cx="70" cy="50" rx="3.8" ry="4.6" fill="#303B4D"/>
+    <circle cx="51.3" cy="48.3" r="1.2" fill="#fff"/>
+    <circle cx="71.3" cy="48.3" r="1.2" fill="#fff"/>
+    <ellipse cx="41" cy="58" rx="4.5" ry="2.6" fill="#F6B6C2" opacity="0.75"/>
+    <ellipse cx="79" cy="58" rx="4.5" ry="2.6" fill="#F6B6C2" opacity="0.75"/>
+    <path d="M57.5 56.5 L62.5 56.5 L60 59 Z" fill="#303B4D"/>
+    <path d="M55.5 61 Q60 64.5 64.5 61" fill="none" stroke="#303B4D" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- 对话气泡 -->
+  <g transform="translate(336, 66)">
+    <rect x="0" y="0" width="150" height="64" rx="14" fill="url(#bubble)" stroke="#CFE0FC" stroke-width="1.5"/>
+    <path d="M22 62 L22 78 L40 62 Z" fill="#FFFFFF" stroke="#CFE0FC" stroke-width="1.5"/>
+    <circle cx="46" cy="32" r="6" fill="#549BFB"/>
+    <circle cx="70" cy="32" r="6" fill="#549BFB" opacity="0.7">
+      <animate attributeName="opacity" values="0.7;0.25;0.7" dur="1.2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="94" cy="32" r="6" fill="#549BFB" opacity="0.45">
+      <animate attributeName="opacity" values="0.45;0.15;0.45" dur="1.2s" begin="0.2s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- 标题 -->
+  <text x="500" y="118" font-size="64" font-weight="700" fill="#1F2733" font-family="'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">DeskPet</text>
+  <text x="503" y="164" font-size="26" font-weight="600" fill="#3D7FE0" font-family="'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">桌面 AI 宠物 · 点击即聊</text>
+  <text x="503" y="200" font-size="16" fill="#5A6B7F" font-family="'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">透明置顶 · 托盘常驻 · 多模型接入 · 密钥零泄露</text>
+
+  <g font-family="'Cascadia Code', Consolas, monospace" font-size="13" fill="#5A6B7F">
+    <rect x="503" y="224" width="150" height="30" rx="15" fill="#FFFFFF" stroke="#CFE0FC" stroke-width="1.5"/>
+    <text x="522" y="244" fill="#3D7FE0">Tauri v2</text>
+    <rect x="665" y="224" width="150" height="30" rx="15" fill="#FFFFFF" stroke="#CFE0FC" stroke-width="1.5"/>
+    <text x="684" y="244" fill="#3D7FE0">Rust + Web</text>
+    <rect x="827" y="224" width="150" height="30" rx="15" fill="#FFFFFF" stroke="#CFE0FC" stroke-width="1.5"/>
+    <text x="846" y="244" fill="#3D7FE0">Windows</text>
+  </g>
+</svg>

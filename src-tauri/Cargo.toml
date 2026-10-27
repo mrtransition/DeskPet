@@ -1,7 +1,8 @@
 [package]
 name = "deskpet"
 version = "0.2.3"
-description = "濡楀矂娼?AI 鐎圭姷澧块敍鍦杄skPet閿涘顢戦棃銏㈠ v0.2"
+description = "DeskPet - 桌面 AI 宠物：透明置顶小猫，点击即聊任意大模型（Tauri v2）"
+license = "MIT"
 edition = "2021"
 
 [build-dependencies]
