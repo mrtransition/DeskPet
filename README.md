@@ -4,11 +4,11 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-0.2.3-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-0.2.4-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
-[![Size](https://img.shields.io/badge/安装包-13.4_MB-93A3B5?style=flat-square)](#快速开始)
+[![Size](https://img.shields.io/badge/安装包-13.3_MB-93A3B5?style=flat-square)](#快速开始)
 
 透明置顶 · 托盘常驻 · 多模型接入 · 密钥零泄露 · 数据全程本地
 
@@ -35,14 +35,14 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | 😼 **人格与皮肤** | 3 套内置人格（贴心小助手 / 毒舌吐槽役 / 专注工作搭子）+ 3 套皮肤联动切换；支持人格导入导出 |
 | 🎭 **八态动画** | idle / drag / click / talk / sleep / work / happy / error 全矢量状态机，50%–200% 无级缩放 |
 | 🖥 **系统集成** | 托盘菜单（左键唤起气泡）、全局快捷键、开机自启、会话检索与 Markdown 导出 |
-| 🪶 **轻量** | 安装包 13.4 MB · 运行内存约 31 MB · 前端零构建（无 npm 依赖） |
+| 🪶 **轻量** | 安装包 13.3 MB · 运行内存约 31 MB · 前端零构建（无 npm 依赖） |
 
 ## 🚀 快速开始
 
 无需构建，下载即用：
 
 1. 打开本仓库 [`dist/`](dist) 目录，下载两个文件：
-   - `DeskPet.exe`（13.4 MB，主程序）
+   - `DeskPet.exe`（13.3 MB，主程序）
    - `WebView2Loader.dll`（0.15 MB，引导库）
 2. 将两个文件放入**同一文件夹**，双击 `DeskPet.exe`
 
@@ -143,6 +143,14 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v0.2.4</b> — 修复整机冻结死锁（提醒到期后点设置卡死）</summary>
+
+- **根因**：提醒调度线程在持有全局状态锁时调用写盘函数，而写盘函数内部会对同一把锁再次加锁——`std::sync::Mutex` 不支持同线程重入，调度线程自死锁并**永久持有状态锁**；此后任何需要该锁的命令（如打开设置时的状态加载）都会把主线程永久阻塞，导致整个应用冻结。仅在存在已到期的一次性提醒时触发，故此前的干净环境测试未暴露。
+- **修复**：写盘函数重构为绝不接触状态锁（改为接收序列化快照）；持锁场景改为锁内序列化、锁外写盘。新增回归单元测试：持锁调用写盘必须立即完成（若回退将挂起测试）。
+- 附带：设置页「关于」版本号改为从 `tauri.conf.json` 读取（此前硬编码已与实际版本脱节）；修正一处与 http 头校验规则不符的测试断言（控制字符非法，空格与 obs-text 字节合法）。
+</details>
+
+<details>
 <summary><b>v0.2.3</b> — 新增供应商按钮反馈修复</summary>
 
 修复「＋ 新增供应商」点击无反馈：点击后弹出模式提示、名称框聚焦全选；修复模板下拉与表单内容不一致及编辑态切入时名称残留问题。

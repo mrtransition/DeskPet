@@ -95,11 +95,24 @@ fn default_state() -> Value {
     serde_json::from_str(DEFAULT_STATE).expect("默认状态 JSON 合法")
 }
 
-fn write_state_file(ctx: &AppCtx) {
-    if let Ok(st) = ctx.state.lock() {
-        if let Ok(s) = serde_json::to_string_pretty(&*st) {
-            let _ = std::fs::write(&ctx.data_path, s);
-        }
+// 写盘专用：绝不接触 state 锁。
+// 设计约束：v0.2.3 及之前本函数内部会 state.lock()，而 tick_reminders 在持锁状态下调用它，
+// std::sync::Mutex 同线程重入自死锁 → state 锁被调度器线程永久持有 →
+// 主线程执行 state_load 等命令时永久阻塞 → 整机冻结（点击设置按钮触发暴露）。
+// 现在改为接收序列化好的快照，从 API 层面杜绝此类死锁。
+fn write_state_file(ctx: &AppCtx, snapshot: &str) {
+    let _ = std::fs::write(&ctx.data_path, snapshot);
+}
+
+// 快照并落盘：短临界区取锁序列化，写盘在锁外。调用方不得已持有 state 锁；
+// 必须持锁写盘的场景（如 tick_reminders）请在锁内自行序列化，锁释放后调用 write_state_file。
+fn persist_state(ctx: &AppCtx) {
+    let s = {
+        let st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
+        serde_json::to_string_pretty(&*st).ok()
+    };
+    if let Some(s) = s {
+        write_state_file(ctx, &s);
     }
 }
 
@@ -397,7 +410,7 @@ fn tick_reminders(app: &AppHandle) {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let mut fired: Vec<Value> = vec![];
-    {
+    let snapshot = {
         let ctx = app.state::<AppCtx>();
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(rems) = st["reminders"].as_array_mut() {
@@ -424,7 +437,12 @@ fn tick_reminders(app: &AppHandle) {
             }
             *rems = keep;
         }
-        write_state_file(&ctx);
+        // 持锁期间仅做序列化（快照），写盘必须在锁释放后进行（见函数顶部注释：曾因持锁调旧版 write_state_file 自死锁）
+        serde_json::to_string_pretty(&*st).ok()
+    };
+    if let Some(s) = snapshot {
+        let ctx = app.state::<AppCtx>();
+        write_state_file(&ctx, &s);
     }
     let dnd = {
         let ctx = app.state::<AppCtx>();
@@ -936,7 +954,7 @@ fn state_save(app: AppHandle, ctx: tauri::State<AppCtx>, state: Value, origin: S
         *st = state;
         st["reminders"] = reminders;
     }
-    write_state_file(&ctx);
+    persist_state(&ctx);
     let _ = app.emit("state-changed", json!({"origin": origin}));
     Ok(())
 }
@@ -954,7 +972,7 @@ fn reset_data(app: AppHandle, ctx: tauri::State<AppCtx>) -> Result<(), String> {
     *ctx.state.lock().unwrap_or_else(|e| e.into_inner()) = default_state();
     *ctx.pending.lock().unwrap() = vec![];
     *ctx.dnd_queue.lock().unwrap() = vec![];
-    write_state_file(&ctx);
+    persist_state(&ctx);
     if let Some(pet) = app.get_webview_window("pet") {
         let _ = pet.set_ignore_cursor_events(false);
     }
@@ -1114,7 +1132,7 @@ fn pet_save_pos(app: AppHandle, ctx: tauri::State<AppCtx>) -> Result<(), String>
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
         st["settings"]["petPos"] = json!({"x": pos.x, "y": pos.y});
     }
-    write_state_file(&ctx);
+    persist_state(&ctx);
     Ok(())
 }
 
@@ -1140,7 +1158,7 @@ fn set_pet_scale(app: AppHandle, ctx: tauri::State<AppCtx>, scale: f64) -> Resul
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
         st["settings"]["petScale"] = json!(scale);
     }
-    write_state_file(&ctx);
+    persist_state(&ctx);
     let _ = pet.set_size(Size::Logical(LogicalSize::new(120.0 * scale, 112.0 * scale)));
     Ok(())
 }
@@ -1153,7 +1171,7 @@ fn set_click_through(app: AppHandle, ctx: tauri::State<AppCtx>, on: bool) -> Res
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
         st["settings"]["clickThrough"] = json!(on);
     }
-    write_state_file(&ctx);
+    persist_state(&ctx);
     rebuild_tray(&app);
     let _ = app.emit("click-through-changed", json!({"on": on}));
     Ok(())
@@ -1179,7 +1197,7 @@ fn reset_pet_pos(app: AppHandle, ctx: tauri::State<AppCtx>) -> Result<(), String
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
         st["settings"]["petPos"] = Value::Null;
     }
-    write_state_file(&ctx);
+    persist_state(&ctx);
     position_pet(&app);
     Ok(())
 }
@@ -1226,7 +1244,7 @@ fn set_dnd(app: AppHandle, ctx: tauri::State<AppCtx>, on: bool) -> Result<(), St
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
         st["settings"]["dnd"] = json!(on);
     }
-    write_state_file(&ctx);
+    persist_state(&ctx);
     if !on {
         // 关闭免打扰：补发排队提醒
         let queued: Vec<Value> = {
@@ -1255,7 +1273,7 @@ fn reminder_add(app: AppHandle, ctx: tauri::State<AppCtx>, reminder: Value) -> R
         }
         st["reminders"].as_array_mut().unwrap().push(reminder);
     }
-    write_state_file(&ctx);
+    persist_state(&ctx);
     let _ = app.emit("state-changed", json!({"origin": "backend"}));
     Ok(())
 }
@@ -1288,7 +1306,7 @@ fn reminder_snooze(app: AppHandle, ctx: tauri::State<AppCtx>, id: String) -> Res
             }
         }
     }
-    write_state_file(&ctx);
+    persist_state(&ctx);
     let _ = app.emit("state-changed", json!({"origin": "backend"}));
     Ok(())
 }
@@ -1301,7 +1319,7 @@ fn reminder_delete(app: AppHandle, ctx: tauri::State<AppCtx>, id: String) -> Res
             rems.retain(|r| r["id"].as_str() != Some(id.as_str()));
         }
     }
-    write_state_file(&ctx);
+    persist_state(&ctx);
     let _ = app.emit("state-changed", json!({"origin": "backend"}));
     Ok(())
 }
@@ -1338,8 +1356,9 @@ fn quit_app(app: AppHandle) {
 }
 
 #[tauri::command]
-fn get_app_version() -> String {
-    "0.2.3（桌面版 MVP）".into()
+fn get_app_version(app: AppHandle) -> String {
+    // 版本号唯一来源：tauri.conf.json（此前硬编码曾与实际版本脱节）
+    format!("{}（桌面版 MVP）", app.package_info().version)
 }
 
 // ================= 入口 =================
@@ -1575,14 +1594,23 @@ mod tests {
         }
 
         #[test]
-        fn key_header_bad_returns_err_not_panic() {
-            // 回归：粘贴混入中文/换行/控制字符的 Key 曾触发 unwrap panic 导致整个进程崩溃（release 为 panic=abort）
-            for bad in ["坏 key", "sk-1\r\n", "k\u{e1}y", " key "] {
+        fn key_header_never_panics_rejects_control_chars() {
+            // 回归（v0.2.2）：粘贴异常 Key 不得 panic（release 为 panic=abort，进程会静默消失）。
+            // http crate 的 header 值校验规则：控制字符（\r \n \0 等不可见字节）非法；
+            // 空格与 obs-text（≥0x80，含中文 UTF-8 字节）按 RFC 7230 是合法的 header 值字节——
+            // 这类 Key 会随请求发出、由服务端按无效凭据拒绝（401），不属于本地校验错误。
+            for bad in ["sk-1\r\n", "k\u{0}y", "k\u{7}y", "line1\nline2"] {
                 let r = key_header(&conf_with_key(bad), true);
                 assert!(r.is_err(), "expected Err for {:?}", bad);
                 let r2 = key_header(&conf_with_key(bad), false);
                 assert!(r2.is_err(), "expected Err for {:?}", bad);
             }
+            // 宽松输入：不得 panic，且可解析为 header 值（安全降级为服务端 401）
+            for weird in ["坏 key", " key ", "k\u{e1}y"] {
+                let r = key_header(&conf_with_key(weird), true);
+                assert!(r.is_ok(), "expected Ok for {:?}", weird);
+            }
+            assert!(key_header(&conf_with_key(""), true).unwrap().is_none());
         }
 
         #[test]
@@ -1606,5 +1634,32 @@ mod tests {
             let body = r#"{"error":{"message":"rate limited"}}"#;
             assert_eq!(err_message(body), "rate limited");
             assert_eq!(err_message(""), "未知错误");
+        }
+
+        #[test]
+        fn write_state_file_holds_no_state_lock() {
+            // 回归测试：v0.2.3 曾因 write_state_file 内部 state.lock() 且 tick_reminders 持锁调用，
+            // 同线程重入 std::sync::Mutex 自死锁，state 锁被永久持有后整机冻结。
+            // 现在写盘函数绝不接触 state 锁——持锁调用也必须立即完成（若回退，本测试将挂起）。
+            let dir = std::env::temp_dir().join("deskpet-regression-lock");
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("data.json");
+            let ctx = AppCtx {
+                data_path: path.clone(),
+                state: Mutex::new(json!({"reminders": []})),
+                stop: AtomicBool::new(false),
+                bubble_anchor_below: Mutex::new(false),
+                fg_before: Mutex::new(0),
+                pet_visible: Mutex::new(true),
+                pending: Mutex::new(vec![]),
+                dnd_queue: Mutex::new(vec![]),
+                http: reqwest::Client::new(),
+            };
+            {
+                let _guard = ctx.state.lock().unwrap(); // 模拟调度器持锁
+                write_state_file(&ctx, "{\"ok\":true}"); // 若内部再取锁 → 此处死锁
+            }
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"ok\":true}");
+            let _ = std::fs::remove_file(&path);
         }
 }
