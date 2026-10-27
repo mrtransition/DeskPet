@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-win="pet">
+<head>
+<meta charset="UTF-8">
+<title>DeskPet Pet</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+body { cursor: default; }
+/* 舞台：260x220 画布，宠物位于底部中央（70,108 起 120x112）
+   通过 transform 让宠物中心始终对准视口中心 */
+#stage {
+  position: absolute;
+  width: 260px; height: 220px;
+  left: 0; top: 0;
+  transform-origin: 130px 164px;
+}
+/* ===== 宠物（与 MVP 相同的矢量与动画） ===== */
+.pet {
+  position: absolute;
+  left: 70px; top: 108px;
+  width: 120px; height: 112px;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.pet:active { cursor: grabbing; }
+.pet .p-shadow { position: absolute; left: 50%; bottom: -2px; width: 76px; height: 10px; transform: translateX(-50%); background: radial-gradient(closest-side, rgba(31,39,51,.16), transparent); border-radius: 50%; }
+.pet svg { position: absolute; left: 0; top: 0; overflow: visible; filter: drop-shadow(0 5px 8px rgba(31,39,51,.14)); }
+.pet .p-body, .pet .p-head, .pet .p-ear { fill: var(--fur); }
+.pet .p-belly, .pet .p-paw { fill: var(--belly); }
+.pet .p-ear-in { fill: #F6B6C2; opacity: .55; }
+.pet .p-eye { fill: #303B4D; }
+.pet .p-eye-shine { fill: #fff; }
+.pet .p-blush { fill: #F6B6C2; opacity: .75; }
+.pet .p-nose { fill: #303B4D; }
+.pet .p-mouth, .pet .p-eyes-closed path, .pet .p-eyes-happy path, .pet .p-eyes-x path, .pet .p-brows path { fill: none; stroke: #303B4D; stroke-width: 2; stroke-linecap: round; }
+.pet .p-tail { fill: none; stroke: var(--fur); stroke-width: 9; stroke-linecap: round; }
+.pet .p-mouth-open { fill: #7A5560; }
+.pet .p-sweat { fill: #7FB7F0; }
+.pet .p-sparkle text { fill: #F5C26B; font-size: 11px; }
+.skin-blue { --fur: #9CC3F7; --belly: #F3F8FF; }
+.skin-orange { --fur: #F5B06E; --belly: #FDEEDD; }
+.skin-mint { --fur: #93D6BD; --belly: #EDF9F4; }
+.p-eyes, .p-eyes-closed, .p-eyes-happy, .p-eyes-x, .p-brows, .p-sweat, .p-sparkle, .p-mouth-open { display: none; }
+.state-idle .p-eyes, .state-click .p-eyes, .state-drag .p-eyes, .state-talk .p-eyes, .state-work .p-eyes { display: block; }
+.state-sleep .p-eyes-closed { display: block; }
+.state-happy .p-eyes-happy, .state-happy .p-sparkle { display: block; }
+.state-error .p-eyes-x, .state-error .p-sweat { display: block; }
+.state-work .p-brows { display: block; }
+.state-talk .p-mouth-open { display: block; }
+.state-talk .p-mouth { display: none; }
+.pet-root { transform-box: fill-box; transform-origin: 50% 100%; }
+.p-eye { transform-box: fill-box; transform-origin: center; }
+.p-tail { transform-box: fill-box; transform-origin: 0% 80%; }
+.state-idle .pet-root { animation: pBob 3.2s ease-in-out infinite; }
+.state-idle .p-eye { animation: pBlink 4.6s infinite; }
+.state-idle .p-tail { animation: pTail 3.2s ease-in-out infinite; }
+.state-click .pet-root { animation: pSquash .4s ease; }
+.state-drag .pet-root { animation: pDangle 1s ease-in-out infinite; transform-origin: 50% 20%; }
+.state-drag .p-eye { transform: scaleY(1.3); }
+.state-talk .pet-root { animation: pBob 1.15s ease-in-out infinite; }
+.state-talk .p-mouth-open { animation: pMouth .4s steps(2) infinite; }
+.state-work .pet-root { animation: pBob 1.4s ease-in-out infinite; }
+.state-sleep .pet-root { animation: pBob 5.5s ease-in-out infinite; }
+.state-happy .pet-root { animation: pJump .85s ease-in-out 2; }
+.state-happy .p-sparkle .sp1 { animation: pTwinkle 1.6s ease-in-out infinite; }
+.state-happy .p-sparkle .sp2 { animation: pTwinkle 1.6s .5s ease-in-out infinite; }
+.state-error .pet-root { animation: pShake .5s ease-in-out 2; }
+@keyframes pBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes pBlink { 0%, 93.5%, 100% { transform: scaleY(1); } 95.5% { transform: scaleY(.08); } }
+@keyframes pTail { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(16deg); } }
+@keyframes pSquash { 0% { transform: scale(1,1); } 35% { transform: scale(1.14,.84); } 68% { transform: scale(.93,1.07); } 100% { transform: scale(1,1); } }
+@keyframes pDangle { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
+@keyframes pMouth { 0% { transform: scaleY(.35); } 100% { transform: scaleY(1); } }
+@keyframes pJump { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-14px); } }
+@keyframes pTwinkle { 0%, 100% { opacity: .15; transform: scale(.7); } 50% { opacity: 1; transform: scale(1.15); } }
+@keyframes pShake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+.zzz { position: absolute; right: -4px; top: -6px; font-size: 10px; font-weight: 700; color: #93A3B5; opacity: 0; pointer-events: none; }
+.zzz.z2 { font-size: 13px; right: -10px; top: -13px; }
+.zzz.z3 { font-size: 16px; right: -17px; top: -21px; }
+.state-sleep .zzz { animation: zFloat 2.8s ease-in-out infinite; }
+.state-sleep .z2 { animation-delay: .9s; }
+.state-sleep .z3 { animation-delay: 1.8s; }
+@keyframes zFloat { 0% { opacity: 0; transform: translate(0, 4px); } 30% { opacity: .95; } 100% { opacity: 0; transform: translate(9px, -16px); } }
+/* ===== 主动搭话小气泡（舞台上半区） ===== */
+#miniBubble {
+  position: absolute;
+  left: 35px; top: 42px;
+  max-width: 190px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  padding: 7px 11px;
+  font-size: var(--fs-xs);
+  color: var(--t1);
+  line-height: 1.5;
+  cursor: pointer;
+  display: none;
+  z-index: 5;
+}
+#miniBubble.show { display: block; animation: mbIn .25s ease; }
+@keyframes mbIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+#miniBubble::after { content: ""; position: absolute; bottom: -5px; left: 22px; width: 10px; height: 10px; background: #fff; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transform: rotate(45deg); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="miniBubble"></div>
+  <div id="pet" class="pet skin-blue state-idle">
+    <div class="p-shadow"></div>
+    <svg id="petSvg" viewBox="0 0 120 112" width="120" height="112">
+      <g class="pet-root">
+        <path class="p-tail" d="M86 84 C104 84 110 66 100 54"/>
+        <ellipse class="p-body" cx="60" cy="80" rx="32" ry="24"/>
+        <ellipse class="p-belly" cx="60" cy="86" rx="18" ry="13"/>
+        <ellipse class="p-paw" cx="47" cy="102" rx="6.5" ry="3.5"/>
+        <ellipse class="p-paw" cx="73" cy="102" rx="6.5" ry="3.5"/>
+        <path class="p-ear" d="M38 42 L32 20 L54 33 Z"/>
+        <path class="p-ear" d="M82 42 L88 20 L66 33 Z"/>
+        <path class="p-ear-in" d="M40 38 L36 26 L50 34 Z"/>
+        <path class="p-ear-in" d="M80 38 L84 26 L70 34 Z"/>
+        <circle class="p-head" cx="60" cy="50" r="27"/>
+        <g class="p-eyes">
+          <ellipse class="p-eye" cx="50" cy="50" rx="3.8" ry="4.6"/>
+          <ellipse class="p-eye" cx="70" cy="50" rx="3.8" ry="4.6"/>
+          <circle class="p-eye-shine" cx="51.3" cy="48.3" r="1.2"/>
+          <circle class="p-eye-shine" cx="71.3" cy="48.3" r="1.2"/>
+        </g>
+        <g class="p-eyes-closed">
+          <path d="M45 51 Q50 55 55 51"/>
+          <path d="M65 51 Q70 55 75 51"/>
+        </g>
+        <g class="p-eyes-happy">
+          <path d="M45 52 Q50 46.5 55 52"/>
+          <path d="M65 52 Q70 46.5 75 52"/>
+        </g>
+        <g class="p-eyes-x">
+          <path d="M46 46.5 L54 53.5 M54 46.5 L46 53.5" stroke-width="1.8"/>
+          <path d="M66 46.5 L74 53.5 M74 46.5 L66 53.5" stroke-width="1.8"/>
+        </g>
+        <g class="p-brows">
+          <path d="M43 41.5 L56 43.5" stroke-width="1.6"/>
+          <path d="M77 41.5 L64 43.5" stroke-width="1.6"/>
+        </g>
+        <ellipse class="p-blush" cx="41" cy="58" rx="4.5" ry="2.6"/>
+        <ellipse class="p-blush" cx="79" cy="58" rx="4.5" ry="2.6"/>
+        <path class="p-nose" d="M57.5 56.5 L62.5 56.5 L60 59 Z"/>
+        <path class="p-mouth" d="M55.5 61 Q60 64.5 64.5 61"/>
+        <ellipse class="p-mouth-open" cx="60" cy="62" rx="4" ry="3.2"/>
+        <path class="p-sweat" d="M90 30 C92 34 93.5 36 90 38 C86.5 36 88 34 90 30 Z"/>
+        <g class="p-sparkle">
+          <text class="sp1" x="26" y="24">✦</text>
+          <text class="sp2" x="94" y="40">✦</text>
+        </g>
+      </g>
+    </svg>
+    <span class="zzz z1">z</span><span class="zzz z2">z</span><span class="zzz z3">z</span>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+'use strict';
+const pet = $id('pet');
+const stage = $id('stage');
+const miniBubble = $id('miniBubble');
+let petSc = 1;
+let curW = 120, curH = 112;      // 当前逻辑窗口尺寸
+let grown = false;
+let stateTimer = null, savePosTimer = null, miniTimer = null;
+let petState = 'idle';
+
+function updateTransform() {
+  stage.style.transform = `translate(${curW / 2 - 130}px, ${curH / 2 - 164}px) scale(${petSc})`;
+}
+async function setWindowSize(w, h) {
+  curW = w; curH = h;
+  updateTransform();
+  try { await invoke('pet_set_size', { w, h }); } catch (e) { /* 忽略 */ }
+}
+async function grow() {
+  if (grown) return;
+  grown = true;
+  await setWindowSize(260 * petSc, 220 * petSc);
+}
+async function shrink() {
+  if (!grown) return;
+  grown = false;
+  miniBubble.classList.remove('show');
+  await setWindowSize(120 * petSc, 112 * petSc);
+}
+function applySkin(name) {
+  if (!SKINS[name]) name = 'blue';
+  pet.className = pet.className.replace(/skin-\w+/g, '').trim() + ' skin-' + name;
+}
+function setPetState(s) {
+  clearTimeout(stateTimer);
+  petState = s;
+  pet.className = pet.className.replace(/state-\w+/g, '').trim() + ' state-' + s;
+  if (s === 'click') stateTimer = setTimeout(() => { if (petState === 'click') setPetState('idle'); }, 430);
+  if (s === 'happy') stateTimer = setTimeout(() => { if (petState === 'happy') setPetState('idle'); }, 1900);
+  if (s === 'error') stateTimer = setTimeout(() => { if (petState === 'error') setPetState('idle'); }, 2400);
+}
+
+/* ---- 拖拽 / 点击 / 右键 ---- */
+let dragInfo = null;
+pet.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  dragInfo = { sx: e.clientX, sy: e.clientY, moved: false };
+  window.addEventListener('mousemove', onPetMove);
+  window.addEventListener('mouseup', onPetUp);
+});
+async function onPetMove(e) {
+  if (!dragInfo) return;
+  const dx = e.clientX - dragInfo.sx, dy = e.clientY - dragInfo.sy;
+  if (!dragInfo.moved && Math.hypot(dx, dy) > 6) {
+    dragInfo.moved = true;
+    setPetState('drag');
+    try { await curWin.startDragging(); } catch (err) { }
+  }
+}
+async function onPetUp() {
+  window.removeEventListener('mousemove', onPetMove);
+  window.removeEventListener('mouseup', onPetUp);
+  const d = dragInfo;
+  dragInfo = null;
+  if (!d) return;
+  if (d.moved) {
+    if (petState === 'drag') setPetState('idle');
+  } else {
+    setPetState('click');
+    setTimeout(() => { if (petState === 'click') setPetState('idle'); }, 420);
+    if (grown) await shrink();
+    try { await invoke('pet_clicked'); } catch (e) { }
+  }
+}
+pet.addEventListener('contextmenu', async e => {
+  e.preventDefault();
+  await grow();
+  showMenu([
+    { icon: '💬', label: '打开对话', onClick: async () => { await shrink(); invoke('show_bubble_cmd'); } },
+    { icon: '✨', label: '新会话', onClick: async () => { await shrink(); await invoke('show_bubble_cmd'); tEmitTo('bubble', 'new-session-req'); } },
+    '-',
+    ...Object.keys(SKINS).map(k => ({
+      icon: '🎨', label: '皮肤：' + SKINS[k].label,
+      check: S.settings.skin === k,
+      onClick: async () => { S.settings.skin = k; applySkin(k); saveState(); await shrink(); },
+    })),
+    '-',
+    { icon: '⚙', label: '设置', onClick: async () => { await shrink(); invoke('open_settings_cmd'); } },
+    { icon: '🌙', label: '免打扰（睡眠）', check: S.settings.dnd, onClick: async () => { await shrink(); invoke('set_dnd', { on: !S.settings.dnd }); } },
+    { icon: '📍', label: '复位宠物位置', onClick: async () => { await shrink(); invoke('reset_pet_pos'); } },
+  ], e.clientX + 40, e.clientY - 200);
+});
+/* 窗口移动后持久化位置（拖拽结束由 onMoved 捕获） */
+let unlistenMoved = null;
+curWin.onMoved(async () => {
+  clearTimeout(savePosTimer);
+  savePosTimer = setTimeout(async () => {
+    try { await invoke('pet_save_pos'); } catch (e) { }
+  }, 600);
+});
+/* 窗口尺寸变化兜底（后台 resize 后同步 transform） */
+curWin.onResized(async ev => {
+  try {
+    const sf = await curWin.scaleFactor();
+    const w = ev.payload.width / sf, h = ev.payload.height / sf;
+    if (Math.abs(w - curW) > 1 || Math.abs(h - curH) > 1) {
+      curW = w; curH = h;
+      updateTransform();
+    }
+  } catch (e) { }
+});
+
+/* ---- 主动搭话 ---- */
+async function showMini(text) {
+  miniBubble.textContent = text;
+  miniBubble.classList.add('show');
+  await grow();
+  clearTimeout(miniTimer);
+  miniTimer = setTimeout(async () => {
+    miniBubble.classList.remove('show');
+    await shrink();
+  }, 6500);
+}
+miniBubble.addEventListener('click', async () => {
+  miniBubble.classList.remove('show');
+  await shrink();
+  invoke('show_bubble_cmd');
+});
+
+/* ---- 事件 ---- */
+tListen('chat-state', ev => {
+  const s = ev.payload && ev.payload.state;
+  if (['work', 'talk', 'idle', 'error'].includes(s)) setPetState(s);
+});
+tListen('reminder-fx', () => setPetState('happy'));
+tListen('chatter', ev => showMini(ev.payload && ev.payload.text));
+tListen('dnd-changed', ev => {
+  if (ev.payload && ev.payload.on) setPetState('sleep');
+  else if (petState === 'sleep') setPetState('idle');
+});
+tListen('state-changed', async ev => {
+  if (ev.payload && ev.payload.origin === 'pet') return;
+  await loadState();
+  applySkin(S.settings.skin);
+  const sc = S.settings.petScale || 1;
+  if (Math.abs(sc - petSc) > 0.001) {
+    petSc = sc;
+    curW = 120 * petSc; curH = 112 * petSc;
+    if (grown) { curW = 260 * petSc; curH = 220 * petSc; }
+    updateTransform();
+  }
+});
+tListen('state-reset', async () => {
+  await loadState();
+  applySkin(S.settings.skin);
+  petSc = S.settings.petScale || 1;
+  curW = 120 * petSc; curH = 112 * petSc;
+  grown = false;
+  updateTransform();
+  setPetState('idle');
+});
+
+/* ---- 启动 ---- */
+(async function init() {
+  await loadState();
+  applySkin(S.settings.skin);
+  petSc = S.settings.petScale || 1;
+  curW = 120 * petSc; curH = 112 * petSc;
+  updateTransform();
+  if (S.settings.dnd) setPetState('sleep');
+})();
+</script>
+</body>
+</html>

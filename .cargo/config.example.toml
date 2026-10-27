@@ -1,0 +1,25 @@
+# Cargo 配置模板（复制为 .cargo/config.toml 后按本机环境调整）
+#
+# 本项目在无 MSVC 的环境下使用 Rust GNU 工具链构建。
+# 关键要求：链接器必须使用 binutils >= 2.41 的 MinGW-w64 GCC（如 winlibs）。
+# TDM-GCC 10.3（binutils 2.36）存在 PE 布局 bug，产物为非法 PE / WebView2 COM 回调崩溃，不可用。
+
+# 可选：中国大陆网络环境使用 rsproxy 镜像加速（海外网络可删除本段）
+[source.crates-io]
+replace-with = 'rsproxy-sparse'
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+[registries.rsproxy]
+index = "sparse+https://rsproxy.cn/index/"
+
+# GNU 目标链接器：替换为你本机 MinGW-w64 GCC 的实际路径
+# winlibs 下载：https://github.com/brechtsanders/winlibs_mingw/releases
+[target.x86_64-pc-windows-gnu]
+linker = "C:/path/to/winlibs/mingw64/bin/gcc.exe"
+ar = "C:/path/to/winlibs/mingw64/bin/ar.exe"
+
+[net]
+git-fetch-with-cli = true
+retry = 5

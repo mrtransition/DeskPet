@@ -1,0 +1,17 @@
+# 构建产物
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# 本机环境配置（使用 config.example.toml 作为模板）
+.cargo/config.toml
+
+# 临时与工具链（体积过大，不入库）
+.temp/
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 运行时数据（如有误生成）
+*.log

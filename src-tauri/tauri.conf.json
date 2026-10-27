@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DeskPet",
+  "version": "0.2.2",
+  "identifier": "com.mrtransition.deskpet",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "pet",
+        "url": "pet.html",
+        "width": 120,
+        "height": 112,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": [],
+    "icon": ["icons/icon.ico"]
+  }
+}
+

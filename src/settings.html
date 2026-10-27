@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-win="settings">
+<head>
+<meta charset="UTF-8">
+<title>设置 — 桌面 AI 宠物</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body { background: var(--bg); display: flex; flex-direction: column; }
+#app { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.win-title { cursor: default; }
+[data-tauri-drag-region] { -webkit-app-region: drag; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="win-title" data-tauri-drag-region>
+    <span class="wt-ic">🐱</span><b>设置 — 桌面 AI 宠物</b>
+    <button class="ib" id="setClose" title="关闭">✕</button>
+  </div>
+  <div class="win-body">
+    <nav class="win-nav" id="setNav">
+      <button data-tab="model" class="on">模型</button>
+      <button data-tab="persona">人格</button>
+      <button data-tab="pet">宠物与交互</button>
+      <button data-tab="memory">记忆</button>
+      <button data-tab="data">会话与数据</button>
+      <button data-tab="about">关于</button>
+    </nav>
+    <div class="win-content" id="setBody">
+
+      <!-- 模型 -->
+      <div class="pane on" id="tab-model">
+        <div class="pane-head">
+          <div><h3>模型配置</h3><div class="p-desc">多供应商接入 · 自定义 BaseURL · 密钥存入 Windows 凭据管理器 · 连通性测试（FR-MDL）</div></div>
+          <button id="pvNew">＋ 新增供应商</button>
+        </div>
+        <div class="pv-grid">
+          <div class="pv-list" id="provList"></div>
+          <div class="pv-editor">
+            <div class="fgrid">
+              <div class="frow" style="grid-column:span 2"><label>供应商模板</label><select id="pvTemplate"></select></div>
+              <div class="frow"><label>名称</label><input id="pvName" placeholder="如：我的 DeepSeek"></div>
+              <div class="frow"><label>接口类型</label><input id="pvType" disabled></div>
+              <div class="frow" style="grid-column:span 2"><label>BaseURL</label><input id="pvBase" placeholder="https://api.deepseek.com/v1"></div>
+              <div class="frow" style="grid-column:span 2">
+                <label>API Key（写入系统凭据管理器，不进入数据文件与渲染层）</label>
+                <input id="pvKey" type="password" placeholder="sk-…" autocomplete="off">
+              </div>
+              <div class="frow" style="grid-column:span 2"><label>模型名（测试连接后可下拉选择）</label><input id="pvModel" list="dlModels" placeholder="deepseek-chat"></div>
+              <datalist id="dlModels"></datalist>
+              <div class="frow" style="grid-column:span 2"><label>自定义请求头（JSON，可空）</label><input id="pvHeaders" placeholder='{"x-foo":"bar"}'></div>
+            </div>
+            <div class="fgrid" style="margin-top:10px">
+              <div class="frow"><label>Temperature（0–2）</label><input id="pvTemp" type="number" min="0" max="2" step="0.1"></div>
+              <div class="frow"><label>Top P（0–1）</label><input id="pvTopP" type="number" min="0" max="1" step="0.05"></div>
+              <div class="frow"><label>Max Tokens（64–8192）</label><input id="pvMaxTok" type="number" min="64" max="8192" step="64"></div>
+              <div class="frow"><label>上下文轮数（0=不限）</label><input id="pvRounds" type="number" min="0" max="50" step="1"></div>
+              <div class="frow"><label>超时（秒）</label><input id="pvTimeout" type="number" min="5" max="120" step="5"></div>
+              <div class="frow"><label>失败重试（前端自动，0–5）</label><input id="pvRetry" type="number" min="0" max="5" step="1"></div>
+              <div class="frow"><label>流式输出</label><select id="pvStream"><option value="1">开启（推荐）</option><option value="0">关闭</option></select></div>
+            </div>
+            <div class="btn-row">
+              <button id="pvTest">测试连接</button>
+              <button id="pvSave" class="primary">保存</button>
+              <button id="pvDelete" class="danger">删除</button>
+              <label class="inline-opts" style="margin-left:auto"><input type="checkbox" id="pvDefault"><span style="font-size:var(--fs-xs)">设为默认</span></label>
+            </div>
+            <div class="test-line" id="pvTestResult"></div>
+            <div class="fnote">提示：请求由主进程发出（无浏览器 CORS 限制）；Ollama 等本地服务无需设置 OLLAMA_ORIGINS。密钥仅保存在 Windows 凭据管理器，导出与日志均不含密钥。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 人格 -->
+      <div class="pane" id="tab-persona">
+        <div class="pane-head">
+          <div><h3>人格管理</h3><div class="p-desc">System Prompt 卡片 · 开场白 · 快捷动作 · 绑定模型与皮肤（FR-PSN）</div></div>
+          <button id="peNew">＋ 新建人格</button>
+        </div>
+        <div class="pv-grid">
+          <div class="pv-list" id="psList"></div>
+          <div class="pv-editor">
+            <div class="fgrid">
+              <div class="frow"><label>头像（emoji）</label><input id="peAvatar" maxlength="4" placeholder="🐱"></div>
+              <div class="frow"><label>名称</label><input id="peName" placeholder="如：贴心小助手"></div>
+              <div class="frow"><label>绑定供应商</label><select id="peProv"></select></div>
+              <div class="frow"><label>绑定皮肤</label><select id="peSkin"></select></div>
+            </div>
+            <div class="frow" style="margin-top:9px"><label>System Prompt</label><textarea id="peSys" rows="4" style="font-size:var(--fs-xs);resize:vertical"></textarea></div>
+            <div class="frow" style="margin-top:9px"><label>开场白（新会话第一条消息）</label><textarea id="peGreet" rows="2" style="font-size:var(--fs-xs);resize:vertical"></textarea></div>
+            <div style="margin-top:10px"><label style="font-size:var(--fs-xs);color:var(--t2)">快捷动作（气泡内按钮，3–5 个）</label>
+              <div id="qaRows" style="margin-top:6px"></div>
+              <button id="qaAdd" style="margin-top:2px">＋ 添加动作</button>
+            </div>
+            <div class="btn-row">
+              <button id="peSave" class="primary">保存</button>
+              <button id="peDelete" class="danger">删除</button>
+              <button id="peExport">导出 JSON</button>
+              <button id="peImportBtn">导入 JSON</button>
+              <input type="file" id="peImportFile" accept=".json,application/json" style="display:none">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 宠物与交互 -->
+      <div class="pane" id="tab-pet">
+        <h3>宠物与交互</h3><div class="p-desc">皮肤 · 缩放 · 气泡行为 · 提醒与免打扰（FR-PET / FR-REM）</div>
+        <div class="sec">
+          <h4>皮肤 <span class="tag">FR-SKN-001 内置 3 套</span></h4>
+          <div class="skin-cards" id="skinSel"></div>
+        </div>
+        <div class="sec">
+          <h4>体型与层级</h4>
+          <div class="fgrid">
+            <div class="frow"><label>宠物缩放（50%–200%）：<b id="petScaleVal">100%</b></label><input id="petScale" type="range" min="0.5" max="2" step="0.05"></div>
+          </div>
+          <div class="inline-opts" style="margin-top:9px">
+            <label><input type="checkbox" id="ctThrough"> 点击穿透（开启后鼠标事件落到下层窗口，托盘菜单可恢复）</label>
+          </div>
+          <div class="fnote">窗口置顶（FR-PET-002）：宠物与气泡窗口为系统级 always-on-top；任务栏不显示（FR-PET-003）。</div>
+        </div>
+        <div class="sec">
+          <h4>气泡与输入</h4>
+          <div class="fgrid">
+            <div class="frow"><label>闲置自动关闭（秒，15–300）</label><input id="idleClose" type="number" min="15" max="300" step="5"></div>
+            <div class="frow"><label>主动搭话频率</label><select id="chatterSel"><option value="off">关闭</option><option value="low">低（约 10 分钟）</option><option value="mid">中（约 5 分钟）</option><option value="high">高（约 2.5 分钟）</option></select></div>
+          </div>
+          <div class="inline-opts" style="margin-top:9px">
+            <label><input type="radio" name="enterMode" value="1" checked> Enter 发送 / Shift+Enter 换行</label>
+            <label><input type="radio" name="enterMode" value="0"> Enter 换行 / Ctrl+Enter 发送</label>
+            <label><input type="checkbox" id="newPerClick"> 每次点击宠物新开会话</label>
+          </div>
+        </div>
+        <div class="sec">
+          <h4>提醒与免打扰</h4>
+          <div class="inline-opts" style="margin-bottom:8px">
+            <label><input type="checkbox" id="dndChk"> 免打扰模式（宠物睡眠，提醒静默排队，关闭后补发）</label>
+          </div>
+          <div class="fnote" style="margin:0 0 8px">对我说「25 分钟后提醒我喝水」「每天 8:30 提醒我站会」即可创建；触发时宠物会跳出来播报，支持稍后 5 分钟。提醒由主进程调度器驱动。</div>
+          <div id="remList"></div>
+        </div>
+      </div>
+
+      <!-- 记忆 -->
+      <div class="pane" id="tab-memory">
+        <h3>长期记忆</h3><div class="p-desc">对我说「记住：xxx」即可写入；每次对话按相关度自动注入最多 5 条（FR-MEM-001/002/004）</div>
+        <div class="sec">
+          <div style="display:flex;gap:8px">
+            <input id="memAddInput" placeholder="手动添加一条记忆，如：用户在杭州工作">
+            <button id="memAddBtn" class="primary">添加</button>
+          </div>
+        </div>
+        <div class="sec">
+          <h4>记忆条目（<b id="memCount">0</b> 条）</h4>
+          <div id="memList"></div>
+        </div>
+      </div>
+
+      <!-- 会话与数据 -->
+      <div class="pane" id="tab-data">
+        <h3>会话与数据</h3><div class="p-desc">数据持久化于本地应用数据目录，不上传任何服务器（FR-DAT-004 / NFR-PRV）</div>
+        <div class="sec">
+          <h4>会话历史 <span class="tag">FR-DAT-002 检索 / 导出 Markdown</span></h4>
+          <input id="sessSearch" placeholder="全文检索会话标题与消息…" style="margin-bottom:8px">
+          <div id="sessList"></div>
+        </div>
+        <div class="sec">
+          <h4>导入 / 导出</h4>
+          <div class="btn-row" style="margin-top:0">
+            <button id="expAllMd">导出全部会话（Markdown）</button>
+            <button id="expConfig">导出配置（JSON，不含密钥）</button>
+            <button id="impConfigBtn">导入配置（JSON）</button>
+            <input type="file" id="impConfigFile" accept=".json,application/json" style="display:none">
+          </div>
+          <div class="fnote">导出文件位于应用数据目录的 exports 文件夹（见导出后的提示路径）。</div>
+        </div>
+        <div class="sec" style="border-color:#F0C7C7">
+          <h4 style="color:var(--err)">危险区 <span class="tag" style="color:var(--err);border-color:#F0C7C7;background:var(--err-bg)">DR-003 二次确认</span></h4>
+          <div class="btn-row" style="margin-top:0">
+            <button class="danger" id="clrSessions">清除全部会话</button>
+            <button class="danger" id="clrMemories">清除全部记忆</button>
+            <button class="danger" id="clrAll">重置全部数据</button>
+          </div>
+          <div class="fnote">「重置全部数据」将同时清除供应商配置（含系统凭据管理器中的密钥）、人格、提醒与设置，并恢复宠物初始位置。</div>
+        </div>
+        <div class="fnote" id="statsLine"></div>
+      </div>
+
+      <!-- 关于 -->
+      <div class="pane about" id="tab-about">
+        <h3>桌面 AI 宠物</h3>
+        <div class="ver" id="verLine">桌面版 v0.2 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.0</div>
+        <details open>
+          <summary>本桌面版实现了什么</summary>
+          <ul>
+            <li>真实系统能力：透明无边框置顶宠物窗口、独立气泡窗口（智能上下翻转 + 尾巴箭头）、系统托盘（左键唤起 / 右键菜单）、全局快捷键（Ctrl+Shift+Space 唤起、Ctrl+, 设置）、开机自启、点击穿透、失焦自动关闭并恢复原前台窗口</li>
+            <li>主进程对话：OpenAI / Anthropic / Gemini 三类流式协议适配、SSE 逐 token 推送、停止生成、非流式自动降级、错误分类；密钥存 Windows 凭据管理器，渲染层不可见（FR-MDL-007/013、NFR-SEC-001、CON-07）</li>
+            <li>其他功能：3 套人格 + 皮肤联动、八态动画、拖拽与位置记忆、缩放、快捷动作、长期记忆注入、自然语言提醒（主进程调度器）、免打扰与补发、主动搭话、会话持久化/检索/导出、配置导入导出</li>
+          </ul>
+        </details>
+        <details>
+          <summary>SRS 需求覆盖对照（桌面版）</summary>
+          <table>
+            <tr><th>需求</th><th>说明</th><th>状态</th></tr>
+            <tr><td>FR-PET-001/002/003</td><td>透明无边框置顶、不入任务栏</td><td class="st-ok">真实系统窗口</td></tr>
+            <tr><td>FR-PET-004/005</td><td>拖拽移动、位置持久化、越界回收</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-PET-006</td><td>八态动画状态机</td><td class="st-ok">完整（SVG 矢量）</td></tr>
+            <tr><td>FR-PET-007</td><td>50%–200% 无级缩放</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-PET-008</td><td>点击穿透 + 托盘恢复</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-PET-009</td><td>APNG/GIF/Live2D 等动画格式</td><td class="st-part">简化为内置矢量动画（皮肤包导入待后续版本）</td></tr>
+            <tr><td>FR-BUB-001~014</td><td>弹出/定位/焦点/渲染/流式/输入/会话/关闭条件</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-BUB-016/017</td><td>全局快捷键唤起气泡与设置</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-MDL-001~006/009/012</td><td>模板、自定义、测试、多配置、切换、参数、错误处理</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-MDL-007/013</td><td>密钥系统安全存储、主进程请求</td><td class="st-ok">Windows 凭据管理器 + 主进程</td></tr>
+            <tr><td>FR-PSN-001/003/004</td><td>人格卡片、切换生效、导入导出</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-PSN-005</td><td>人格与皮肤绑定联动</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-MEM-001/002/004</td><td>记忆写入、相关度注入、可视化管理</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-REM-001/002/004</td><td>自然语言提醒、播报、稍后提醒、免打扰</td><td class="st-ok">完整（主进程调度器）</td></tr>
+            <tr><td>FR-REM-005</td><td>主动搭话</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-REM-003/006/007</td><td>重复提醒细则、久坐、剪贴板感知</td><td class="st-part">每日重复已支持；其余待后续</td></tr>
+            <tr><td>FR-SYS-001/002/003</td><td>托盘、开机自启、设置窗口（6 分组）</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-SYS-004/005/006</td><td>自动更新、用量统计、i18n</td><td class="st-next">待后续版本</td></tr>
+            <tr><td>FR-DAT-001~004</td><td>本地持久化、检索导出、清理、零未授权上传</td><td class="st-ok">完整（JSON 持久化替代 SQLite）</td></tr>
+            <tr><td>NFR-INT-001</td><td>不持续抢占前台（失焦恢复原前台窗口）</td><td class="st-ok">完整</td></tr>
+            <tr><td>NFR-INT-003/004</td><td>HTTPS/SSE/localhost、三类流式协议</td><td class="st-ok">完整</td></tr>
+          </table>
+        </details>
+        <details>
+          <summary>隐私与用量统计</summary>
+          <ul>
+            <li>零上报、零埋点；对话与配置仅存本机应用数据目录；API Key 仅存于 Windows 凭据管理器，不进入数据文件、日志与导出文件（DS-001）</li>
+            <li>用量统计（本地估算）：<span id="statReq">0</span> 次请求 · 约 <span id="statTok">0</span> tokens</li>
+          </ul>
+        </details>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+'use strict';
+let editProvId = null, editPersId = null;
+
+function switchTab(tab) {
+  $id('setNav').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  $id('setBody').querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'tab-' + tab));
+}
+$id('setNav').addEventListener('click', e => {
+  const b = e.target.closest('button[data-tab]');
+  if (b) switchTab(b.dataset.tab);
+});
+$id('setClose').addEventListener('click', () => curWin.hide());
+function renderAll() {
+  renderProvList(); renderProvEditor();
+  renderPsList(); renderPeEditor();
+  renderPetTab(); renderMemTab(); renderSessList(); renderAbout();
+}
+
+/* ============ 模型 ============ */
+function renderProvList() {
+  const list = $id('provList');
+  list.innerHTML = '';
+  S.providers.forEach(p => {
+    const c = el('div', 'pv-card' + (p.id === editProvId ? ' on' : ''));
+    c.innerHTML = '<div class="pv-name">' + (p.isDefault ? '<span class="pv-star" title="默认">★</span>' : '') + esc(p.name) +
+      ' <span class="type-badge">' + esc(p.type) + '</span></div>' +
+      '<div class="pv-sub">' + esc(p.type === 'mock' ? '内置 · 无需 Key' : (p.model || '未填模型') + (p.baseUrl ? ' · ' + cut(p.baseUrl, 22) : '')) + '</div>';
+    c.onclick = () => { editProvId = p.id; renderProvList(); renderProvEditor(); };
+    list.appendChild(c);
+  });
+}
+async function renderProvEditor() {
+  const p = getProv(editProvId);
+  $id('pvTemplate').innerHTML = PROVIDER_TEMPLATES.map(t => '<option value="' + t.key + '">' + esc(t.label) + '</option>').join('');
+  const set = (id, v) => { $id(id).value = v === undefined || v === null ? '' : v; };
+  if (p) {
+    const tpl = PROVIDER_TEMPLATES.find(t => t.baseUrl === p.baseUrl && t.type === p.type) || PROVIDER_TEMPLATES.find(t => t.type === p.type && t.key !== 'custom') || { key: 'custom' };
+    $id('pvTemplate').value = p.type === 'mock' ? 'mock' : tpl.key;
+    set('pvName', p.name); set('pvType', p.type); set('pvBase', p.baseUrl); set('pvModel', p.model); set('pvHeaders', p.headers);
+    const pr = p.params || {};
+    $id('pvTemp').value = pr.temp; $id('pvTopP').value = pr.topP;
+    $id('pvMaxTok').value = pr.maxTokens; $id('pvRounds').value = pr.ctxRounds;
+    $id('pvTimeout').value = pr.timeout; $id('pvRetry').value = pr.retry;
+    $id('pvStream').value = pr.stream === false ? '0' : '1';
+    $id('pvDefault').checked = !!p.isDefault;
+    $id('pvDelete').style.display = p.id === 'p-demo' ? 'none' : '';
+    $id('pvKey').value = '';
+    try {
+      const has = await invoke('key_has', { id: p.id });
+      $id('pvKey').placeholder = has ? '已配置（输入新值可覆盖）' : '未配置';
+    } catch (e) { $id('pvKey').placeholder = '未配置'; }
+  } else {
+    applyTemplate('deepseek');
+    $id('pvDefault').checked = false;
+    $id('pvDelete').style.display = 'none';
+    $id('pvKey').value = '';
+    $id('pvKey').placeholder = '未配置';
+  }
+  hideTestResult();
+}
+function applyTemplate(key) {
+  const t = PROVIDER_TEMPLATES.find(x => x.key === key) || PROVIDER_TEMPLATES[0];
+  $id('pvType').value = t.type;
+  $id('pvBase').value = t.baseUrl;
+  $id('pvModel').value = t.model;
+  const nameVal = $id('pvName').value.trim();
+  if (!nameVal || nameVal.startsWith('我的 ')) $id('pvName').value = t.key === 'custom' ? '' : '我的 ' + t.label.split('（')[0];
+}
+$id('pvTemplate').addEventListener('change', e => applyTemplate(e.target.value));
+$id('pvNew').addEventListener('click', () => { editProvId = null; renderProvList(); renderProvEditor(); });
+function hideTestResult() { const t = $id('pvTestResult'); t.className = 'test-line'; t.innerHTML = ''; }
+function provFormVals() {
+  return {
+    name: $id('pvName').value.trim(),
+    type: $id('pvType').value,
+    baseUrl: $id('pvBase').value.trim(),
+    model: $id('pvModel').value.trim(),
+    headers: $id('pvHeaders').value.trim(),
+    key: $id('pvKey').value,
+    params: {
+      temp: clampNum($id('pvTemp').value, 0, 2, 0.8),
+      topP: clampNum($id('pvTopP').value, 0, 1, 1),
+      maxTokens: clampNum($id('pvMaxTok').value, 64, 8192, 1024),
+      ctxRounds: clampNum($id('pvRounds').value, 0, 50, 10),
+      timeout: clampNum($id('pvTimeout').value, 5, 120, 30),
+      retry: clampNum($id('pvRetry').value, 0, 5, 2),
+      stream: $id('pvStream').value === '1',
+    },
+    isDefault: $id('pvDefault').checked,
+  };
+}
+function saveProvider() {
+  const v = provFormVals();
+  if (!v.name) { toast('请填写供应商名称', 'warn'); return null; }
+  if (v.type !== 'mock' && !v.baseUrl) { toast('请填写 BaseURL', 'warn'); return null; }
+  if (v.type !== 'mock' && !v.model) { toast('请填写模型名', 'warn'); return null; }
+  if (editProvId) {
+    const p = getProv(editProvId);
+    Object.assign(p, { name: v.name, type: v.type, baseUrl: v.baseUrl, model: v.model, headers: v.headers, params: v.params, apiKey: '' });
+    if (v.isDefault) S.providers.forEach(x => x.isDefault = x.id === p.id);
+  } else {
+    const p = { id: uid('p'), name: v.name, type: v.type, baseUrl: v.baseUrl, apiKey: '', model: v.model, headers: v.headers, params: v.params, isDefault: v.isDefault };
+    if (v.isDefault) S.providers.forEach(x => x.isDefault = false);
+    S.providers.push(p);
+    editProvId = p.id;
+  }
+  if (v.key) invoke('key_set', { id: editProvId, key: v.key });
+  // 设为默认时：自动把仍绑定演示模式的人格迁移到该供应商，避免「配好了却还在用演示模式」
+  let migrated = 0;
+  if (v.isDefault && v.type !== 'mock') {
+    S.personas.forEach(ps => {
+      const cur = getProv(ps.providerId);
+      if (!cur || cur.type === 'mock') { ps.providerId = editProvId; migrated++; }
+    });
+    if (S.settings.lastProviderId) {
+      const lp = getProv(S.settings.lastProviderId);
+      if (!lp || lp.type === 'mock') S.settings.lastProviderId = editProvId;
+    }
+    S.sessions.forEach(s => {
+      const sp = getProv(s.providerId);
+      if (!sp || sp.type === 'mock') s.providerId = editProvId;
+    });
+  }
+  saveState();
+  renderProvList();
+  if (migrated > 0) toast('已设为默认，' + migrated + ' 个人格自动从演示模式切换到「' + v.name + '」', 'ok');
+  return editProvId;
+}
+$id('pvSave').addEventListener('click', () => {
+  if (saveProvider()) toast('供应商已保存', 'ok');
+});
+$id('pvTest').addEventListener('click', async () => {
+  const savedId = saveProvider();
+  if (!savedId) return;
+  const t = $id('pvTestResult');
+  t.className = 'test-line show';
+  t.textContent = '正在测试连接…';
+  try {
+    const r = await invoke('provider_test', { id: savedId });
+    if (r.ok) {
+      t.className = 'test-line show ok';
+      t.textContent = '✓ 连接成功 · 延迟 ' + r.latency + 'ms · ' + r.note;
+      const dl = $id('dlModels');
+      dl.innerHTML = (r.models || []).map(m => '<option value="' + esc(m) + '">').join('');
+      if (r.models && r.models.length && r.models.indexOf($id('pvModel').value) < 0) {
+        t.textContent += '（当前模型名不在列表中，可在模型名输入框下拉选择）';
+      }
+    } else {
+      t.className = 'test-line show err';
+      t.textContent = '✗ ' + (r.message || '测试失败');
+    }
+  } catch (e) {
+    t.className = 'test-line show err';
+    t.textContent = '✗ ' + e;
+  }
+});
+$id('pvKey').addEventListener('paste', () => {
+  setTimeout(() => { const inp = $id('pvKey'); inp.value = inp.value.trim(); }, 0);
+});
+$id('pvDelete').addEventListener('click', async () => {
+  const p = getProv(editProvId);
+  if (!p) return;
+  const refs = S.personas.filter(ps => ps.providerId === p.id);
+  if (refs.length) { toast('被人格「' + refs.map(r => r.name).join('、') + '」引用，请先在人格中改绑（SRS 4.1）', 'warn'); return; }
+  if (!confirm('删除供应商「' + p.name + '」？\n将同时删除其密钥引用，操作不可撤销。')) return;
+  invoke('key_delete', { id: p.id });
+  S.providers = S.providers.filter(x => x.id !== p.id);
+  if (!S.providers.some(x => x.isDefault) && S.providers[0]) S.providers[0].isDefault = true;
+  editProvId = null;
+  saveState();
+  renderProvList(); renderProvEditor();
+  toast('已删除', 'ok');
+});
+
+/* ============ 人格 ============ */
+function renderPsList() {
+  const list = $id('psList');
+  list.innerHTML = '';
+  S.personas.forEach(ps => {
+    const c = el('div', 'pv-card' + (ps.id === editPersId ? ' on' : ''));
+    c.innerHTML = '<div class="pv-name">' + esc(ps.avatar || '🐱') + ' ' + esc(ps.name) + '</div>' +
+      '<div class="pv-sub">' + esc(cut(ps.systemPrompt || '', 30)) + '</div>';
+    c.onclick = () => { editPersId = ps.id; renderPsList(); renderPeEditor(); };
+    list.appendChild(c);
+  });
+}
+function renderPeEditor() {
+  const ps = getPers(editPersId);
+  $id('peProv').innerHTML = S.providers.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('');
+  $id('peSkin').innerHTML = Object.keys(SKINS).map(k => '<option value="' + k + '">' + SKINS[k].label + '</option>').join('');
+  const qa = $id('qaRows');
+  qa.innerHTML = '';
+  const addQaRow = (label, prompt) => {
+    const row = el('div', 'qa-row');
+    const l = el('input'); l.value = label || ''; l.placeholder = '按钮名';
+    const pr = el('input'); pr.value = prompt || ''; pr.placeholder = '点击后发送的指令';
+    const del = el('button', '', '✕');
+    del.onclick = () => row.remove();
+    row.append(l, pr, del);
+    qa.appendChild(row);
+  };
+  if (ps) {
+    $id('peAvatar').value = ps.avatar || '';
+    $id('peName').value = ps.name;
+    $id('peSys').value = ps.systemPrompt || '';
+    $id('peGreet').value = ps.greeting || '';
+    $id('peProv').value = ps.providerId || (S.providers[0] && S.providers[0].id) || '';
+    $id('peSkin').value = ps.skin || 'blue';
+    (ps.quickActions || []).forEach(a => addQaRow(a.label, a.prompt));
+  } else {
+    $id('peAvatar').value = '🐾'; $id('peName').value = ''; $id('peSys').value = ''; $id('peGreet').value = '';
+    $id('peProv').value = (defProvObj() || {}).id || '';
+    $id('peSkin').value = S.settings.skin;
+  }
+  $id('qaAdd').onclick = () => addQaRow('', '');
+}
+$id('peNew').addEventListener('click', () => { editPersId = null; renderPsList(); renderPeEditor(); });
+$id('peSave').addEventListener('click', () => {
+  const name = $id('peName').value.trim();
+  if (!name) { toast('请填写人格名称', 'warn'); return; }
+  const qas = [...$id('qaRows').querySelectorAll('.qa-row')].map(r => ({
+    label: r.children[0].value.trim(), prompt: r.children[1].value.trim(),
+  })).filter(q => q.label && q.prompt);
+  const fields = {
+    name, avatar: $id('peAvatar').value.trim() || '🐱',
+    systemPrompt: $id('peSys').value.trim(), greeting: $id('peGreet').value.trim(),
+    providerId: $id('peProv').value, skin: $id('peSkin').value, quickActions: qas,
+  };
+  if (editPersId) {
+    Object.assign(getPers(editPersId), fields);
+  } else {
+    const p = Object.assign({ id: uid('ps') }, fields);
+    S.personas.push(p);
+    editPersId = p.id;
+  }
+  saveState();
+  renderPsList(); renderPeEditor();
+  toast('人格已保存', 'ok');
+});
+$id('peDelete').addEventListener('click', () => {
+  const ps = getPers(editPersId);
+  if (!ps) return;
+  if (!confirm('删除人格「' + ps.name + '」？\n其历史会话将保留，但标记为「人格已删除」（SRS 4.1）。')) return;
+  S.personas = S.personas.filter(x => x.id !== ps.id);
+  if (S.settings.lastPersonaId === ps.id && S.personas[0]) S.settings.lastPersonaId = S.personas[0].id;
+  editPersId = null;
+  saveState();
+  renderPsList(); renderPeEditor();
+  toast('已删除', 'ok');
+});
+$id('peExport').addEventListener('click', async () => {
+  const ps = getPers(editPersId);
+  const data = ps ? { persona: clone(ps) } : { personas: S.personas.map(p => clone(p)) };
+  try {
+    const path = await invoke('export_text', {
+      filename: (ps ? '人格-' + ps.name : '全部人格') + '.json',
+      content: JSON.stringify(data, null, 2),
+    });
+    toast('已导出：' + path, 'ok');
+  } catch (e) { toast('导出失败：' + e, 'err'); }
+});
+$id('peImportBtn').addEventListener('click', () => $id('peImportFile').click());
+$id('peImportFile').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = async () => {
+    try {
+      const j = JSON.parse(rd.result);
+      const list = j.persona ? [j.persona] : (j.personas || []);
+      if (!list.length) throw new Error('未找到 persona 字段');
+      let n = 0;
+      list.forEach(p => { if (p.name) { p.id = uid('ps'); S.personas.push(p); n++; } });
+      saveState(); renderPsList();
+      toast('已导入 ' + n + ' 个人格', 'ok');
+    } catch (err) { toast('导入失败：' + err.message, 'err'); }
+    e.target.value = '';
+  };
+  rd.readAsText(f);
+});
+
+/* ============ 宠物与交互 ============ */
+function renderPetTab() {
+  const box = $id('skinSel');
+  box.innerHTML = '';
+  Object.keys(SKINS).forEach(k => {
+    const c = el('div', 'skin-card' + (S.settings.skin === k ? ' on' : ''));
+    c.innerHTML = '<span class="skin-dot" style="background:' + SKINS[k].fur + '"></span><span>' + SKINS[k].label + '</span>' +
+      (S.settings.skin === k ? '<span class="pv-star">✓</span>' : '');
+    c.onclick = () => {
+      S.settings.skin = k; saveState(); renderPetTab();
+      toast('已切换皮肤：' + SKINS[k].label, 'ok');
+    };
+    box.appendChild(c);
+  });
+  $id('petScale').value = S.settings.petScale || 1;
+  $id('petScaleVal').textContent = Math.round((S.settings.petScale || 1) * 100) + '%';
+  $id('ctThrough').checked = !!S.settings.clickThrough;
+  $id('idleClose').value = S.settings.bubbleIdleClose || 60;
+  $id('chatterSel').value = S.settings.chatter || 'off';
+  $id('dndChk').checked = !!S.settings.dnd;
+  const em = document.querySelector('input[name=enterMode][value="' + (S.settings.enterSend !== false ? 1 : 0) + '"]');
+  if (em) em.checked = true;
+  $id('newPerClick').checked = !!S.settings.newSessionPerClick;
+  renderRemList();
+}
+$id('petScale').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  $id('petScaleVal').textContent = Math.round(v * 100) + '%';
+  invoke('set_pet_scale', { scale: v });
+});
+$id('ctThrough').addEventListener('change', e => {
+  invoke('set_click_through', { on: e.target.checked });
+  if (e.target.checked) toast('已开启点击穿透：宠物菜单或托盘可恢复', 'ok');
+});
+$id('idleClose').addEventListener('change', e => { S.settings.bubbleIdleClose = clampNum(e.target.value, 15, 300, 60); saveState(); });
+$id('chatterSel').addEventListener('change', e => { S.settings.chatter = e.target.value; saveState(); });
+$id('dndChk').addEventListener('change', e => invoke('set_dnd', { on: e.target.checked }));
+document.querySelectorAll('input[name=enterMode]').forEach(r => r.addEventListener('change', e => {
+  if (e.target.checked) { S.settings.enterSend = e.target.value === '1'; saveState(); }
+}));
+$id('newPerClick').addEventListener('change', e => { S.settings.newSessionPerClick = e.target.checked; saveState(); });
+function renderRemList() {
+  const box = $id('remList');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!S.reminders.length) {
+    box.appendChild(el('div', 'empty-tip', '暂无提醒。对我说「25 分钟后提醒我喝水」即可创建。'));
+    return;
+  }
+  S.reminders.forEach(r => {
+    const row = el('div', 'row-item');
+    row.innerHTML = '<div class="ri-main"><div class="ri-title">⏰ ' + esc(r.content) + '</div>' +
+      '<div class="ri-sub">' + (r.rule === 'daily' ? '每天 ' + fmtTime(r.due) : fmtDT(r.due)) + (r.rule === 'once' ? ' · 一次性' : '') + '</div></div>';
+    const btns = el('div', 'ri-btns');
+    const del = el('button', '', '删除');
+    del.onclick = () => { invoke('reminder_delete', { id: r.id }); toast('提醒已删除', 'ok'); };
+    btns.appendChild(del);
+    row.appendChild(btns);
+    box.appendChild(row);
+  });
+}
+
+/* ============ 记忆 ============ */
+function renderMemTab() {
+  const box = $id('memList');
+  box.innerHTML = '';
+  $id('memCount').textContent = S.memories.length;
+  if (!S.memories.length) {
+    box.appendChild(el('div', 'empty-tip', '暂无记忆。对我说「记住：我喜欢蓝色」，或用上方输入框手动添加。'));
+    return;
+  }
+  S.memories.forEach(m => {
+    const row = el('div', 'row-item');
+    const main = el('div', 'ri-main');
+    const inp = el('input', 'ri-edit');
+    inp.value = m.content;
+    inp.onchange = () => { m.content = inp.value.trim() || m.content; saveState(); toast('记忆已更新', 'ok'); };
+    main.appendChild(inp);
+    main.appendChild(el('div', 'ri-sub', fmtDT(m.ts)));
+    row.appendChild(main);
+    const btns = el('div', 'ri-btns');
+    const del = el('button', '', '✕');
+    del.onclick = () => { S.memories = S.memories.filter(x => x.id !== m.id); saveState(); renderMemTab(); };
+    btns.appendChild(del);
+    row.appendChild(btns);
+    box.appendChild(row);
+  });
+}
+$id('memAddBtn').addEventListener('click', () => {
+  const v = $id('memAddInput').value.trim();
+  if (!v) { toast('请输入记忆内容', 'warn'); return; }
+  S.memories.push({ id: uid('mem'), content: v, ts: Date.now() });
+  $id('memAddInput').value = '';
+  saveState(); renderMemTab();
+  toast('已添加记忆', 'ok');
+});
+$id('memAddInput').addEventListener('keydown', e => { if (e.key === 'Enter') $id('memAddBtn').click(); });
+
+/* ============ 会话与数据 ============ */
+function renderSessList() {
+  const kw = ($id('sessSearch').value || '').trim().toLowerCase();
+  const box = $id('sessList');
+  box.innerHTML = '';
+  let list = S.sessions;
+  if (kw) list = list.filter(s => (s.title || '').toLowerCase().includes(kw) || s.msgs.some(m => (m.content || '').toLowerCase().includes(kw)));
+  if (!list.length) {
+    box.appendChild(el('div', 'empty-tip', kw ? '没有匹配「' + esc(kw) + '」的会话' : '暂无历史会话'));
+    return;
+  }
+  list.forEach(s => {
+    const pers = getPers(s.personaId);
+    const row = el('div', 'row-item');
+    row.innerHTML = '<div class="ri-main"><div class="ri-title">' + esc(s.title || '（未命名会话）') + (s.id === S.currentSessionId ? ' <span class="pv-star">● 当前</span>' : '') + '</div>' +
+      '<div class="ri-sub">' + (pers ? pers.avatar + ' ' + esc(pers.name) : '人格已删除') + ' · ' + s.msgs.length + ' 条消息 · ' + fmtDT(s.updatedAt) + '</div></div>';
+    const btns = el('div', 'ri-btns');
+    const load = el('button', '', '设为当前');
+    load.onclick = () => {
+      S.currentSessionId = s.id;
+      S.settings.lastPersonaId = s.personaId;
+      S.settings.lastProviderId = s.providerId;
+      saveState(); renderSessList();
+      invoke('show_bubble_cmd');
+      toast('已载入会话', 'ok');
+    };
+    const exp = el('button', '', '导出');
+    exp.onclick = async () => {
+      try {
+        const path = await invoke('export_text', { filename: '会话-' + (s.title || s.id) + '.md', content: sessionToMd(s) });
+        toast('已导出：' + path, 'ok');
+      } catch (e) { toast('导出失败：' + e, 'err'); }
+    };
+    const del = el('button', 'danger', '删');
+    del.onclick = () => {
+      if (!confirm('删除会话「' + (s.title || '未命名') + '」（' + s.msgs.length + ' 条消息）？')) return;
+      S.sessions = S.sessions.filter(x => x.id !== s.id);
+      if (S.currentSessionId === s.id) S.currentSessionId = null;
+      saveState(); renderSessList();
+    };
+    btns.append(load, exp, del);
+    row.appendChild(btns);
+    box.appendChild(row);
+  });
+}
+$id('sessSearch').addEventListener('input', renderSessList);
+$id('expAllMd').addEventListener('click', async () => {
+  if (!S.sessions.length) { toast('暂无会话可导出', 'warn'); return; }
+  const all = S.sessions.map(sessionToMd).join('\n\n---\n\n');
+  try {
+    const path = await invoke('export_text', {
+      filename: '桌面AI宠物-全部会话.md',
+      content: '# 桌面 AI 宠物 · 会话导出\n\n导出时间：' + new Date().toLocaleString('zh-CN') + '\n\n' + all,
+    });
+    toast('已导出 ' + S.sessions.length + ' 个会话：' + path, 'ok');
+  } catch (e) { toast('导出失败：' + e, 'err'); }
+});
+$id('expConfig').addEventListener('click', async () => {
+  const data = {
+    _note: '桌面 AI 宠物配置导出（不含 API Key，导入后需重新填写密钥）',
+    providers: S.providers.map(p => { const c = clone(p); c.apiKey = ''; return c; }),
+    personas: clone(S.personas),
+    settings: clone(S.settings),
+    memories: clone(S.memories),
+  };
+  try {
+    const path = await invoke('export_text', { filename: '桌面AI宠物-配置.json', content: JSON.stringify(data, null, 2) });
+    toast('已导出配置（不含密钥）：' + path, 'ok');
+  } catch (e) { toast('导出失败：' + e, 'err'); }
+});
+$id('impConfigBtn').addEventListener('click', () => $id('impConfigFile').click());
+$id('impConfigFile').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = async () => {
+    try {
+      const j = JSON.parse(rd.result);
+      let n = 0;
+      (j.providers || []).forEach(p => { if (p.name && p.type) { p.id = uid('p'); p.apiKey = ''; S.providers.push(p); n++; } });
+      (j.personas || []).forEach(p => { if (p.name) { p.id = uid('ps'); S.personas.push(p); n++; } });
+      (j.memories || []).forEach(m => { if (m.content) { m.id = uid('mem'); S.memories.push(m); n++; } });
+      if (j.settings) S.settings = Object.assign(S.settings, j.settings);
+      saveState(); renderAll();
+      toast('已导入 ' + n + ' 条配置（密钥需重新填写）', 'ok');
+    } catch (err) { toast('导入失败：' + err.message, 'err'); }
+    e.target.value = '';
+  };
+  rd.readAsText(f);
+});
+$id('clrSessions').addEventListener('click', () => {
+  if (!confirm('清除全部 ' + S.sessions.length + ' 个会话及其消息？\n不影响记忆、供应商配置与人格。')) return;
+  S.sessions = []; S.currentSessionId = null;
+  saveState(); renderSessList();
+  toast('会话已清空', 'ok');
+});
+$id('clrMemories').addEventListener('click', () => {
+  if (!confirm('清除全部 ' + S.memories.length + ' 条长期记忆？\n会话与配置不受影响。')) return;
+  S.memories = [];
+  saveState(); renderMemTab();
+  toast('记忆已清空', 'ok');
+});
+$id('clrAll').addEventListener('click', () => {
+  if (!confirm('重置全部数据？\n将清除：全部会话与消息、长期记忆、提醒、供应商配置（含密钥）、人格、宠物位置与所有设置，并恢复初始演示状态。\n该操作不可撤销。')) return;
+  invoke('reset_data');
+  toast('已重置全部数据', 'ok');
+});
+
+/* ============ 关于 ============ */
+async function renderAbout() {
+  try { $id('verLine').textContent = '桌面版 ' + (await invoke('get_app_version')) + ' · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.0'; } catch (e) { }
+  $id('statReq').textContent = S.stats.requests || 0;
+  $id('statTok').textContent = ((S.stats.tokensIn || 0) + (S.stats.tokensOut || 0)).toLocaleString('zh-CN');
+  $id('statsLine').textContent = '本地统计：' + (S.stats.requests || 0) + ' 次请求 · 约 ' + ((S.stats.tokensIn || 0) + (S.stats.tokensOut || 0)).toLocaleString('zh-CN') + ' tokens（按字符估算）· 会话 ' + S.sessions.length + ' 个 · 记忆 ' + S.memories.length + ' 条 · 提醒 ' + S.reminders.length + ' 条';
+}
+
+/* ============ 事件 ============ */
+tListen('state-changed', async ev => {
+  if (ev.payload && ev.payload.origin === 'settings') return;
+  await loadState();
+  renderAll();
+});
+tListen('state-reset', async () => {
+  await loadState();
+  editProvId = null; editPersId = null;
+  renderAll();
+});
+tListen('settings-shown', async () => {
+  await loadState();
+  renderAll();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') curWin.hide(); });
+
+(async function init() {
+  await loadState();
+  renderAll();
+})();
+</script>
+</body>
+</html>

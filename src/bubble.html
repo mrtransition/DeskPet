@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-win="bubble">
+<head>
+<meta charset="UTF-8">
+<title>DeskPet Bubble</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+body { display: flex; flex-direction: column; }
+#card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: rgba(255,255,255,.96);
+  border: 1px solid rgba(255,255,255,.98);
+  outline: 1px solid rgba(84,155,251,.10);
+  border-radius: var(--r-xl);
+  box-shadow: 0 12px 40px rgba(31,39,51,.20);
+  overflow: hidden;
+  position: relative;
+}
+#card .bt { position: absolute; width: 12px; height: 12px; background: rgba(255,255,255,.96); display: none; }
+#card:not(.below) .bt-down { display: block; bottom: -6.5px; left: calc(50% - 6px); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transform: rotate(45deg); }
+#card.below .bt-up { display: block; top: -6.5px; left: calc(50% - 6px); border-left: 1px solid var(--line); border-top: 1px solid var(--line); transform: rotate(45deg); }
+.b-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); flex: none; }
+.b-avatar { width: 26px; height: 26px; border-radius: var(--r); background: var(--primary-bg); border: 1px solid var(--primary-line); display: flex; align-items: center; justify-content: center; font-size: 14px; flex: none; }
+.b-name { font-weight: 600; font-size: var(--fs); color: var(--t1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
+.b-head .ib { width: 24px; height: 24px; padding: 0; border: none; background: transparent; color: var(--t3); font-size: 13px; border-radius: var(--r-sm); flex: none; display: flex; align-items: center; justify-content: center; }
+.b-head .ib:hover { background: var(--primary-bg); color: var(--primary); }
+.b-msgs { flex: 1; min-height: 48px; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.b-think { display: none; align-self: flex-start; background: #fff; border: 1px solid var(--line); border-radius: var(--r-lg); padding: 8px 12px; color: var(--t2); font-size: var(--fs); align-items: center; gap: 8px; margin: 0 10px; flex: none; }
+.b-think.show { display: flex; }
+.b-quick { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 10px 0; flex: none; }
+.b-quick:empty { display: none; }
+.chip { border: 1px solid var(--line-dk); background: #fff; color: var(--t2); border-radius: 999px; padding: 3px 10px; font-size: var(--fs-xs); }
+.chip:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-bg); }
+.b-input { display: flex; align-items: flex-end; gap: 6px; padding: 9px 10px 6px; flex: none; }
+.b-input textarea { flex: 1; resize: none; border: 1px solid var(--line-dk); border-radius: var(--r-lg); padding: 7px 10px; font-size: var(--fs); line-height: 1.5; min-height: 34px; max-height: 86px; background: rgba(255,255,255,.9); }
+.b-send { width: 34px; height: 34px; flex: none; border-radius: 50%; padding: 0; font-size: 14px; display: flex; align-items: center; justify-content: center; border: none; }
+.b-send.stop { background: #fff; border: 1px solid #F0C7C7; color: var(--err); }
+.b-hint { padding: 0 10px 8px; font-size: 10px; color: var(--t3); display: flex; justify-content: space-between; flex: none; }
+</style>
+</head>
+<body>
+<div id="card">
+  <div class="bt bt-down"></div><div class="bt bt-up"></div>
+  <div class="b-head">
+    <div class="b-avatar" id="bAvatar">🐱</div>
+    <span class="b-name" id="bName">团子</span>
+    <button class="ib" id="bSwitch" title="快速切换模型 / 人格">⚡</button>
+    <button class="ib" id="bNew" title="新会话">＋</button>
+    <button class="ib" id="bSettings" title="设置">⚙</button>
+    <button class="ib" id="bClose" title="关闭 (Esc)">✕</button>
+  </div>
+  <div class="b-msgs" id="bMsgs"></div>
+  <div class="b-think" id="bThink"><span class="tdots"><i></i><i></i><i></i></span><span id="bThinkText">思考中…</span></div>
+  <div class="b-quick" id="bQuick"></div>
+  <div class="b-input">
+    <textarea id="bInput" rows="1" placeholder="说点什么…（记住：… / N 分钟后提醒我…）"></textarea>
+    <button class="b-send primary" id="bSend" title="发送">➤</button>
+  </div>
+  <div class="b-hint"><span id="bHintL">Enter 发送 · Shift+Enter 换行 · Esc 关闭</span><span id="bHintR"></span></div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+'use strict';
+const card = $id('card');
+const bMsgs = $id('bMsgs');
+const bInput = $id('bInput');
+let streaming = false;
+let mockHintShown = false;
+let liveBuf = '';
+let liveEl = null;
+let lastBubbleAct = Date.now();
+let lastFitH = 0;
+let fitTimer = null;
+
+/* ---- 高度自适应（FR-BUB-003） ---- */
+function fitHeight() {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(() => {
+    try {
+      const fixed = card.offsetHeight - bMsgs.offsetHeight;
+      const need = Math.min(bMsgs.scrollHeight, 330);
+      const h = Math.min(560, Math.max(210, fixed + need + 4));
+      if (Math.abs(h - lastFitH) > 6) {
+        lastFitH = h;
+        invoke('bubble_resize', { height: h });
+      }
+    } catch (e) { }
+  }, 180);
+}
+function scrollMsgs(force) {
+  const nearBottom = bMsgs.scrollHeight - bMsgs.scrollTop - bMsgs.clientHeight < 60;
+  if (nearBottom || force) bMsgs.scrollTop = bMsgs.scrollHeight;
+}
+
+/* ---- 消息渲染 ---- */
+function makeMsgEl(m) {
+  let d;
+  if (m.role === 'user') {
+    d = el('div', 'msg user', esc(m.content));
+  } else if (m.role === 'assistant') {
+    d = el('div', 'msg ai');
+    d.innerHTML = '<div class="md">' + md(m.content) + '</div>';
+    const cp = el('button', 'm-copy', '复制');
+    cp.onclick = () => copyText(m.content);
+    d.appendChild(cp);
+  } else if (m.role === 'error') {
+    d = el('div', 'msg err');
+    d.innerHTML = '<b>⚠ ' + esc(m.title || '请求失败') + '</b>' + (m.content ? '<div style="margin-top:3px">' + esc(m.content) + '</div>' : '') +
+      '<div class="m-act"><button data-act="retry">重试</button><button data-act="settings">打开设置</button></div>';
+  } else {
+    d = el('div', 'msg sys' + (m.warn ? ' warn' : ''), esc(m.content));
+    if (m.actions) {
+      const act = el('div', 'm-act');
+      m.actions.forEach(a => {
+        const b = el('button', '', esc(a.label));
+        b.onclick = () => { a.onClick && a.onClick(); };
+        act.appendChild(b);
+      });
+      d.appendChild(act);
+      d.style.textAlign = 'left';
+    }
+  }
+  return d;
+}
+function appendMsg(m) { bMsgs.appendChild(makeMsgEl(m)); scrollMsgs(true); fitHeight(); }
+bMsgs.addEventListener('click', e => {
+  const cp = e.target.closest('.cb-copy');
+  if (cp) { const code = cp.closest('.codeblock').querySelector('code'); copyText(code.textContent); return; }
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  if (btn.dataset.act === 'retry') { if (!streaming) generate(); }
+  else if (btn.dataset.act === 'settings') invoke('open_settings_cmd');
+});
+function renderSessionMsgs() {
+  bMsgs.innerHTML = '';
+  const s = curSession();
+  if (s) s.msgs.forEach(m => bMsgs.appendChild(makeMsgEl(m)));
+  scrollMsgs(true);
+  fitHeight();
+}
+function pushSys(content, opts) {
+  const s = curSession();
+  const m = { role: 'system', content, ts: Date.now(), warn: opts && opts.warn };
+  if (opts && opts.actions) m.actions = opts.actions;
+  if (opts && opts.ephemeral) { appendMsg(m); return; }
+  if (s) { s.msgs.push(m); s.updatedAt = Date.now(); saveState(); }
+  appendMsg(m);
+}
+
+/* ---- 头部 / 快捷动作 ---- */
+function renderHead() {
+  const p = activePers(), pv = activeProv();
+  $id('bAvatar').textContent = p ? (p.avatar || '🐱') : '🐱';
+  const nameEl = $id('bName');
+  nameEl.textContent = p ? p.name : '宠物';
+  nameEl.title = p ? (p.name + (p.systemPrompt ? ' · ' + cut(p.systemPrompt, 50) : '')) : '';
+  const box = $id('bQuick');
+  box.innerHTML = '';
+  if (p && p.quickActions) {
+    p.quickActions.slice(0, 5).forEach(qa => {
+      const c = el('button', 'chip', esc(qa.label));
+      c.title = qa.prompt;
+      c.onclick = () => { if (!streaming) send(qa.prompt); };
+      box.appendChild(c);
+    });
+  }
+  $id('bHintR').textContent = pv ? (pv.type === 'mock' ? '演示模式' : pv.model + ' @ ' + pv.name) : '';
+  fitHeight();
+}
+$id('bSwitch').addEventListener('click', e => {
+  e.stopPropagation();
+  const s = curSession();
+  const items = [];
+  S.providers.forEach(pr => items.push({
+    icon: '🤖', label: pr.name + (pr.model && pr.type !== 'mock' ? ' · ' + pr.model : ''),
+    check: s ? s.providerId === pr.id : false,
+    onClick: () => { if (s) { s.providerId = pr.id; S.settings.lastProviderId = pr.id; saveState(); } renderHead(); },
+  }));
+  items.push('-');
+  S.personas.forEach(ps => items.push({
+    icon: ps.avatar || '🐱', label: ps.name, check: s ? s.personaId === ps.id : false,
+    onClick: () => {
+      if (s) { s.personaId = ps.id; S.settings.lastPersonaId = ps.id; saveState(); }
+      renderHead();
+    },
+  }));
+  const r = e.target.getBoundingClientRect();
+  showMenu(items, Math.max(8, r.left - 150), r.bottom + 6);
+});
+$id('bNew').addEventListener('click', () => { newSession(); toast('已开启新会话', 'ok'); });
+$id('bSettings').addEventListener('click', () => invoke('open_settings_cmd'));
+$id('bClose').addEventListener('click', () => invoke('hide_bubble_cmd'));
+
+/* ---- 会话 ---- */
+function newSession() {
+  const prov = activeProv(), pers = activePers();
+  const s = {
+    id: uid('s'), personaId: pers ? pers.id : 'ps-1', providerId: prov ? prov.id : 'p-demo',
+    title: '', createdAt: Date.now(), updatedAt: Date.now(), msgs: [],
+  };
+  if (pers && pers.greeting) s.msgs.push({ role: 'assistant', content: pers.greeting, ts: Date.now() });
+  S.sessions.unshift(s);
+  S.currentSessionId = s.id;
+  saveState();
+  renderHead();
+  renderSessionMsgs();
+  return s;
+}
+
+/* ---- 上下文构建（人格 + 记忆注入 + 轮数截断） ---- */
+function buildContext(s) {
+  const pers = getPers(s.personaId);
+  let sys = pers ? pers.systemPrompt : '';
+  const lastUser = [...s.msgs].reverse().find(m => m.role === 'user');
+  const mems = pickMemories(lastUser ? lastUser.content : '');
+  if (mems.length) sys += '\n\n[用户长期记忆]\n' + mems.map(m => '- ' + m.content).join('\n');
+  const hist = s.msgs.filter(m => m.role === 'user' || m.role === 'assistant');
+  const rounds = (activeProv().params || {}).ctxRounds || 10;
+  const cutMsgs = rounds > 0 ? hist.slice(-rounds * 2) : hist;
+  return { messages: [{ role: 'system', content: sys || '你是一个桌面宠物助手。' }, ...cutMsgs], trunc: cutMsgs.length < hist.length, rounds };
+}
+
+/* ---- 发送与流式 ---- */
+async function send(text) {
+  let s = curSession();
+  if (!s) s = newSession();
+  s.msgs.push({ role: 'user', content: text, ts: Date.now() });
+  if (!s.title) s.title = cut(text, 16);
+  s.updatedAt = Date.now();
+  appendMsg({ role: 'user', content: text });
+  saveState();
+  sideEffects(text);
+  await generate();
+}
+function sideEffects(text) {
+  const t = String(text || '');
+  const rm = t.match(/^记住[:：]?\s*(.{2,120})/);
+  if (rm) {
+    S.memories.push({ id: uid('mem'), content: rm[1].trim(), ts: Date.now() });
+    saveState();
+    pushSys('📝 已写入长期记忆：' + cut(rm[1].trim(), 40) + '（每次对话自动注入）');
+    tEmitTo('pet', 'reminder-fx', { kind: 'happy' });
+  }
+  const rem = parseReminder(t);
+  if (rem) {
+    invoke('reminder_add', { reminder: rem });
+    pushSys('⏰ 提醒已创建：' + rem.content + ' · ' + (rem.rule === 'daily' ? '每天 ' + fmtTime(rem.due) : fmtDT(rem.due)));
+    tEmitTo('pet', 'reminder-fx', { kind: 'happy' });
+  }
+}
+async function generate() {
+  const s = curSession();
+  if (!s || streaming) return;
+  const prov = activeProv();
+  // 演示模式提示：已配置真实供应商（含密钥或本地服务）但当前仍是演示模式时，一次性提醒切换
+  if (prov.type === 'mock') {
+    const real = S.providers.find(p => p.type !== 'mock' && p.baseUrl);
+    if (real && !mockHintShown) {
+      mockHintShown = true;
+      pushSys('当前为演示模式（内置回复，非真实模型）。已检测到配置「' + real.name + '」，点上方 ⚡ 可切换，或在设置 → 模型中将其设为默认', { warn: true, ephemeral: true });
+    }
+  }
+  const { messages, trunc, rounds } = buildContext(s);
+  if (trunc) pushSys('上下文已按最近 ' + rounds + ' 轮截断', { warn: true, ephemeral: true });
+  streaming = true;
+  liveBuf = '';
+  liveEl = null;
+  const sendBtn = $id('bSend');
+  sendBtn.textContent = '■'; sendBtn.title = '停止生成'; sendBtn.classList.add('stop');
+  tEmitTo('pet', 'chat-state', { state: 'work' });
+  const think = $id('bThink');
+  $id('bThinkText').textContent = '思考中 · ' + (prov.type === 'mock' ? '演示模式' : prov.model + ' @ ' + prov.name);
+  think.classList.add('show');
+  scrollMsgs(true); fitHeight();
+  S.stats.requests = (S.stats.requests || 0) + 1;
+  S.stats.tokensIn = (S.stats.tokensIn || 0) + Math.ceil(messages.reduce((n, m) => n + m.content.length, 0) / 2);
+  saveState();
+  try {
+    await invoke('chat_start', { args: { providerId: prov.id, messages } });
+  } catch (e) {
+    finishStream(false, null, String(e));
+  }
+}
+function onDelta(text) {
+  const think = $id('bThink');
+  if (think.classList.contains('show')) {
+    think.classList.remove('show');
+    tEmitTo('pet', 'chat-state', { state: 'talk' });
+  }
+  if (!liveEl) {
+    liveEl = el('div', 'msg ai');
+    liveEl.innerHTML = '<span class="m-text"></span><span class="m-cursor"></span>';
+    bMsgs.appendChild(liveEl);
+  }
+  liveBuf += text;
+  liveEl.querySelector('.m-text').textContent = liveBuf;
+  touchBubbleAct();
+  scrollMsgs(false);
+  fitHeight();
+}
+function finishStream(ok, errInfo, rawErr) {
+  const think = $id('bThink');
+  think.classList.remove('show');
+  const s = curSession();
+  if (liveBuf) {
+    if (s) {
+      s.msgs.push({ role: 'assistant', content: liveBuf, ts: Date.now() });
+      S.stats.tokensOut = (S.stats.tokensOut || 0) + Math.ceil(liveBuf.length / 2);
+    }
+    if (liveEl) {
+      const final = makeMsgEl({ role: 'assistant', content: liveBuf });
+      liveEl.replaceWith(final);
+    }
+  } else if (liveEl) {
+    liveEl.remove();
+  }
+  liveEl = null;
+  if (!ok) {
+    const info = errInfo || { status: null, message: rawErr || '未知错误' };
+    if (s) s.msgs.push({ role: 'error', title: errTitle(info), content: info.message });
+    appendMsg({ role: 'error', title: errTitle(info), content: info.message });
+    tEmitTo('pet', 'chat-state', { state: 'error' });
+  } else {
+    tEmitTo('pet', 'chat-state', { state: 'idle' });
+  }
+  if (s) { s.updatedAt = Date.now(); }
+  saveState();
+  streaming = false;
+  liveBuf = '';
+  const sendBtn = $id('bSend');
+  sendBtn.textContent = '➤'; sendBtn.title = '发送'; sendBtn.classList.remove('stop');
+  scrollMsgs(true); fitHeight();
+}
+function errTitle(info) {
+  const st = info.status;
+  if (st === 401 || st === 403) return '认证失败（' + st + '）';
+  if (st === 429) return '请求过于频繁（429）';
+  if (st === 404) return '接口或模型不存在（404）';
+  if (st >= 500) return '服务端错误（' + st + '）';
+  if (!st && /超时/.test(info.message || '')) return '请求超时';
+  if (!st) return '网络失败';
+  return '请求失败' + (st ? '（' + st + '）' : '');
+}
+tListen('chat-delta', ev => { if (ev.payload && typeof ev.payload.text === 'string') onDelta(ev.payload.text); });
+tListen('chat-done', () => finishStream(true));
+tListen('chat-stopped', () => { finishStream(true); pushSys('已停止生成', { ephemeral: true }); });
+tListen('chat-error', ev => finishStream(false, ev.payload, null));
+
+/* ---- 输入 ---- */
+function autoGrow() {
+  bInput.style.height = 'auto';
+  bInput.style.height = Math.min(86, bInput.scrollHeight) + 'px';
+  fitHeight();
+}
+bInput.addEventListener('input', autoGrow);
+bInput.addEventListener('keydown', e => {
+  const enterSend = S ? S.settings.enterSend !== false : true;
+  if (e.key === 'Enter') {
+    if (enterSend && !e.shiftKey && !e.ctrlKey && !e.isComposing) { e.preventDefault(); doSend(); }
+    else if (!enterSend && e.ctrlKey) { e.preventDefault(); doSend(); }
+  }
+});
+function doSend() {
+  const t = bInput.value.trim();
+  if (!t || streaming) return;
+  bInput.value = ''; autoGrow();
+  send(t);
+}
+$id('bSend').addEventListener('click', () => {
+  if (streaming) invoke('chat_stop');
+  else doSend();
+});
+
+/* ---- 显示 / 关闭 ---- */
+function touchBubbleAct() { lastBubbleAct = Date.now(); }
+['mousemove', 'mousedown', 'keydown', 'input', 'wheel', 'touchstart'].forEach(ev =>
+  card.addEventListener(ev, touchBubbleAct, { passive: true }));
+async function onShown(reason) {
+  await loadState();
+  if (reason === 'click' && S.settings.newSessionPerClick && curSession() && curSession().msgs.length) {
+    newSession();
+  } else if (!curSession()) {
+    newSession();
+  }
+  renderHead();
+  renderSessionMsgs();
+  bInput.focus();
+  touchBubbleAct();
+  // 处理排队通知（提醒）
+  try {
+    const notices = await invoke('take_pending_notices');
+    (notices || []).forEach(renderNotice);
+  } catch (e) { }
+}
+function renderNotice(n) {
+  if (n.kind === 'reminder' && n.reminder) {
+    const r = n.reminder;
+    pushSys('⏰ 叮！提醒：' + r.content + '（' + (r.rule === 'daily' ? '每日 ' + fmtTime(r.due) : fmtDT(r.due)) + '）', {
+      ephemeral: true,
+      actions: [
+        { label: '稍后 5 分钟', onClick: () => { invoke('reminder_snooze', { id: r.id }); pushSys('已稍后提醒：' + fmtDT(Date.now() + 5 * 60000), { ephemeral: true }); } },
+        { label: '知道了', onClick: () => { } },
+      ],
+    });
+  }
+}
+tListen('bubble-shown', ev => {
+  const reason = ev.payload && ev.payload.reason;
+  card.classList.toggle('below', !!(ev.payload && ev.payload.below));
+  onShown(reason || 'click');
+});
+tListen('new-session-req', async () => {
+  await loadState();
+  newSession();
+  bInput.focus();
+});
+tListen('confirm-reset', async () => {
+  if (confirm('确定重置全部数据吗？\n将清除：全部会话与消息、长期记忆、提醒、供应商配置（含密钥）、人格、宠物位置与所有设置。\n该操作不可撤销。')) {
+    invoke('reset_data');
+    toast('已重置全部数据', 'ok');
+  }
+});
+tListen('state-changed', async ev => {
+  if (ev.payload && ev.payload.origin === 'bubble') return;
+  await loadState();
+  if (!streaming) { renderHead(); }
+});
+tListen('state-reset', async () => {
+  await loadState();
+  newSession();
+  renderHead();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !streaming) invoke('hide_bubble_cmd');
+});
+curWin.onBlur(() => {
+  if (!streaming) invoke('hide_bubble_cmd');
+  else touchBubbleAct();
+});
+setInterval(() => {
+  if (!S) return;
+  const idle = (S.settings.bubbleIdleClose || 60) * 1000;
+  if (Date.now() - lastBubbleAct > idle && !streaming) invoke('hide_bubble_cmd');
+}, 1000);
+
+/* ---- 启动（窗口隐藏时保持轻量，显示时按 bubble-shown 渲染） ---- */
+(async function init() {
+  await loadState();
+  renderHead();
+})();
+</script>
+</body>
+</html>
