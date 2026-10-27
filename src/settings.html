@@ -294,7 +294,11 @@ async function renderProvEditor() {
       $id('pvKey').placeholder = has ? '已配置（输入新值可覆盖）' : '未配置';
     } catch (e) { $id('pvKey').placeholder = '未配置'; }
   } else {
+    // 新增模式：表单与模板下拉必须同步（此前下拉残留旧值，与表单内容不一致）；
+    // 名称先清空再套模板默认名，避免从编辑态切入时残留旧供应商名
+    $id('pvName').value = '';
     applyTemplate('deepseek');
+    $id('pvTemplate').value = 'deepseek';
     $id('pvDefault').checked = false;
     $id('pvDelete').style.display = 'none';
     $id('pvKey').value = '';
@@ -311,7 +315,17 @@ function applyTemplate(key) {
   if (!nameVal || nameVal.startsWith('我的 ')) $id('pvName').value = t.key === 'custom' ? '' : '我的 ' + t.label.split('（')[0];
 }
 $id('pvTemplate').addEventListener('change', e => applyTemplate(e.target.value));
-$id('pvNew').addEventListener('click', () => { editProvId = null; renderProvList(); renderProvEditor(); });
+$id('pvNew').addEventListener('click', () => {
+  editProvId = null;
+  renderProvList();
+  renderProvEditor();
+  // 明确反馈：初始状态本就是新增模式，若不给出可感知反馈，用户会以为按钮无效；
+  // 聚焦并全选名称输入框，直接键入即可覆盖模板默认名
+  const name = $id('pvName');
+  name.focus();
+  name.select();
+  toast('已进入新增供应商模式，填写完成后点击「保存」', 'ok');
+});
 function hideTestResult() { const t = $id('pvTestResult'); t.className = 'test-line'; t.innerHTML = ''; }
 function provFormVals() {
   return {

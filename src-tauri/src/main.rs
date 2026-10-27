@@ -1339,7 +1339,7 @@ fn quit_app(app: AppHandle) {
 
 #[tauri::command]
 fn get_app_version() -> String {
-    "0.2.2（桌面版 MVP）".into()
+    "0.2.3（桌面版 MVP）".into()
 }
 
 // ================= 入口 =================

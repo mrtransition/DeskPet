@@ -1,7 +1,7 @@
 [package]
 name = "deskpet"
-version = "0.2.2"
-description = "妗岄潰 AI 瀹犵墿锛圖eskPet锛夋闈㈢増 v0.2"
+version = "0.2.3"
+description = "濡楀矂娼?AI 鐎圭姷澧块敍鍦杄skPet閿涘顢戦棃銏㈠ v0.2"
 edition = "2021"
 
 [build-dependencies]
