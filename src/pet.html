@@ -65,6 +65,9 @@ body { cursor: default; }
 .pet-root { transform-box: fill-box; transform-origin: 50% 100%; }
 .p-eye { transform-box: fill-box; transform-origin: center; }
 .p-tail { transform-box: fill-box; transform-origin: 0% 80%; }
+/* 嘴巴开合必须围绕自身中心缩放；否则 SVG 默认以视口原点缩放，y 坐标被压到额头 */
+.p-mouth-open { transform-box: fill-box; transform-origin: center; }
+.p-sparkle text { transform-box: fill-box; transform-origin: center; }
 .state-idle .pet-root { animation: pBob 3.2s ease-in-out infinite; }
 .state-idle .p-eye { animation: pBlink 4.6s infinite; }
 .state-idle .p-tail { animation: pTail 3.2s ease-in-out infinite; }

@@ -1,6 +1,6 @@
 [package]
 name = "deskpet"
-version = "0.2.5"
+version = "0.2.6"
 description = "DeskPet - 桌面 AI 宠物：透明置顶小猫，点击即聊任意大模型（Tauri v2）"
 license = "MIT"
 edition = "2021"

@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-0.2.5-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-0.2.6-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -143,6 +143,14 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v0.2.6</b> — 修复对话时嘴巴跑到额头</summary>
+
+- **根因**：说话状态的嘴巴开合动画使用 `scaleY`，但 SVG 元素未设置 `transform-box: fill-box` 与居中 `transform-origin`，默认以 SVG 视口原点缩放，导致嘴巴 y 坐标被压到额头位置。
+- **修复**：为 `.p-mouth-open` 设置自身包围盒与中心缩放；同时修正开心状态星形装饰的缩放原点，避免同类偏移。
+- 已重新构建 `dist/DeskPet.exe`。
+</details>
+
+<details>
 <summary><b>v0.2.5</b> — 按 SRS 全面核查与缺陷修复</summary>
 
 - **提醒调度**：重复提醒改为「先触发再顺延」，补齐每周 / 固定间隔规则；触发、顺延与禁用均原子落盘并广播；每 5 秒检查宠物是否仍在可视工作区内。
