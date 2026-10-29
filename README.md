@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-0.2.6-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-0.2.7-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -143,6 +143,13 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v0.2.7</b> — 修复提醒弹窗「知道了」不消失</summary>
+
+- 提醒消息的「知道了」与「稍后 5 分钟」按钮增加关闭行为，点击后移除该提醒消息并重新适配气泡高度。
+- 其他系统消息的快捷动作不受影响。
+</details>
+
+<details>
 <summary><b>v0.2.6</b> — 修复对话时嘴巴跑到额头</summary>
 
 - **根因**：说话状态的嘴巴开合动画使用 `scaleY`，但 SVG 元素未设置 `transform-box: fill-box` 与居中 `transform-origin`，默认以 SVG 视口原点缩放，导致嘴巴 y 坐标被压到额头位置。

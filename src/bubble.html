@@ -127,7 +127,16 @@ function makeMsgEl(m) {
       const act = el('div', 'm-act');
       m.actions.forEach(a => {
         const b = el('button', '', esc(a.label));
-        b.onclick = () => { a.onClick && a.onClick(); };
+        b.onclick = () => {
+          try { a.onClick && a.onClick(); }
+          finally {
+            if (a.dismiss) {
+              d.remove();
+              scrollMsgs(false);
+              fitHeight();
+            }
+          }
+        };
         act.appendChild(b);
       });
       d.appendChild(act);
@@ -521,8 +530,8 @@ function renderNotice(n) {
     pushSys('⏰ 叮！提醒：' + r.content + '（' + remRuleText(r) + '）', {
       ephemeral: true,
       actions: [
-        { label: '稍后 5 分钟', onClick: () => { invoke('reminder_snooze', { id: r.id, content: r.content }); pushSys('已稍后提醒：' + fmtDT(Date.now() + 5 * 60000), { ephemeral: true }); } },
-        { label: '知道了', onClick: () => { } },
+        { label: '稍后 5 分钟', dismiss: true, onClick: () => { invoke('reminder_snooze', { id: r.id, content: r.content }); pushSys('已稍后提醒：' + fmtDT(Date.now() + 5 * 60000), { ephemeral: true }); } },
+        { label: '知道了', dismiss: true, onClick: () => { } },
       ],
     });
   }
