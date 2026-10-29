@@ -4,11 +4,11 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-0.2.4-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-0.2.5-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
-[![Size](https://img.shields.io/badge/安装包-13.3_MB-93A3B5?style=flat-square)](#快速开始)
+[![Size](https://img.shields.io/badge/安装包-13.4_MB-93A3B5?style=flat-square)](#快速开始)
 
 透明置顶 · 托盘常驻 · 多模型接入 · 密钥零泄露 · 数据全程本地
 
@@ -27,22 +27,22 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | | |
 |---|---|
 | 🪟 **真实桌面窗口** | 透明无边框、系统级置顶、不占任务栏；点击穿透一键把鼠标事件还给下层窗口 |
-| 💬 **微型气泡对话** | 智能上下翻转 + 尾巴箭头定位；流式逐 token 渲染、Markdown / 代码块 / 一键复制；Esc / 外点 / 失焦 / 闲置自动关闭，关闭后恢复原前台窗口 |
+| 💬 **微型气泡对话** | 智能上下翻转 + 尾巴箭头定位；左右拖拽调宽（240–480 px）；流式逐 token 渲染、Markdown / 代码块高亮 / 一键复制；Esc / 外点 / 失焦 / 闲置自动关闭，关闭后恢复原前台窗口 |
 | 🤖 **多模型接入** | 12+ 供应商模板：OpenAI、DeepSeek、Claude、Gemini、Kimi、智谱 GLM、通义千问、Azure、Ollama、LM Studio、vLLM、自定义兼容端点；OpenAI / Anthropic / Gemini 三协议原生适配，主进程直连（无 CORS 限制） |
 | 🔐 **密钥零泄露** | API Key 存 **Windows 凭据管理器**，不进入数据文件、日志与导出内容；本地服务（Ollama 等）免 Key 直连 |
 | 🧠 **长期记忆** | 对它说「记住：我喜欢蓝色」即写入记忆库，之后每轮对话按相关度自动注入（≤5 条） |
-| ⏰ **自然语言提醒** | 「25 分钟后提醒我喝水」「每天 8:30 提醒我站会」→ 主进程调度器准点触发，支持稍后 5 分钟与免打扰排队补发 |
-| 😼 **人格与皮肤** | 3 套内置人格（贴心小助手 / 毒舌吐槽役 / 专注工作搭子）+ 3 套皮肤联动切换；支持人格导入导出 |
+| ⏰ **自然语言提醒** | 「25 分钟后提醒我喝水」「每天 8:30 提醒我站会」「每周一 9:00」「每隔 2 小时」→ 主进程调度器准点触发，支持稍后 5 分钟与免打扰排队补发 |
+| 😼 **人格与皮肤** | 3 套内置人格（贴心小助手 / 毒舌吐槽役 / 专注工作搭子）+ 3 套皮肤联动切换；支持 GIF / APNG / 动态 WebP 自定义动画形象与人格导入导出 |
 | 🎭 **八态动画** | idle / drag / click / talk / sleep / work / happy / error 全矢量状态机，50%–200% 无级缩放 |
 | 🖥 **系统集成** | 托盘菜单（左键唤起气泡）、全局快捷键、开机自启、会话检索与 Markdown 导出 |
-| 🪶 **轻量** | 安装包 13.3 MB · 运行内存约 31 MB · 前端零构建（无 npm 依赖） |
+| 🪶 **轻量** | 安装包 13.4 MB · 运行内存约 31 MB · 前端零构建（无 npm 依赖） |
 
 ## 🚀 快速开始
 
 无需构建，下载即用：
 
 1. 打开本仓库 [`dist/`](dist) 目录，下载两个文件：
-   - `DeskPet.exe`（13.3 MB，主程序）
+   - `DeskPet.exe`（13.4 MB，主程序）
    - `WebView2Loader.dll`（0.15 MB，引导库）
 2. 将两个文件放入**同一文件夹**，双击 `DeskPet.exe`
 
@@ -133,7 +133,7 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 
 ## 🗺️ Roadmap
 
-- [ ] 动画皮肤包（APNG / GIF / 帧序列导入）
+- [ ] 完整动画皮肤包（图集 / 状态机 / 音效；已支持单文件 GIF / APNG / 动态 WebP）
 - [ ] SQLite 存储与会话全文检索增强
 - [ ] 自动更新（GitHub Releases 通道）
 - [ ] 多语言（i18n）
@@ -143,6 +143,19 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v0.2.5</b> — 按 SRS 全面核查与缺陷修复</summary>
+
+- **提醒调度**：重复提醒改为「先触发再顺延」，补齐每周 / 固定间隔规则；触发、顺延与禁用均原子落盘并广播；每 5 秒检查宠物是否仍在可视工作区内。
+- **模型接入**：请求按配置超时 / 重试，网络、超时与 5xx 指数退避；400 上下文超长自动裁剪重试；429 透传 `Retry-After` 并在气泡显示冷却倒计时；流式空闲超时；发送前按 `ctxTokens` 预算裁剪；Azure OpenAI 改用 `api-key` 头与 `api-version`。
+- **数据安全**：状态文件改为临时文件 + 备份 + 原子替换；主文件损坏时自动回退 `.json.bak` 并保留 `.corrupt-*`；启动时迁移旧版明文密钥至 Windows 凭据管理器；导出文件名加固，拒绝路径穿越与 Windows 保留名。
+- **多窗口一致性**：非设置窗口保存时保留后端权威字段（缩放、穿透、位置、提醒等），避免宠物/气泡窗口用旧快照覆盖设置；导入配置重新映射供应商 / 人格 ID，提醒经主进程命令写入。
+- **窗口与气泡**：气泡支持左右边缘拖拽调宽（240–480 px）、智能翻转与工作区夹紧；提醒弹出不抢焦点；关闭气泡仅在确实可见时恢复前台；右键菜单与缩放后的气泡跟随位置修正。
+- **自定义形象**：设置页可导入 GIF / APNG / 动态 WebP 作为宠物形象（≤ 1.5 MB），保留拖拽、点击、睡眠与提醒动画；内置矢量皮肤仍可随时恢复。
+- **隐私与可访问性**：设置页新增隐私分组与出站请求审计（域名 / 状态 / 延迟，可清空）；新增置顶与任务栏开关；支持 `prefers-reduced-motion` 与高对比度。
+- 新增 15 个 Rust 单元测试，覆盖提醒触发 / 顺延、上下文裁剪、token 预算、Azure URL、原子写盘与状态合并。
+</details>
+
+<details>
 <summary><b>v0.2.4</b> — 修复整机冻结死锁（提醒到期后点设置卡死）</summary>
 
 - **根因**：提醒调度线程在持有全局状态锁时调用写盘函数，而写盘函数内部会对同一把锁再次加锁——`std::sync::Mutex` 不支持同线程重入，调度线程自死锁并**永久持有状态锁**；此后任何需要该锁的命令（如打开设置时的状态加载）都会把主线程永久阻塞，导致整个应用冻结。仅在存在已到期的一次性提醒时触发，故此前的干净环境测试未暴露。

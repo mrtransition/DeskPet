@@ -25,6 +25,7 @@ body { background: var(--bg); display: flex; flex-direction: column; }
       <button data-tab="pet">宠物与交互</button>
       <button data-tab="memory">记忆</button>
       <button data-tab="data">会话与数据</button>
+      <button data-tab="privacy">隐私</button>
       <button data-tab="about">关于</button>
     </nav>
     <div class="win-content" id="setBody">
@@ -56,8 +57,9 @@ body { background: var(--bg); display: flex; flex-direction: column; }
               <div class="frow"><label>Top P（0–1）</label><input id="pvTopP" type="number" min="0" max="1" step="0.05"></div>
               <div class="frow"><label>Max Tokens（64–8192）</label><input id="pvMaxTok" type="number" min="64" max="8192" step="64"></div>
               <div class="frow"><label>上下文轮数（0=不限）</label><input id="pvRounds" type="number" min="0" max="50" step="1"></div>
+              <div class="frow"><label>上下文 Token 上限（512–128000）</label><input id="pvCtxTok" type="number" min="512" max="128000" step="512"></div>
               <div class="frow"><label>超时（秒）</label><input id="pvTimeout" type="number" min="5" max="120" step="5"></div>
-              <div class="frow"><label>失败重试（前端自动，0–5）</label><input id="pvRetry" type="number" min="0" max="5" step="1"></div>
+              <div class="frow"><label>失败自动重试（主进程，0–5）</label><input id="pvRetry" type="number" min="0" max="5" step="1"></div>
               <div class="frow"><label>流式输出</label><select id="pvStream"><option value="1">开启（推荐）</option><option value="0">关闭</option></select></div>
             </div>
             <div class="btn-row">
@@ -110,6 +112,12 @@ body { background: var(--bg); display: flex; flex-direction: column; }
         <div class="sec">
           <h4>皮肤 <span class="tag">FR-SKN-001 内置 3 套</span></h4>
           <div class="skin-cards" id="skinSel"></div>
+          <div class="inline-opts" style="margin-top:9px">
+            <button id="skinPick">导入动画形象（GIF / APNG / 动态 WebP）</button>
+            <button id="skinReset">恢复内置矢量皮肤</button>
+            <input id="skinFile" type="file" accept="image/gif,image/png,image/webp" hidden>
+          </div>
+          <div class="fnote" id="skinFileInfo">导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互；单文件建议不超过 1.5 MB。</div>
         </div>
         <div class="sec">
           <h4>体型与层级</h4>
@@ -119,13 +127,18 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           <div class="inline-opts" style="margin-top:9px">
             <label><input type="checkbox" id="ctThrough"> 点击穿透（开启后鼠标事件落到下层窗口，托盘菜单可恢复）</label>
           </div>
-          <div class="fnote">窗口置顶（FR-PET-002）：宠物与气泡窗口为系统级 always-on-top；任务栏不显示（FR-PET-003）。</div>
+          <div class="inline-opts" style="margin-top:9px">
+            <label><input type="checkbox" id="topMost"> 宠物窗口置顶（FR-PET-002）</label>
+            <label><input type="checkbox" id="taskbarChk"> 在任务栏显示宠物（FR-PET-003）</label>
+          </div>
+          <div class="fnote">默认置顶且不占用任务栏；关闭置顶后宠物位于普通窗口层级，可能被其他窗口遮挡。</div>
         </div>
         <div class="sec">
           <h4>气泡与输入</h4>
           <div class="fgrid">
             <div class="frow"><label>闲置自动关闭（秒，15–300）</label><input id="idleClose" type="number" min="15" max="300" step="5"></div>
             <div class="frow"><label>主动搭话频率</label><select id="chatterSel"><option value="off">关闭</option><option value="low">低（约 10 分钟）</option><option value="mid">中（约 5 分钟）</option><option value="high">高（约 2.5 分钟）</option></select></div>
+            <div class="frow"><label>气泡宽度（240–480 px）：<b id="bubbleWVal">340px</b></label><input id="bubbleW" type="range" min="240" max="480" step="10"></div>
           </div>
           <div class="inline-opts" style="margin-top:9px">
             <label><input type="radio" name="enterMode" value="1" checked> Enter 发送 / Shift+Enter 换行</label>
@@ -188,6 +201,25 @@ body { background: var(--bg); display: flex; flex-direction: column; }
         <div class="fnote" id="statsLine"></div>
       </div>
 
+      <!-- 隐私 -->
+      <div class="pane" id="tab-privacy">
+        <h3>隐私与出站审计</h3><div class="p-desc">零埋点 · 数据仅存本地 · 密钥不进入渲染层 · 出站请求可审计（FR-SYS-003 / NFR-SEC-003 / NFR-PRV）</div>
+        <div class="sec">
+          <h4>本地数据</h4>
+          <div id="privacyInfo" class="privacy-grid"></div>
+        </div>
+        <div class="sec">
+          <h4>出站请求审计 <span class="tag">仅域名 / 模型 / 状态 / 延迟</span></h4>
+          <div class="fnote" style="margin:0 0 8px">不记录密钥、请求头或对话内容。日志保存在内存中，退出即清空。</div>
+          <div class="btn-row" style="margin-top:0"><button id="outClear">清空审计记录</button><button id="outRefresh">刷新</button></div>
+          <div id="outList"></div>
+        </div>
+        <div class="sec">
+          <h4>敏感能力</h4>
+          <div class="fnote" style="margin:0">截图、剪贴板读取等能力默认关闭，当前版本未启用任何自动截图/剪贴板采集（NFR-PRV-003）。</div>
+        </div>
+      </div>
+
       <!-- 关于 -->
       <div class="pane about" id="tab-about">
         <h3>桌面 AI 宠物</h3>
@@ -195,33 +227,40 @@ body { background: var(--bg); display: flex; flex-direction: column; }
         <details open>
           <summary>本桌面版实现了什么</summary>
           <ul>
-            <li>真实系统能力：透明无边框置顶宠物窗口、独立气泡窗口（智能上下翻转 + 尾巴箭头）、系统托盘（左键唤起 / 右键菜单）、全局快捷键（Ctrl+Shift+Space 唤起、Ctrl+, 设置）、开机自启、点击穿透、失焦自动关闭并恢复原前台窗口</li>
-            <li>主进程对话：OpenAI / Anthropic / Gemini 三类流式协议适配、SSE 逐 token 推送、停止生成、非流式自动降级、错误分类；密钥存 Windows 凭据管理器，渲染层不可见（FR-MDL-007/013、NFR-SEC-001、CON-07）</li>
-            <li>其他功能：3 套人格 + 皮肤联动、八态动画、拖拽与位置记忆、缩放、快捷动作、长期记忆注入、自然语言提醒（主进程调度器）、免打扰与补发、主动搭话、会话持久化/检索/导出、配置导入导出</li>
+            <li>真实系统能力：透明无边框置顶宠物窗口（置顶/任务栏可见性可配置）、独立气泡窗口（智能上下翻转 + 尾巴箭头 + 跟随移动 + 边缘拖拽调宽）、系统托盘（左键唤起 / 右键菜单）、全局快捷键（Ctrl+Shift+Space 唤起、Ctrl+, 设置）、开机自启、点击穿透、失焦自动关闭并恢复原前台窗口</li>
+            <li>主进程对话：OpenAI / Anthropic / Gemini 三类流式协议适配、SSE 逐 token 推送、停止生成、非流式自动降级、超时/5xx 自动重试、429 冷却、上下文超长自动裁剪、错误分类；密钥存 Windows 凭据管理器，渲染层不可见，出站请求可在「隐私」页审计（FR-MDL-007/009/012/013、NFR-SEC-001/003）</li>
+            <li>其他功能：3 套人格 + 皮肤双向联动（含供应商绑定）、八态动画、拖拽与位置记忆、缩放、快捷动作、长期记忆注入、自然语言提醒（主进程调度器，支持一次性/每日/每周/间隔）、免打扰与补发、主动搭话、会话持久化/检索/导出、配置导入导出与 ID 重映射</li>
           </ul>
         </details>
         <details>
           <summary>SRS 需求覆盖对照（桌面版）</summary>
           <table>
             <tr><th>需求</th><th>说明</th><th>状态</th></tr>
-            <tr><td>FR-PET-001/002/003</td><td>透明无边框置顶、不入任务栏</td><td class="st-ok">真实系统窗口</td></tr>
-            <tr><td>FR-PET-004/005</td><td>拖拽移动、位置持久化、越界回收</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-PET-001/002/003</td><td>透明无边框、置顶可配置、任务栏显示可配置</td><td class="st-part">真实系统窗口；置顶为开关，未提供「覆盖任务栏」层级</td></tr>
+            <tr><td>FR-PET-004/005</td><td>拖拽移动、位置持久化、越界回收</td><td class="st-ok">完整（含多显示器工作区）</td></tr>
             <tr><td>FR-PET-006</td><td>八态动画状态机</td><td class="st-ok">完整（SVG 矢量）</td></tr>
             <tr><td>FR-PET-007</td><td>50%–200% 无级缩放</td><td class="st-ok">完整</td></tr>
             <tr><td>FR-PET-008</td><td>点击穿透 + 托盘恢复</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-PET-009</td><td>APNG/GIF/Live2D 等动画格式</td><td class="st-part">简化为内置矢量动画（皮肤包导入待后续版本）</td></tr>
-            <tr><td>FR-BUB-001~014</td><td>弹出/定位/焦点/渲染/流式/输入/会话/关闭条件</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-PET-009</td><td>APNG/GIF/Live2D 等动画格式</td><td class="st-part">支持 GIF / APNG / 动态 WebP 自定义形象；Live2D / Spine / Lottie / 帧序列皮肤包未实现</td></tr>
+            <tr><td>FR-PET-010</td><td>非活跃状态降至 30fps</td><td class="st-part">使用轻量 CSS 动画，未做显式帧率降级</td></tr>
+            <tr><td>FR-BUB-001~014</td><td>弹出/定位/焦点/宽度拖拽/跟随/渲染/流式/输入/会话/关闭条件</td><td class="st-ok">完整</td></tr>
             <tr><td>FR-BUB-016/017</td><td>全局快捷键唤起气泡与设置</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-MDL-001~006/009/012</td><td>模板、自定义、测试、多配置、切换、参数、错误处理</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-BUB-015</td><td>对话内快速切换模型与人格（人格联动供应商/皮肤）</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-MDL-001~006/009/012</td><td>模板、自定义、测试、多配置、切换、参数、超时/重试/上下文裁剪</td><td class="st-ok">完整</td></tr>
             <tr><td>FR-MDL-007/013</td><td>密钥系统安全存储、主进程请求</td><td class="st-ok">Windows 凭据管理器 + 主进程</td></tr>
+            <tr><td>FR-MDL-008/010/011</td><td>代理、上下文截断、非流式降级</td><td class="st-part">上下文与降级完整；HTTP / SOCKS5 代理待后续</td></tr>
             <tr><td>FR-PSN-001/003/004</td><td>人格卡片、切换生效、导入导出</td><td class="st-ok">完整</td></tr>
             <tr><td>FR-PSN-005</td><td>人格与皮肤绑定联动</td><td class="st-ok">完整</td></tr>
             <tr><td>FR-MEM-001/002/004</td><td>记忆写入、相关度注入、可视化管理</td><td class="st-ok">完整</td></tr>
             <tr><td>FR-REM-001/002/004</td><td>自然语言提醒、播报、稍后提醒、免打扰</td><td class="st-ok">完整（主进程调度器）</td></tr>
+            <tr><td>FR-REM-003</td><td>一次性 / 每日 / 每周 / 固定间隔提醒</td><td class="st-ok">完整（主进程调度器）</td></tr>
             <tr><td>FR-REM-005</td><td>主动搭话</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-REM-003/006/007</td><td>重复提醒细则、久坐、剪贴板感知</td><td class="st-part">每日重复已支持；其余待后续</td></tr>
-            <tr><td>FR-SYS-001/002/003</td><td>托盘、开机自启、设置窗口（6 分组）</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-SYS-004/005/006</td><td>自动更新、用量统计、i18n</td><td class="st-next">待后续版本</td></tr>
+            <tr><td>FR-REM-006/007</td><td>久坐 / 喝水提醒、免打扰时段、剪贴板感知</td><td class="st-part">提供提醒与免打扰；久坐模板、时段配置与剪贴板感知待后续</td></tr>
+            <tr><td>FR-SKN-002</td><td>皮肤包导入（图集 / 状态机 / 音效）</td><td class="st-part">支持单文件 GIF / APNG / 动态 WebP；完整皮肤包格式待后续</td></tr>
+            <tr><td>FR-TOOL-001~004</td><td>函数调用、授权与结果回传</td><td class="st-next">未实现（模型仅输出文本）</td></tr>
+            <tr><td>FR-SYS-001/002/003</td><td>托盘、开机自启、设置窗口（模型/人格/宠物/记忆/数据/隐私）</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-SYS-004/005/006</td><td>自动更新、用量统计、i18n</td><td class="st-part">本地 token 统计已实现；自动更新与 i18n 待后续</td></tr>
+            <tr><td>FR-VOI-001</td><td>语音输入 / 朗读</td><td class="st-next">未实现</td></tr>
             <tr><td>FR-DAT-001~004</td><td>本地持久化、检索导出、清理、零未授权上传</td><td class="st-ok">完整（JSON 持久化替代 SQLite）</td></tr>
             <tr><td>NFR-INT-001</td><td>不持续抢占前台（失焦恢复原前台窗口）</td><td class="st-ok">完整</td></tr>
             <tr><td>NFR-INT-003/004</td><td>HTTPS/SSE/localhost、三类流式协议</td><td class="st-ok">完整</td></tr>
@@ -257,7 +296,7 @@ $id('setClose').addEventListener('click', () => curWin.hide());
 function renderAll() {
   renderProvList(); renderProvEditor();
   renderPsList(); renderPeEditor();
-  renderPetTab(); renderMemTab(); renderSessList(); renderAbout();
+  renderPetTab(); renderMemTab(); renderSessList(); renderPrivacyTab(); renderAbout();
 }
 
 /* ============ 模型 ============ */
@@ -284,6 +323,7 @@ async function renderProvEditor() {
     const pr = p.params || {};
     $id('pvTemp').value = pr.temp; $id('pvTopP').value = pr.topP;
     $id('pvMaxTok').value = pr.maxTokens; $id('pvRounds').value = pr.ctxRounds;
+    $id('pvCtxTok').value = pr.ctxTokens || 8000;
     $id('pvTimeout').value = pr.timeout; $id('pvRetry').value = pr.retry;
     $id('pvStream').value = pr.stream === false ? '0' : '1';
     $id('pvDefault').checked = !!p.isDefault;
@@ -340,6 +380,7 @@ function provFormVals() {
       topP: clampNum($id('pvTopP').value, 0, 1, 1),
       maxTokens: clampNum($id('pvMaxTok').value, 64, 8192, 1024),
       ctxRounds: clampNum($id('pvRounds').value, 0, 50, 10),
+      ctxTokens: clampNum($id('pvCtxTok').value, 512, 128000, 8000),
       timeout: clampNum($id('pvTimeout').value, 5, 120, 30),
       retry: clampNum($id('pvRetry').value, 0, 5, 2),
       stream: $id('pvStream').value === '1',
@@ -528,7 +569,14 @@ $id('peImportFile').addEventListener('change', e => {
       const list = j.persona ? [j.persona] : (j.personas || []);
       if (!list.length) throw new Error('未找到 persona 字段');
       let n = 0;
-      list.forEach(p => { if (p.name) { p.id = uid('ps'); S.personas.push(p); n++; } });
+      list.forEach(p => {
+        if (!p.name) return;
+        p.id = uid('ps');
+        if (!getProv(p.providerId)) p.providerId = (defProvObj() || {}).id || 'p-demo';
+        if (!SKINS[p.skin]) p.skin = S.settings.skin || 'blue';
+        S.personas.push(p);
+        n++;
+      });
       saveState(); renderPsList();
       toast('已导入 ' + n + ' 个人格', 'ok');
     } catch (err) { toast('导入失败：' + err.message, 'err'); }
@@ -546,14 +594,23 @@ function renderPetTab() {
     c.innerHTML = '<span class="skin-dot" style="background:' + SKINS[k].fur + '"></span><span>' + SKINS[k].label + '</span>' +
       (S.settings.skin === k ? '<span class="pv-star">✓</span>' : '');
     c.onclick = () => {
-      S.settings.skin = k; saveState(); renderPetTab();
-      toast('已切换皮肤：' + SKINS[k].label, 'ok');
+      // 显式选择内置皮肤即退出自定义动画形象
+      S.settings.customSkin = null;
+      // FR-PSN-005：若该皮肤绑定了人格，则同步切换人格与其供应商
+      const ps = switchSkin(k);
+      saveState(); renderPetTab();
+      toast('已切换皮肤：' + SKINS[k].label + (ps ? '（人格：' + ps.name + '）' : ''), 'ok');
     };
     box.appendChild(c);
   });
+  renderCustomSkin();
   $id('petScale').value = S.settings.petScale || 1;
   $id('petScaleVal').textContent = Math.round((S.settings.petScale || 1) * 100) + '%';
   $id('ctThrough').checked = !!S.settings.clickThrough;
+  $id('topMost').checked = S.settings.alwaysOnTop !== false;
+  $id('taskbarChk').checked = !!S.settings.showInTaskbar;
+  $id('bubbleW').value = S.settings.bubbleW || 340;
+  $id('bubbleWVal').textContent = Math.round(S.settings.bubbleW || 340) + 'px';
   $id('idleClose').value = S.settings.bubbleIdleClose || 60;
   $id('chatterSel').value = S.settings.chatter || 'off';
   $id('dndChk').checked = !!S.settings.dnd;
@@ -562,18 +619,82 @@ function renderPetTab() {
   $id('newPerClick').checked = !!S.settings.newSessionPerClick;
   renderRemList();
 }
+function renderCustomSkin() {
+  const cs = S.settings.customSkin;
+  const info = $id('skinFileInfo');
+  if (cs && cs.data) {
+    const kb = Math.max(1, Math.round((cs.data.length * 3 / 4) / 1024));
+    info.innerHTML = '当前使用自定义形象：<b>' + esc(cs.name || '未命名') + '</b> · 约 ' + kb + ' KB。支持 GIF / APNG / 动态 WebP，导入后替代内置矢量形象。';
+  } else {
+    info.textContent = '导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互；单文件建议不超过 1.5 MB。';
+  }
+}
+$id('skinPick').addEventListener('click', () => $id('skinFile').click());
+$id('skinReset').addEventListener('click', () => {
+  if (!S.settings.customSkin) { toast('当前已使用内置皮肤', 'warn'); return; }
+  S.settings.customSkin = null;
+  saveState(); renderPetTab();
+  toast('已恢复内置矢量皮肤', 'ok');
+});
+$id('skinFile').addEventListener('change', e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  if (!/^image\/(gif|png|webp)$/.test(f.type)) { toast('请选择 GIF / APNG（PNG）/ 动态 WebP 图片', 'warn'); return; }
+  if (f.size > 1.5 * 1024 * 1024) { toast('文件过大（' + (f.size / 1024 / 1024).toFixed(1) + ' MB），请压缩到 1.5 MB 以内', 'err'); return; }
+  const rd = new FileReader();
+  rd.onload = () => {
+    S.settings.customSkin = { name: f.name, data: String(rd.result), ts: Date.now() };
+    saveState(); renderPetTab();
+    toast('已导入动画形象：' + f.name, 'ok');
+  };
+  rd.onerror = () => toast('读取图片失败', 'err');
+  rd.readAsDataURL(f);
+});
+let scaleTimer = null, bubbleWTimer = null;
 $id('petScale').addEventListener('input', e => {
   const v = parseFloat(e.target.value);
   $id('petScaleVal').textContent = Math.round(v * 100) + '%';
-  invoke('set_pet_scale', { scale: v });
+  S.settings.petScale = v;
+  clearTimeout(scaleTimer);
+  scaleTimer = setTimeout(() => {
+    invoke('set_pet_scale', { scale: v }).catch(err => toast('缩放失败：' + err, 'err'));
+    saveState();
+  }, 80);
 });
 $id('ctThrough').addEventListener('change', e => {
-  invoke('set_click_through', { on: e.target.checked });
+  S.settings.clickThrough = e.target.checked;
+  saveState();
+  invoke('set_click_through', { on: e.target.checked }).catch(err => toast('切换失败：' + err, 'err'));
   if (e.target.checked) toast('已开启点击穿透：宠物菜单或托盘可恢复', 'ok');
+});
+$id('topMost').addEventListener('change', e => {
+  S.settings.alwaysOnTop = e.target.checked;
+  saveState();
+  invoke('set_pet_always_on_top', { on: e.target.checked }).catch(err => toast('切换失败：' + err, 'err'));
+});
+$id('taskbarChk').addEventListener('change', e => {
+  S.settings.showInTaskbar = e.target.checked;
+  saveState();
+  invoke('set_pet_taskbar', { show: e.target.checked }).catch(err => toast('切换失败：' + err, 'err'));
+});
+$id('bubbleW').addEventListener('input', e => {
+  const v = clampNum(e.target.value, 240, 480, 340);
+  $id('bubbleWVal').textContent = Math.round(v) + 'px';
+  S.settings.bubbleW = v;
+  clearTimeout(bubbleWTimer);
+  bubbleWTimer = setTimeout(() => {
+    invoke('bubble_set_width', { width: v, finalize: true }).catch(err => toast('调整失败：' + err, 'err'));
+    saveState();
+  }, 90);
 });
 $id('idleClose').addEventListener('change', e => { S.settings.bubbleIdleClose = clampNum(e.target.value, 15, 300, 60); saveState(); });
 $id('chatterSel').addEventListener('change', e => { S.settings.chatter = e.target.value; saveState(); });
-$id('dndChk').addEventListener('change', e => invoke('set_dnd', { on: e.target.checked }));
+$id('dndChk').addEventListener('change', e => {
+  S.settings.dnd = e.target.checked;
+  saveState();
+  invoke('set_dnd', { on: e.target.checked }).catch(err => toast('切换失败：' + err, 'err'));
+});
 document.querySelectorAll('input[name=enterMode]').forEach(r => r.addEventListener('change', e => {
   if (e.target.checked) { S.settings.enterSend = e.target.value === '1'; saveState(); }
 }));
@@ -589,7 +710,7 @@ function renderRemList() {
   S.reminders.forEach(r => {
     const row = el('div', 'row-item');
     row.innerHTML = '<div class="ri-main"><div class="ri-title">⏰ ' + esc(r.content) + '</div>' +
-      '<div class="ri-sub">' + (r.rule === 'daily' ? '每天 ' + fmtTime(r.due) : fmtDT(r.due)) + (r.rule === 'once' ? ' · 一次性' : '') + '</div></div>';
+      '<div class="ri-sub">' + esc(remRuleText(r)) + (r.rule === 'once' ? ' · 一次性' : ' · 重复') + '</div></div>';
     const btns = el('div', 'ri-btns');
     const del = el('button', '', '删除');
     del.onclick = () => { invoke('reminder_delete', { id: r.id }); toast('提醒已删除', 'ok'); };
@@ -634,6 +755,45 @@ $id('memAddBtn').addEventListener('click', () => {
   toast('已添加记忆', 'ok');
 });
 $id('memAddInput').addEventListener('keydown', e => { if (e.key === 'Enter') $id('memAddBtn').click(); });
+
+/* ============ 隐私 ============ */
+async function renderPrivacyTab() {
+  const box = $id('privacyInfo');
+  if (!box) return;
+  try {
+    const info = await invoke('privacy_info');
+    const rows = [
+      ['数据目录', info.dataDir || '-'],
+      ['密钥存储', info.keyStore || '-'],
+      ['遥测 / 埋点', info.telemetry ? '已启用' : '未启用（零上报）'],
+      ['对话数据', info.localOnly ? '仅存本机' : '未知'],
+      ['出站审计', info.outboundAudit ? '已启用（内存）' : '未启用'],
+      ['旧版明文密钥', info.legacyPlaintextKeys ? '检测到残留，请重启应用以完成迁移' : '无'],
+    ];
+    box.innerHTML = rows.map(r => '<div class="pg-k">' + esc(r[0]) + '</div><div class="pg-v">' + esc(r[1]) + '</div>').join('');
+  } catch (e) {
+    box.innerHTML = '<div class="pg-v">读取失败：' + esc(String(e)) + '</div>';
+  }
+  try {
+    const log = await invoke('outbound_log');
+    const list = $id('outList');
+    if (!log || !log.length) {
+      list.innerHTML = '<div class="empty-tip">暂无出站请求记录。发起一次对话或测试连接后即可在此查看。</div>';
+      return;
+    }
+    const rows = log.slice().reverse().map(x => {
+      const ok = x.ok ? '<span class="st-ok">成功</span>' : '<span class="st-part">失败</span>';
+      return '<tr><td>' + fmtDT(x.ts) + '</td><td>' + esc(x.host || '-') + '</td><td>' + esc(x.type || '-') +
+        '</td><td>' + esc(x.model || '-') + '</td><td>' + (x.status || '-') + '</td><td>' + ok +
+        '</td><td>' + (x.latency || 0) + ' ms</td></tr>';
+    }).join('');
+    list.innerHTML = '<table class="audit-table"><thead><tr><th>时间</th><th>域名</th><th>类型</th><th>模型</th><th>状态</th><th>结果</th><th>延迟</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  } catch (e) { /* 审计不可用不阻断隐私页 */ }
+}
+$id('outClear').addEventListener('click', async () => {
+  try { await invoke('outbound_clear'); toast('审计记录已清空', 'ok'); renderPrivacyTab(); } catch (e) { toast('清空失败：' + e, 'err'); }
+});
+$id('outRefresh').addEventListener('click', renderPrivacyTab);
 
 /* ============ 会话与数据 ============ */
 function renderSessList() {
@@ -699,6 +859,7 @@ $id('expConfig').addEventListener('click', async () => {
     personas: clone(S.personas),
     settings: clone(S.settings),
     memories: clone(S.memories),
+    reminders: clone(S.reminders),
   };
   try {
     const path = await invoke('export_text', { filename: '桌面AI宠物-配置.json', content: JSON.stringify(data, null, 2) });
@@ -714,11 +875,68 @@ $id('impConfigFile').addEventListener('change', e => {
     try {
       const j = JSON.parse(rd.result);
       let n = 0;
-      (j.providers || []).forEach(p => { if (p.name && p.type) { p.id = uid('p'); p.apiKey = ''; S.providers.push(p); n++; } });
-      (j.personas || []).forEach(p => { if (p.name) { p.id = uid('ps'); S.personas.push(p); n++; } });
-      (j.memories || []).forEach(m => { if (m.content) { m.id = uid('mem'); S.memories.push(m); n++; } });
-      if (j.settings) S.settings = Object.assign(S.settings, j.settings);
-      saveState(); renderAll();
+      // 供应商 / 人格重新分配 ID，并重映射引用，避免与现有数据冲突（SRS 4.1）
+      const provMap = {};
+      (j.providers || []).forEach(p => {
+        if (!p.name || !p.type) return;
+        const np = Object.assign({}, p, { id: uid('p'), apiKey: '' });
+        // 导入配置里的默认供应商应取代现有默认，避免出现多个 isDefault
+        if (np.isDefault) S.providers.forEach(x => { x.isDefault = false; });
+        S.providers.push(np);
+        if (p.id) provMap[p.id] = np.id;
+        n++;
+      });
+      const persMap = {};
+      (j.personas || []).forEach(p => {
+        if (!p.name) return;
+        const np = Object.assign({}, p, { id: uid('ps') });
+        if (np.providerId && provMap[np.providerId]) np.providerId = provMap[np.providerId];
+        else if (!getProv(np.providerId)) np.providerId = (defProvObj() || {}).id || 'p-demo';
+        if (!SKINS[np.skin]) np.skin = 'blue';
+        S.personas.push(np);
+        if (p.id) persMap[p.id] = np.id;
+        n++;
+      });
+      (j.memories || []).forEach(m => {
+        if (m.content) { S.memories.push(Object.assign({}, m, { id: uid('mem') })); n++; }
+      });
+      // 提醒必须经主进程命令写入（state_save 会保留主进程权威提醒列表）
+      const importedReminders = [];
+      (j.reminders || []).forEach(r => {
+        if (!r || !r.content || !r.due) return;
+        const nr = Object.assign({}, r, { id: uid('rem'), enabled: r.enabled !== false });
+        importedReminders.push(nr);
+        n++;
+      });
+      const st = j.settings || {};
+      ['petScale', 'skin', 'clickThrough', 'lowFps', 'bubbleW', 'bubbleIdleClose', 'enterSend',
+        'newSessionPerClick', 'showInTaskbar', 'alwaysOnTop', 'chatter', 'dnd'].forEach(k => {
+        if (st[k] !== undefined) S.settings[k] = st[k];
+      });
+      S.settings.petScale = clampNum(S.settings.petScale, 0.5, 2, 1);
+      S.settings.bubbleW = clampNum(S.settings.bubbleW, 240, 480, 340);
+      if (!SKINS[S.settings.skin]) S.settings.skin = 'blue';
+      if (st.customSkin !== undefined) {
+        const cs = st.customSkin;
+        const ok = cs && typeof cs.data === 'string' && /^data:image\/(gif|png|webp);base64,/.test(cs.data) && cs.data.length < 2200000;
+        S.settings.customSkin = ok ? { name: String(cs.name || '导入形象').slice(0, 120), data: cs.data, ts: Date.now() } : null;
+      }
+      if (st.lastProviderId && provMap[st.lastProviderId]) S.settings.lastProviderId = provMap[st.lastProviderId];
+      else if (!getProv(S.settings.lastProviderId)) S.settings.lastProviderId = null;
+      if (st.lastPersonaId && persMap[st.lastPersonaId]) S.settings.lastPersonaId = persMap[st.lastPersonaId];
+      if (!getPers(S.settings.lastPersonaId) && S.personas[0]) S.settings.lastPersonaId = S.personas[0].id;
+
+      saveState();
+      await saveStateNow();
+      for (const r of importedReminders) await invoke('reminder_add', { reminder: r });
+      // 应用导入设置的副作用（窗口层级 / 缩放 / 穿透 / 免打扰 / 气泡宽度）
+      await invoke('set_pet_scale', { scale: S.settings.petScale });
+      await invoke('bubble_set_width', { width: S.settings.bubbleW, finalize: false });
+      await invoke('set_click_through', { on: !!S.settings.clickThrough });
+      await invoke('set_dnd', { on: !!S.settings.dnd });
+      await invoke('set_pet_taskbar', { show: !!S.settings.showInTaskbar });
+      await invoke('set_pet_always_on_top', { on: S.settings.alwaysOnTop !== false });
+      renderAll();
       toast('已导入 ' + n + ' 条配置（密钥需重新填写）', 'ok');
     } catch (err) { toast('导入失败：' + err.message, 'err'); }
     e.target.value = '';
@@ -754,6 +972,8 @@ async function renderAbout() {
 /* ============ 事件 ============ */
 tListen('state-changed', async ev => {
   if (ev.payload && ev.payload.origin === 'settings') return;
+  // 本地尚有未落盘的设置修改：忽略后端广播，避免把刚改的值回滚
+  if (savePending) return;
   await loadState();
   renderAll();
 });

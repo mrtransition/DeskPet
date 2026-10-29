@@ -27,6 +27,18 @@ body { cursor: default; }
 .pet:active { cursor: grabbing; }
 .pet .p-shadow { position: absolute; left: 50%; bottom: -2px; width: 76px; height: 10px; transform: translateX(-50%); background: radial-gradient(closest-side, rgba(31,39,51,.16), transparent); border-radius: 50%; }
 .pet svg { position: absolute; left: 0; top: 0; overflow: visible; filter: drop-shadow(0 5px 8px rgba(31,39,51,.14)); }
+/* FR-PET-009：GIF / APNG / 动态 WebP 自定义形象（保留矢量皮肤作为内置兜底） */
+.pet-img { position: absolute; left: 0; top: 0; width: 120px; height: 112px; object-fit: contain; display: none; pointer-events: none; filter: drop-shadow(0 5px 8px rgba(31,39,51,.14)); transform-origin: 50% 100%; }
+.pet.has-img #petSvg { display: none; }
+.pet.has-img .pet-img { display: block; }
+.pet.has-img.state-idle .pet-img { animation: pBob 3.2s ease-in-out infinite; }
+.pet.has-img.state-click .pet-img { animation: pSquash .4s ease; }
+.pet.has-img.state-drag .pet-img { animation: pDangle 1s ease-in-out infinite; transform-origin: 50% 20%; }
+.pet.has-img.state-talk .pet-img { animation: pBob 1.15s ease-in-out infinite; }
+.pet.has-img.state-work .pet-img { animation: pBob 1.4s ease-in-out infinite; }
+.pet.has-img.state-sleep .pet-img { animation: pBob 5.5s ease-in-out infinite; }
+.pet.has-img.state-happy .pet-img { animation: pJump .85s ease-in-out 2; }
+.pet.has-img.state-error .pet-img { animation: pShake .5s ease-in-out 2; }
 .pet .p-body, .pet .p-head, .pet .p-ear { fill: var(--fur); }
 .pet .p-belly, .pet .p-paw { fill: var(--belly); }
 .pet .p-ear-in { fill: #F6B6C2; opacity: .55; }
@@ -156,6 +168,7 @@ body { cursor: default; }
         </g>
       </g>
     </svg>
+    <img id="petImg" class="pet-img" alt="" draggable="false">
     <span class="zzz z1">z</span><span class="zzz z2">z</span><span class="zzz z3">z</span>
   </div>
 </div>
@@ -164,36 +177,59 @@ body { cursor: default; }
 <script>
 'use strict';
 const pet = $id('pet');
+const petImg = $id('petImg');
 const stage = $id('stage');
 const miniBubble = $id('miniBubble');
 let petSc = 1;
 let curW = 120, curH = 112;      // 当前逻辑窗口尺寸
 let grown = false;
-let stateTimer = null, savePosTimer = null, miniTimer = null;
+let growH = 220;
+let menuOpen = false;
+let stateTimer = null, savePosTimer = null, miniTimer = null, bubbleFollowTimer = null;
 let petState = 'idle';
 
 function updateTransform() {
-  stage.style.transform = `translate(${curW / 2 - 130}px, ${curH / 2 - 164}px) scale(${petSc})`;
+  // transform-origin 为舞台 (130,164)，offset 需按缩放换算，保证宠物不跳变
+  // 普通：宠物底边贴窗口底边；迷你气泡：底部留 54*scale；右键菜单：贴底以腾出上方空间
+  let offY;
+  if (!grown) offY = curH / 2 - 164;
+  else if (menuOpen) offY = curH - 164 - 56 * petSc;
+  else offY = curH - 164 - 110 * petSc;
+  stage.style.transform = `translate(${curW / 2 - 130}px, ${offY}px) scale(${petSc})`;
 }
 async function setWindowSize(w, h) {
   curW = w; curH = h;
   updateTransform();
   try { await invoke('pet_set_size', { w, h }); } catch (e) { /* 忽略 */ }
 }
-async function grow() {
-  if (grown) return;
+async function grow(h) {
+  const target = h || 220;
   grown = true;
-  await setWindowSize(260 * petSc, 220 * petSc);
+  growH = target;
+  if (Math.abs(curH - target * petSc) < 1 && Math.abs(curW - 260 * petSc) < 1) return;
+  await setWindowSize(260 * petSc, target * petSc);
 }
 async function shrink() {
   if (!grown) return;
   grown = false;
+  menuOpen = false;
   miniBubble.classList.remove('show');
   await setWindowSize(120 * petSc, 112 * petSc);
 }
 function applySkin(name) {
   if (!SKINS[name]) name = 'blue';
   pet.className = pet.className.replace(/skin-\w+/g, '').trim() + ' skin-' + name;
+  applyCustomSkin();
+}
+function applyCustomSkin() {
+  const cs = S && S.settings ? S.settings.customSkin : null;
+  if (cs && cs.data) {
+    if (petImg.getAttribute('src') !== cs.data) petImg.setAttribute('src', cs.data);
+    pet.classList.add('has-img');
+  } else {
+    pet.classList.remove('has-img');
+    petImg.removeAttribute('src');
+  }
 }
 function setPetState(s) {
   clearTimeout(stateTimer);
@@ -239,7 +275,9 @@ async function onPetUp() {
 }
 pet.addEventListener('contextmenu', async e => {
   e.preventDefault();
-  await grow();
+  menuOpen = true;
+  // 加高窗口以容纳完整菜单（原 220px 高度会导致菜单被裁切/挤压）
+  await grow(440);
   showMenu([
     { icon: '💬', label: '打开对话', onClick: async () => { await shrink(); invoke('show_bubble_cmd'); } },
     { icon: '✨', label: '新会话', onClick: async () => { await shrink(); await invoke('show_bubble_cmd'); tEmitTo('bubble', 'new-session-req'); } },
@@ -247,7 +285,7 @@ pet.addEventListener('contextmenu', async e => {
     ...Object.keys(SKINS).map(k => ({
       icon: '🎨', label: '皮肤：' + SKINS[k].label,
       check: S.settings.skin === k,
-      onClick: async () => { S.settings.skin = k; applySkin(k); saveState(); await shrink(); },
+      onClick: async () => { switchSkin(k); applySkin(S.settings.skin); saveState(); await shrink(); },
     })),
     '-',
     { icon: '⚙', label: '设置', onClick: async () => { await shrink(); invoke('open_settings_cmd'); } },
@@ -255,6 +293,10 @@ pet.addEventListener('contextmenu', async e => {
     { icon: '📍', label: '复位宠物位置', onClick: async () => { await shrink(); invoke('reset_pet_pos'); } },
   ], e.clientX + 40, e.clientY - 200);
 });
+document.addEventListener('mousedown', e => {
+  if (!menuOpen || e.button !== 0) return;
+  if (!e.target.closest('.ctxmenu') && !e.target.closest('#pet')) shrink();
+}, true);
 /* 窗口移动后持久化位置（拖拽结束由 onMoved 捕获） */
 let unlistenMoved = null;
 curWin.onMoved(async () => {
@@ -262,6 +304,9 @@ curWin.onMoved(async () => {
   savePosTimer = setTimeout(async () => {
     try { await invoke('pet_save_pos'); } catch (e) { }
   }, 600);
+  // FR-BUB-005：宠物拖动时气泡跟随（节流，避免高频 IPC）
+  clearTimeout(bubbleFollowTimer);
+  bubbleFollowTimer = setTimeout(() => { invoke('bubble_reposition').catch(() => { }); }, 60);
 });
 /* 窗口尺寸变化兜底（后台 resize 后同步 transform） */
 curWin.onResized(async ev => {
@@ -310,9 +355,13 @@ tListen('state-changed', async ev => {
   const sc = S.settings.petScale || 1;
   if (Math.abs(sc - petSc) > 0.001) {
     petSc = sc;
-    curW = 120 * petSc; curH = 112 * petSc;
-    if (grown) { curW = 260 * petSc; curH = 220 * petSc; }
-    updateTransform();
+    if (grown) {
+      growH = menuOpen ? 440 : 220;
+      await setWindowSize(260 * petSc, growH * petSc);
+    } else {
+      curW = 120 * petSc; curH = 112 * petSc;
+      updateTransform();
+    }
   }
 });
 tListen('state-reset', async () => {

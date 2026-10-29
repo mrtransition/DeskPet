@@ -20,6 +20,11 @@ body { display: flex; flex-direction: column; }
   overflow: hidden;
   position: relative;
 }
+/* FR-BUB-003：左右边缘拖拽调整宽度（240–480 px） */
+.b-resize { position: absolute; top: 18px; bottom: 18px; width: 7px; cursor: ew-resize; z-index: 6; }
+.b-resize:hover, .b-resize.drag { background: rgba(84,155,251,.28); }
+.b-resize.left { left: 0; border-radius: 4px 0 0 4px; }
+.b-resize.right { right: 0; border-radius: 0 4px 4px 0; }
 #card .bt { position: absolute; width: 12px; height: 12px; background: rgba(255,255,255,.96); display: none; }
 #card:not(.below) .bt-down { display: block; bottom: -6.5px; left: calc(50% - 6px); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transform: rotate(45deg); }
 #card.below .bt-up { display: block; top: -6.5px; left: calc(50% - 6px); border-left: 1px solid var(--line); border-top: 1px solid var(--line); transform: rotate(45deg); }
@@ -45,6 +50,8 @@ body { display: flex; flex-direction: column; }
 <body>
 <div id="card">
   <div class="bt bt-down"></div><div class="bt bt-up"></div>
+  <div class="b-resize left" data-side="left" title="拖拽调整气泡宽度"></div>
+  <div class="b-resize right" data-side="right" title="拖拽调整气泡宽度"></div>
   <div class="b-head">
     <div class="b-avatar" id="bAvatar">🐱</div>
     <span class="b-name" id="bName">团子</span>
@@ -76,6 +83,8 @@ let liveEl = null;
 let lastBubbleAct = Date.now();
 let lastFitH = 0;
 let fitTimer = null;
+let cooldownUntil = 0;
+let cdTimer = null;
 
 /* ---- 高度自适应（FR-BUB-003） ---- */
 function fitHeight() {
@@ -83,8 +92,8 @@ function fitHeight() {
   fitTimer = setTimeout(() => {
     try {
       const fixed = card.offsetHeight - bMsgs.offsetHeight;
-      const need = Math.min(bMsgs.scrollHeight, 330);
-      const h = Math.min(560, Math.max(210, fixed + need + 4));
+      const need = Math.min(bMsgs.scrollHeight, 240);
+      const h = Math.min(360, Math.max(150, fixed + need + 4));
       if (Math.abs(h - lastFitH) > 6) {
         lastFitH = h;
         invoke('bubble_resize', { height: h });
@@ -111,7 +120,7 @@ function makeMsgEl(m) {
   } else if (m.role === 'error') {
     d = el('div', 'msg err');
     d.innerHTML = '<b>⚠ ' + esc(m.title || '请求失败') + '</b>' + (m.content ? '<div style="margin-top:3px">' + esc(m.content) + '</div>' : '') +
-      '<div class="m-act"><button data-act="retry">重试</button><button data-act="settings">打开设置</button></div>';
+      '<div class="m-act"><button data-act="retry">重试</button><button data-act="switch">切换模型</button><button data-act="settings">打开设置</button></div>';
   } else {
     d = el('div', 'msg sys' + (m.warn ? ' warn' : ''), esc(m.content));
     if (m.actions) {
@@ -134,6 +143,7 @@ bMsgs.addEventListener('click', e => {
   const btn = e.target.closest('[data-act]');
   if (!btn) return;
   if (btn.dataset.act === 'retry') { if (!streaming) generate(); }
+  else if (btn.dataset.act === 'switch') { $id('bSwitch').click(); }
   else if (btn.dataset.act === 'settings') invoke('open_settings_cmd');
 });
 function renderSessionMsgs() {
@@ -172,25 +182,34 @@ function renderHead() {
   $id('bHintR').textContent = pv ? (pv.type === 'mock' ? '演示模式' : pv.model + ' @ ' + pv.name) : '';
   fitHeight();
 }
-$id('bSwitch').addEventListener('click', e => {
-  e.stopPropagation();
+function openSwitchMenu(x, y) {
   const s = curSession();
   const items = [];
   S.providers.forEach(pr => items.push({
     icon: '🤖', label: pr.name + (pr.model && pr.type !== 'mock' ? ' · ' + pr.model : ''),
     check: s ? s.providerId === pr.id : false,
-    onClick: () => { if (s) { s.providerId = pr.id; S.settings.lastProviderId = pr.id; saveState(); } renderHead(); },
+    onClick: () => {
+      if (s) { s.providerId = pr.id; S.settings.lastProviderId = pr.id; saveState(); }
+      renderHead();
+    },
   }));
   items.push('-');
   S.personas.forEach(ps => items.push({
     icon: ps.avatar || '🐱', label: ps.name, check: s ? s.personaId === ps.id : false,
     onClick: () => {
-      if (s) { s.personaId = ps.id; S.settings.lastPersonaId = ps.id; saveState(); }
+      // FR-PSN-005：人格切换同时应用其绑定的供应商与皮肤
+      switchPersona(ps.id);
+      saveState();
       renderHead();
+      if (!streaming) renderSessionMsgs();
     },
   }));
+  showMenu(items, x, y);
+}
+$id('bSwitch').addEventListener('click', e => {
+  e.stopPropagation();
   const r = e.target.getBoundingClientRect();
-  showMenu(items, Math.max(8, r.left - 150), r.bottom + 6);
+  openSwitchMenu(Math.max(8, r.left - 150), r.bottom + 6);
 });
 $id('bNew').addEventListener('click', () => { newSession(); toast('已开启新会话', 'ok'); });
 $id('bSettings').addEventListener('click', () => invoke('open_settings_cmd'));
@@ -198,7 +217,9 @@ $id('bClose').addEventListener('click', () => invoke('hide_bubble_cmd'));
 
 /* ---- 会话 ---- */
 function newSession() {
-  const prov = activeProv(), pers = activePers();
+  const pers = activePers();
+  // 新会话优先使用人格绑定的供应商（FR-PSN-002/FR-MDL-006），其次才是默认供应商
+  const prov = (pers && getProv(pers.providerId)) || activeProv();
   const s = {
     id: uid('s'), personaId: pers ? pers.id : 'ps-1', providerId: prov ? prov.id : 'p-demo',
     title: '', createdAt: Date.now(), updatedAt: Date.now(), msgs: [],
@@ -212,17 +233,37 @@ function newSession() {
   return s;
 }
 
-/* ---- 上下文构建（人格 + 记忆注入 + 轮数截断） ---- */
+/* ---- 上下文构建（人格 + 记忆注入 + 轮数/token 双重截断） ---- */
 function buildContext(s) {
   const pers = getPers(s.personaId);
   let sys = pers ? pers.systemPrompt : '';
   const lastUser = [...s.msgs].reverse().find(m => m.role === 'user');
   const mems = pickMemories(lastUser ? lastUser.content : '');
   if (mems.length) sys += '\n\n[用户长期记忆]\n' + mems.map(m => '- ' + m.content).join('\n');
+  const params = (activeProv() && activeProv().params) || {};
   const hist = s.msgs.filter(m => m.role === 'user' || m.role === 'assistant');
-  const rounds = (activeProv().params || {}).ctxRounds || 10;
-  const cutMsgs = rounds > 0 ? hist.slice(-rounds * 2) : hist;
-  return { messages: [{ role: 'system', content: sys || '你是一个桌面宠物助手。' }, ...cutMsgs], trunc: cutMsgs.length < hist.length, rounds };
+  const rounds = params.ctxRounds !== undefined ? params.ctxRounds : 10;
+  let cutMsgs = rounds > 0 ? hist.slice(-rounds * 2) : hist.slice();
+  const roundTrimmed = cutMsgs.length < hist.length;
+  // FR-MDL-012：在轮数截断之后再按 ctxTokens 预算裁剪，为输出预留空间
+  const maxTokens = Math.max(512, parseInt(params.ctxTokens, 10) || 8000);
+  const reserve = Math.min(2048, Math.max(256, parseInt(params.maxTokens, 10) || 1024));
+  const budget = Math.max(256, maxTokens - reserve);
+  let tokenTrimmed = false;
+  const total = () => estTokens(sys) + cutMsgs.reduce((n, m) => n + estTokens(m.content), 0);
+  while (cutMsgs.length > 1 && total() > budget) {
+    cutMsgs.shift();
+    tokenTrimmed = true;
+  }
+  return {
+    messages: [{ role: 'system', content: sys || '你是一个桌面宠物助手。' }, ...cutMsgs],
+    trunc: roundTrimmed || tokenTrimmed,
+    roundTrimmed,
+    tokenTrimmed,
+    rounds,
+    tokens: total(),
+    maxTokens,
+  };
 }
 
 /* ---- 发送与流式 ---- */
@@ -249,13 +290,17 @@ function sideEffects(text) {
   const rem = parseReminder(t);
   if (rem) {
     invoke('reminder_add', { reminder: rem });
-    pushSys('⏰ 提醒已创建：' + rem.content + ' · ' + (rem.rule === 'daily' ? '每天 ' + fmtTime(rem.due) : fmtDT(rem.due)));
+    pushSys('⏰ 提醒已创建：' + rem.content + ' · ' + remRuleText(rem));
     tEmitTo('pet', 'reminder-fx', { kind: 'happy' });
   }
 }
 async function generate() {
   const s = curSession();
   if (!s || streaming) return;
+  if (Date.now() < cooldownUntil) {
+    toast('请求过于频繁，请 ' + Math.ceil((cooldownUntil - Date.now()) / 1000) + ' 秒后再试', 'warn');
+    return;
+  }
   const prov = activeProv();
   // 演示模式提示：已配置真实供应商（含密钥或本地服务）但当前仍是演示模式时，一次性提醒切换
   if (prov.type === 'mock') {
@@ -265,8 +310,9 @@ async function generate() {
       pushSys('当前为演示模式（内置回复，非真实模型）。已检测到配置「' + real.name + '」，点上方 ⚡ 可切换，或在设置 → 模型中将其设为默认', { warn: true, ephemeral: true });
     }
   }
-  const { messages, trunc, rounds } = buildContext(s);
-  if (trunc) pushSys('上下文已按最近 ' + rounds + ' 轮截断', { warn: true, ephemeral: true });
+  const { messages, roundTrimmed, tokenTrimmed, rounds, tokens, maxTokens } = buildContext(s);
+  if (tokenTrimmed) pushSys('上下文已按 ' + maxTokens + ' tokens 预算裁剪（当前约 ' + tokens + ' tokens）', { warn: true, ephemeral: true });
+  else if (roundTrimmed) pushSys('上下文已按最近 ' + rounds + ' 轮截断', { warn: true, ephemeral: true });
   streaming = true;
   liveBuf = '';
   liveEl = null;
@@ -278,7 +324,7 @@ async function generate() {
   think.classList.add('show');
   scrollMsgs(true); fitHeight();
   S.stats.requests = (S.stats.requests || 0) + 1;
-  S.stats.tokensIn = (S.stats.tokensIn || 0) + Math.ceil(messages.reduce((n, m) => n + m.content.length, 0) / 2);
+  S.stats.tokensIn = (S.stats.tokensIn || 0) + messages.reduce((n, m) => n + estTokens(m.content), 0);
   saveState();
   try {
     await invoke('chat_start', { args: { providerId: prov.id, messages } });
@@ -303,6 +349,30 @@ function onDelta(text) {
   scrollMsgs(false);
   fitHeight();
 }
+/* ---- 429 冷却倒计时（FR-MDL-009）：遵循 Retry-After，期间禁止重发 ---- */
+function startCooldown(secs) {
+  const n = parseInt(secs, 10);
+  if (!n || n <= 0) return;
+  cooldownUntil = Date.now() + n * 1000;
+  clearInterval(cdTimer);
+  const node = el('div', 'msg sys warn');
+  bMsgs.appendChild(node);
+  const tick = () => {
+    const left = Math.ceil((cooldownUntil - Date.now()) / 1000);
+    if (left <= 0) {
+      clearInterval(cdTimer);
+      cooldownUntil = 0;
+      node.remove();
+      fitHeight();
+      return;
+    }
+    node.textContent = '⏳ 请求过于频繁（429），请 ' + left + ' 秒后重试';
+  };
+  tick();
+  cdTimer = setInterval(tick, 1000);
+  scrollMsgs(true);
+  fitHeight();
+}
 function finishStream(ok, errInfo, rawErr) {
   const think = $id('bThink');
   think.classList.remove('show');
@@ -310,7 +380,7 @@ function finishStream(ok, errInfo, rawErr) {
   if (liveBuf) {
     if (s) {
       s.msgs.push({ role: 'assistant', content: liveBuf, ts: Date.now() });
-      S.stats.tokensOut = (S.stats.tokensOut || 0) + Math.ceil(liveBuf.length / 2);
+      S.stats.tokensOut = (S.stats.tokensOut || 0) + estTokens(liveBuf);
     }
     if (liveEl) {
       const final = makeMsgEl({ role: 'assistant', content: liveBuf });
@@ -324,6 +394,7 @@ function finishStream(ok, errInfo, rawErr) {
     const info = errInfo || { status: null, message: rawErr || '未知错误' };
     if (s) s.msgs.push({ role: 'error', title: errTitle(info), content: info.message });
     appendMsg({ role: 'error', title: errTitle(info), content: info.message });
+    if (info.retryAfter) startCooldown(info.retryAfter);
     tEmitTo('pet', 'chat-state', { state: 'error' });
   } else {
     tEmitTo('pet', 'chat-state', { state: 'idle' });
@@ -350,6 +421,14 @@ tListen('chat-delta', ev => { if (ev.payload && typeof ev.payload.text === 'stri
 tListen('chat-done', () => finishStream(true));
 tListen('chat-stopped', () => { finishStream(true); pushSys('已停止生成', { ephemeral: true }); });
 tListen('chat-error', ev => finishStream(false, ev.payload, null));
+tListen('chat-notice', ev => {
+  const msg = ev.payload && ev.payload.message;
+  if (!msg) return;
+  pushSys(msg, { ephemeral: true });
+});
+tListen('bubble-anchor', ev => {
+  card.classList.toggle('below', !!(ev.payload && ev.payload.below));
+});
 
 /* ---- 输入 ---- */
 function autoGrow() {
@@ -376,12 +455,50 @@ $id('bSend').addEventListener('click', () => {
   else doSend();
 });
 
+/* ---- 气泡宽度拖拽（FR-BUB-003） ---- */
+let resizeState = null;
+document.querySelectorAll('.b-resize').forEach(h => {
+  h.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    resizeState = {
+      side: h.dataset.side,
+      startX: e.screenX,
+      startW: document.documentElement.clientWidth,
+      lastW: document.documentElement.clientWidth,
+      raf: 0,
+    };
+    h.classList.add('drag');
+  });
+});
+document.addEventListener('mousemove', e => {
+  if (!resizeState) return;
+  const dx = e.screenX - resizeState.startX;
+  let w = resizeState.startW + (resizeState.side === 'right' ? dx : -dx);
+  w = Math.max(240, Math.min(480, w));
+  resizeState.lastW = w;
+  if (resizeState.raf) cancelAnimationFrame(resizeState.raf);
+  resizeState.raf = requestAnimationFrame(() => {
+    invoke('bubble_set_width', { width: w, side: resizeState.side, finalize: false }).catch(() => { });
+  });
+});
+document.addEventListener('mouseup', () => {
+  if (!resizeState) return;
+  const side = resizeState.side;
+  const w = resizeState.lastW;
+  resizeState = null;
+  document.querySelectorAll('.b-resize').forEach(x => x.classList.remove('drag'));
+  invoke('bubble_set_width', { width: w, side, finalize: true }).catch(() => { });
+});
+
 /* ---- 显示 / 关闭 ---- */
 function touchBubbleAct() { lastBubbleAct = Date.now(); }
 ['mousemove', 'mousedown', 'keydown', 'input', 'wheel', 'touchstart'].forEach(ev =>
   card.addEventListener(ev, touchBubbleAct, { passive: true }));
 async function onShown(reason) {
   await loadState();
+  // 应用持久化的气泡宽度（FR-BUB-003）
+  try { await invoke('bubble_set_width', { width: S.settings.bubbleW || 340, side: 'center', finalize: true }); } catch (e) { }
   if (reason === 'click' && S.settings.newSessionPerClick && curSession() && curSession().msgs.length) {
     newSession();
   } else if (!curSession()) {
@@ -389,7 +506,8 @@ async function onShown(reason) {
   }
   renderHead();
   renderSessionMsgs();
-  bInput.focus();
+  // 主动提醒不抢焦点（FR-BUB-006 / NFR-INT-001）
+  if (reason !== 'reminder') bInput.focus();
   touchBubbleAct();
   // 处理排队通知（提醒）
   try {
@@ -400,10 +518,10 @@ async function onShown(reason) {
 function renderNotice(n) {
   if (n.kind === 'reminder' && n.reminder) {
     const r = n.reminder;
-    pushSys('⏰ 叮！提醒：' + r.content + '（' + (r.rule === 'daily' ? '每日 ' + fmtTime(r.due) : fmtDT(r.due)) + '）', {
+    pushSys('⏰ 叮！提醒：' + r.content + '（' + remRuleText(r) + '）', {
       ephemeral: true,
       actions: [
-        { label: '稍后 5 分钟', onClick: () => { invoke('reminder_snooze', { id: r.id }); pushSys('已稍后提醒：' + fmtDT(Date.now() + 5 * 60000), { ephemeral: true }); } },
+        { label: '稍后 5 分钟', onClick: () => { invoke('reminder_snooze', { id: r.id, content: r.content }); pushSys('已稍后提醒：' + fmtDT(Date.now() + 5 * 60000), { ephemeral: true }); } },
         { label: '知道了', onClick: () => { } },
       ],
     });

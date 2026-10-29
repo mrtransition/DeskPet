@@ -21,15 +21,49 @@ const fmtDT = ts => { const d = new Date(ts); const p = x => String(x).padStart(
 const uid = p => p + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const clampNum = (v, lo, hi, dft) => { const n = parseFloat(v); if (isNaN(n)) return dft; return Math.max(lo, Math.min(hi, n)); };
 
+/* ---- 全局错误兜底：单个页面脚本异常不应让窗口静默失效 ---- */
+let lastErrToast = 0;
+function reportClientError(where, err) {
+  const msg = (err && (err.message || err.reason || err)) || '未知错误';
+  const now = Date.now();
+  if (now - lastErrToast < 1500) return; // 避免同一错误循环刷屏
+  lastErrToast = now;
+  try { toast(where + '：' + msg, 'err'); } catch (e) { }
+}
+window.addEventListener('error', e => reportClientError('界面异常', e.error || e.message));
+window.addEventListener('unhandledrejection', e => reportClientError('操作失败', e.reason));
+
+/* ---- 粗粒度 token 估算（CJK 约 1 字 1 token，其余约 4 字符 1 token） ---- */
+function estTokens(text) {
+  const t = String(text || '');
+  let cjk = 0;
+  for (const ch of t) {
+    if (/[\u2e80-\u9fff\u3000-\u303f\uff00-\uffef]/.test(ch)) cjk++;
+  }
+  return cjk + Math.ceil((t.length - cjk) / 4);
+}
+
 /* ---- 状态（主进程为权威数据源） ---- */
 let S = null;
 async function loadState() { S = await invoke('state_load'); return S; }
 let saveTimer = null;
+let savePending = false;
 async function saveState() {
   clearTimeout(saveTimer);
+  savePending = true;
   saveTimer = setTimeout(async () => {
-    try { await invoke('state_save', { state: S, origin: MY_ORIGIN }); } catch (e) { toast('保存失败：' + e, 'err'); }
+    try { await invoke('state_save', { state: S, origin: MY_ORIGIN }); }
+    catch (e) { toast('保存失败：' + e, 'err'); }
+    finally { savePending = false; }
   }, 200);
+}
+// 需要与后端命令严格排序时使用（导入配置、批量应用设置）
+async function saveStateNow() {
+  clearTimeout(saveTimer);
+  savePending = true;
+  try { await invoke('state_save', { state: S, origin: MY_ORIGIN }); }
+  catch (e) { toast('保存失败：' + e, 'err'); throw e; }
+  finally { savePending = false; }
 }
 const getProv = id => S.providers.find(p => p.id === id);
 const getPers = id => S.personas.find(p => p.id === id);
@@ -37,6 +71,37 @@ const defProvObj = () => S.providers.find(p => p.isDefault) || S.providers[0];
 const curSession = () => S.sessions.find(s => s.id === S.currentSessionId);
 function activeProv() { const s = curSession(); const id = (s && s.providerId) || S.settings.lastProviderId; return getProv(id) || defProvObj(); }
 function activePers() { const s = curSession(); const id = (s && s.personaId) || S.settings.lastPersonaId; return getPers(id) || S.personas[0]; }
+
+/* ---- 人格 / 皮肤联动（FR-PSN-005） ----
+   切换人格：会话与全局默认同步，并自动切换到该人格绑定的供应商与皮肤；
+   切换皮肤：若存在绑定该皮肤的人格，则一并切换人格（含供应商），否则只改皮肤。
+   两者互不递归。 */
+function switchPersona(id) {
+  const ps = getPers(id);
+  if (!ps) return null;
+  const s = curSession();
+  S.settings.lastPersonaId = ps.id;
+  if (s) {
+    s.personaId = ps.id;
+    // FR-PSN-003：尚未开始对话时同步新人格的开场白
+    if (ps.greeting && !s.msgs.some(m => m.role === 'user')) {
+      s.msgs = [{ role: 'assistant', content: ps.greeting, ts: Date.now() }];
+    }
+  }
+  if (ps.providerId && getProv(ps.providerId)) {
+    S.settings.lastProviderId = ps.providerId;
+    if (s) s.providerId = ps.providerId;
+  }
+  if (ps.skin && SKINS[ps.skin]) S.settings.skin = ps.skin;
+  return ps;
+}
+function switchSkin(name) {
+  if (!SKINS[name]) name = 'blue';
+  const bound = S.personas.find(p => p.skin === name);
+  if (bound) return switchPersona(bound.id);
+  S.settings.skin = name;
+  return null;
+}
 
 /* ---- Toast ---- */
 function ensureToasts() { if (!$id('toasts')) { const d = el('div'); d.id = 'toasts'; document.body.appendChild(d); } }
@@ -112,16 +177,28 @@ function md(src) {
   let html = out.join('\n');
   html = html.replace(/\x00B(\d+)\x00/g, (m, i) => {
     const b = blocks[+i];
-    return '<div class="codeblock"><div class="cb-bar"><span>' + esc(b.lang) + '</span><button class="cb-copy">复制</button></div><pre><code>' + esc(b.code) + '</code></pre></div>';
+    return '<div class="codeblock"><div class="cb-bar"><span>' + esc(b.lang) + '</span><button class="cb-copy">复制</button></div><pre><code>' + highlightCode(b.code) + '</code></pre></div>';
   });
   return html;
+}
+
+/* ---- 轻量代码高亮（无外部依赖，仅用于代码块展示） ---- */
+function highlightCode(code) {
+  const source = esc(code);
+  const re = /(&quot;[^\n]*?&quot;|'[^'\n]*'|`[^`\n]*`|\/\/[^\n]*|\/\*[\s\S]*?\*\/|#[^\n]*|\b\d+(?:\.\d+)?\b|\b(?:function|const|let|var|if|else|for|while|return|class|import|from|export|async|await|def|print|true|false|null|undefined|None|True|False|new|this|try|catch|throw|switch|case|break|continue|in|of|typeof|instanceof|public|private|static|void|int|float|string|bool|struct|impl|fn|use|mod|pub|match|mut|self|super)\b)/g;
+  return source.replace(re, m => {
+    if (/^&quot;|^'|^`/.test(m)) return '<span class="tok-str">' + m + '</span>';
+    if (/^\/\/|^\/\*|^#/.test(m)) return '<span class="tok-com">' + m + '</span>';
+    if (/^\d/.test(m)) return '<span class="tok-num">' + m + '</span>';
+    return '<span class="tok-kw">' + m + '</span>';
+  });
 }
 
 /* ---- 自然语言提醒解析 ---- */
 function parseReminder(text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   const rel = t.match(/(\d+(?:\.\d+)?)\s*(秒钟?|分钟?|小时|时|天)\s*后\s*(.*)/);
-  if (rel) {
+  if (rel && !/每隔?/.test(t)) {
     const n = parseFloat(rel[1]);
     const unit = { '秒': 1000, '秒钟': 1000, '分': 60000, '分钟': 60000, '小时': 3600000, '时': 3600000, '天': 86400000 }[rel[2]];
     let content = rel[3].replace(/^(?:提醒|通知|叫)\s*我?\s*/, '').replace(/^(?:去|来)\s*/, '').trim();
@@ -137,7 +214,7 @@ function parseReminder(text) {
     return { id: uid('rem'), content: cut(content, 40), due: d.getTime(), rule: 'daily', enabled: true };
   }
   const at = t.match(/(今天|明天|今晚)?\s*(\d{1,2})[:：点](\d{1,2})?分?\s*(.*)/);
-  if (at && (at[1] || /提醒/.test(t))) {
+  if (at && (at[1] || /提醒/.test(t)) && !/每(?:周|星期|隔)/.test(t)) {
     const h = Math.min(23, +at[2]), m = Math.min(59, +(at[3] || 0));
     let d = new Date(); d.setHours(h, m, 0, 0);
     if (at[1] === '明天') d = new Date(d.getTime() + 86400000);
@@ -145,7 +222,36 @@ function parseReminder(text) {
     const content = at[4].replace(/^(?:提醒|通知|叫)\s*我?\s*/, '').trim() || '提醒';
     return { id: uid('rem'), content: cut(content, 40), due: d.getTime(), rule: 'once', enabled: true };
   }
+  // FR-REM-003：每周几 HH:MM
+  const weekly = t.match(/每(?:周|星期)([一二三四五六日天])\s*(\d{1,2})[:：点](\d{1,2})?分?\s*(.*)/);
+  if (weekly) {
+    const map = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 };
+    const target = map[weekly[1]];
+    const h = Math.min(23, +weekly[2]), m = Math.min(59, +(weekly[3] || 0));
+    const d = new Date(); d.setHours(h, m, 0, 0);
+    let add = (target - d.getDay() + 7) % 7;
+    if (add === 0 && d.getTime() <= Date.now()) add = 7;
+    d.setDate(d.getDate() + add);
+    const content = weekly[4].replace(/^(?:提醒|通知|叫)\s*我?\s*/, '').trim() || '提醒';
+    return { id: uid('rem'), content: cut(content, 40), due: d.getTime(), rule: 'weekly', enabled: true };
+  }
+  // FR-REM-003：每隔 N 分钟 / N 小时
+  const interval = t.match(/每(?:隔)?\s*(\d+(?:\.\d+)?)\s*(分钟?|小时|时)\s*(?:提醒|通知)?\s*(.*)/);
+  if (interval) {
+    const n = Math.max(1, Math.round(parseFloat(interval[1]) * (interval[2] === '分钟' || interval[2] === '分' ? 1 : 60)));
+    const content = interval[3].replace(/^(?:提醒|通知|叫)\s*我?\s*/, '').trim() || '提醒';
+    return { id: uid('rem'), content: cut(content, 40), due: Date.now() + n * 60000, rule: 'interval', intervalMin: n, enabled: true };
+  }
   return null;
+}
+
+// 提醒重复规则的展示文案（每日 / 每周 / 间隔 / 一次性）
+function remRuleText(r) {
+  if (!r) return '';
+  if (r.rule === 'daily') return '每天 ' + fmtTime(r.due);
+  if (r.rule === 'weekly') return '每周' + '日一二三四五六'[new Date(r.due).getDay()] + ' ' + fmtTime(r.due);
+  if (r.rule === 'interval') return '每 ' + (r.intervalMin || 30) + ' 分钟';
+  return fmtDT(r.due);
 }
 
 /* ---- 常量 ---- */

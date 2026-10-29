@@ -80,6 +80,7 @@ label{color:var(--t2);cursor:pointer}
 .cb-copy:hover{color:#fff;background:#3A4A5F}
 .codeblock pre{margin:0;padding:9px 11px;overflow-x:auto}
 .codeblock code{font-family:var(--mono);font-size:calc(var(--fs) - 1px);color:#DCE6F5;background:transparent;border:none;padding:0;white-space:pre}
+.tok-kw{color:#C792EA}.tok-str{color:#C3E88D}.tok-com{color:#7F8EA3;font-style:italic}.tok-num{color:#F78C6C}
 .tdots{display:inline-flex;gap:3px}
 .tdots i{width:5px;height:5px;border-radius:50%;background:var(--primary);animation:tDot 1.2s ease-in-out infinite}
 .tdots i:nth-child(2){animation-delay:.15s}.tdots i:nth-child(3){animation-delay:.3s}
@@ -151,6 +152,24 @@ label{color:var(--t2);cursor:pointer}
 .about ul{margin:8px 0 2px;padding-left:18px;color:var(--t2);font-size:var(--fs-xs);line-height:1.7}
 .about details{border:1px solid var(--line);border-radius:var(--r-lg);padding:9px 12px;margin-bottom:9px;background:#FDFEFE}
 .about summary{cursor:pointer;font-weight:600;font-size:var(--fs)}
+
+/* ============ 隐私 / 审计 ============ */
+.privacy-grid{display:grid;grid-template-columns:96px 1fr;gap:6px 10px;font-size:var(--fs-xs)}
+.privacy-grid .pg-k{color:var(--t3)}
+.privacy-grid .pg-v{color:var(--t1);word-break:break-all}
+.audit-table{width:100%;border-collapse:collapse;margin-top:9px;font-size:10px}
+.audit-table th,.audit-table td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
+.audit-table th{color:var(--t3);font-weight:600;position:sticky;top:0;background:#fff}
+
+/* ============ 可访问性（NFR-UI-002） ============ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+}
+@media (prefers-contrast: more) {
+  :root { --line:#9AA8B8; --line-dk:#6E7F92; --t2:#3C4A5A; --t3:#546273; }
+  button { border-width: 1.5px; }
+  .msg.ai, .msg.user, .sec, .pv-card { border-width: 1.5px; }
+}
 
 @media (max-width:760px){
   .pv-grid{grid-template-columns:1fr}
