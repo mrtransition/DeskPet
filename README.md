@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-0.2.7-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-0.2.8-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -82,7 +82,7 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | 本地（免 Key） | Ollama · LM Studio · vLLM |
 | 自定义 | 任意 OpenAI 兼容端点（自定义 BaseURL / 请求头） |
 
-> 💡 模型请求由 Rust 主进程发出：不受浏览器 CORS 限制，Ollama 无需设置 `OLLAMA_ORIGINS`；密钥仅存于 Windows 凭据管理器（凭据名 `DeskPet/<供应商ID>`）。
+> 💡 模型请求由 Rust 主进程发出：不受浏览器 CORS 限制，Ollama 无需设置 `OLLAMA_ORIGINS`；密钥仅存于 Windows 凭据管理器（凭据名 `DeskPet/<供应商ID>`）。Ollama 会走原生 `/api/chat` 并显式限制 `num_ctx`，避免服务端超大上下文把内存撑爆。
 
 ## 🛡️ 隐私与安全设计
 
@@ -143,6 +143,15 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v0.2.8</b> — 修复演示模式崩溃、提醒弹窗不关闭与 Ollama 本地模型 OOM</summary>
+
+- **演示模式崩溃**：逐字流式此前按**字节**切片，中文 / emoji 落在 UTF-8 字符边界中间会 panic，而 release 构建 `panic="abort"`，进程直接静默消失。现改为按字符切块，并新增回归测试覆盖长中文与 emoji。
+- **提醒弹窗「知道了」不关闭**：v0.2.7 只是移除了消息气泡，提醒窗口仍留在桌面。现在后端在 `bubble-shown` 事件中标记本次是否为「自动弹出」，确认提醒（知道了 / 稍后 5 分钟）后自动收起气泡；用户原本开着的对话窗口不受影响。
+- **Ollama 本地模型 OOM**：OpenAI 兼容层 `/v1` 无法传 `num_ctx`，服务端会按 `OLLAMA_CONTEXT_LENGTH`（如 131072）或模型原生上下文（`qwen3.5` 为 262144）分配 KV cache，叠加视觉投影层后极易出现 `failed to allocate CPU buffer of size 6xxxxx` / `GGML_ASSERT(buffer) failed`。现在 Ollama 自动改走原生 `/api/chat`：显式传 `num_ctx`（取「上下文 Token 上限」，封顶 32K）、`num_predict`、`keep_alive=10m`，并关闭思考模式；OOM 不再做无意义的自动重试，而是给出可操作的中文提示（降上下文 / 换小模型 / `ollama stop`）。
+- **测试连接**：Ollama 改走 `/api/tags`，BaseURL 填 `http://host:11434` 或 `http://host:11434/v1` 都能测通。
+</details>
+
+<details>
 <summary><b>v0.2.7</b> — 修复提醒弹窗「知道了」不消失</summary>
 
 - 提醒消息的「知道了」与「稍后 5 分钟」按钮增加关闭行为，点击后移除该提醒消息并重新适配气泡高度。

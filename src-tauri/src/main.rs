@@ -295,7 +295,13 @@ fn show_bubble_reason(app: &AppHandle, reason: &str) -> Result<(), String> {
     if reason != "reminder" {
         bubble.set_focus().map_err(|e| e.to_string())?;
     }
-    let _ = app.emit_to("bubble", "bubble-shown", json!({"below": pos.below, "reason": reason}));
+    // auto：本次显示是否由后端自动弹出（此前气泡是隐藏的）。前端据此在
+    // 点击提醒的「知道了 / 稍后」后关闭气泡，避免提醒处理完窗口仍留在桌面上。
+    let _ = app.emit_to(
+        "bubble",
+        "bubble-shown",
+        json!({"below": pos.below, "reason": reason, "auto": !was_visible}),
+    );
     Ok(())
 }
 
@@ -753,6 +759,10 @@ struct ProvConf {
     timeout: i64,
     retry: i64,
     stream: bool,
+    // Ollama 原生协议标记：/v1（OpenAI 兼容层）无法传 num_ctx，会导致服务端按
+    // OLLAMA_CONTEXT_LENGTH（常见 131072）或模型原生 262144 上下文分配 KV cache，
+    // 在内存紧张的机器上与视觉投影层叠加后直接 OOM。
+    ollama: bool,
 }
 
 // 锁中毒防护：任一持锁线程 panic 后应用仍可继续运行（NFR-CON-003 单点异常不得导致进程崩溃）
@@ -769,9 +779,11 @@ fn resolve_provider(app: &AppHandle, id: &str) -> Result<ProvConf, String> {
         .find(|p| p["id"].as_str() == Some(id))
         .ok_or_else(|| format!("供应商 {} 不存在", id))?;
     let params = &p["params"];
+    let base = p["baseUrl"].as_str().unwrap_or("").to_string();
     Ok(ProvConf {
         ptype: p["type"].as_str().unwrap_or("openai").to_string(),
-        base: p["baseUrl"].as_str().unwrap_or("").to_string(),
+        ollama: is_ollama_endpoint(&base),
+        base,
         model: p["model"].as_str().unwrap_or("").to_string(),
         key: key_get(id).unwrap_or_default(),
         headers_raw: p["headers"].as_str().unwrap_or("").to_string(),
@@ -792,6 +804,58 @@ fn join_url(base: &str, path: &str) -> String {
 
 fn is_azure_endpoint(base: &str) -> bool {
     base.to_lowercase().contains(".openai.azure.com")
+}
+
+// 识别本地/远程 Ollama：默认端口 11434、主机名含 ollama、或 BaseURL 已带 /api 路径。
+// 命中后改用原生 /api/chat，才能显式传 options.num_ctx（OpenAI 兼容层会忽略该字段）。
+fn is_ollama_endpoint(base: &str) -> bool {
+    let b = base.trim();
+    if b.is_empty() {
+        return false;
+    }
+    match reqwest::Url::parse(b) {
+        Ok(u) => {
+            if u.port() == Some(11434) {
+                return true;
+            }
+            let host = u.host_str().unwrap_or("").to_lowercase();
+            if host.contains("ollama") {
+                return true;
+            }
+            let path = u.path().trim_end_matches('/').to_lowercase();
+            path.ends_with("/api") || path.contains("/api/")
+        }
+        Err(_) => false,
+    }
+}
+
+// http://host:11434/v1 → http://host:11434（去掉 OpenAI 兼容层后缀）
+fn ollama_root(base: &str) -> String {
+    let mut b = base.trim().trim_end_matches('/').to_string();
+    for suf in ["/v1", "/api"] {
+        if b.to_lowercase().ends_with(suf) {
+            b.truncate(b.len() - suf.len());
+            b = b.trim_end_matches('/').to_string();
+        }
+    }
+    b
+}
+
+fn ollama_chat_url(base: &str) -> String {
+    let b = base.trim().trim_end_matches('/');
+    if b.to_lowercase().ends_with("/api/chat") {
+        return b.to_string();
+    }
+    format!("{}/api/chat", ollama_root(base))
+}
+
+// Ollama 的 num_ctx 上限：过大的上下文会在加载时把 KV cache 撑爆内存（默认 32K 足够桌面宠物对话）
+fn effective_ctx_tokens(conf: &ProvConf) -> i64 {
+    if conf.ollama {
+        conf.ctx_tokens.clamp(512, 32768)
+    } else {
+        conf.ctx_tokens
+    }
 }
 
 // Azure OpenAI 需要 api-version 查询参数；用户填写的 BaseURL 可能已带部署路径
@@ -934,33 +998,55 @@ fn build_request(app: &AppHandle, conf: &ProvConf, messages: &[ChatMsg]) -> Resu
         }
         _ => {
             let azure = is_azure_endpoint(&conf.base);
-            url = if azure {
-                azure_url(&conf.base, "/chat/completions")
-            } else if conf.base.trim_end_matches('/').ends_with("/chat/completions") {
-                conf.base.trim_end_matches('/').to_string()
-            } else {
-                join_url(&conf.base, "/chat/completions")
-            };
-            if azure {
-                // Azure OpenAI 使用 api-key 头，Bearer 仅适用于 Entra ID 令牌
-                if let Some(v) = key_header(conf, false)? {
-                    headers.insert("api-key", v);
-                }
-            } else if let Some(v) = key_header(conf, true)? {
-                headers.insert("authorization", v);
-            }
             let msgs: Vec<Value> = messages
                 .iter()
                 .map(|m| json!({"role": m.role, "content": m.content}))
                 .collect();
-            body = json!({
-                "model": conf.model,
-                "messages": msgs,
-                "temperature": conf.temp,
-                "top_p": conf.top_p,
-                "max_tokens": conf.max_tokens,
-                "stream": conf.stream
-            });
+            if conf.ollama && !azure && !conf.base.trim_end_matches('/').ends_with("/chat/completions") {
+                // 原生 Ollama：显式限制 num_ctx（KV cache 上限）与 num_predict，
+                // 并关闭思考模式，避免 262144 原生上下文 + 视觉投影层把内存撑爆
+                url = ollama_chat_url(&conf.base);
+                if let Some(v) = key_header(conf, true)? {
+                    headers.insert("authorization", v);
+                }
+                body = json!({
+                    "model": conf.model,
+                    "messages": msgs,
+                    "stream": conf.stream,
+                    "keep_alive": "10m",
+                    "think": false,
+                    "options": {
+                        "num_ctx": effective_ctx_tokens(conf),
+                        "num_predict": conf.max_tokens,
+                        "temperature": conf.temp,
+                        "top_p": conf.top_p
+                    }
+                });
+            } else {
+                url = if azure {
+                    azure_url(&conf.base, "/chat/completions")
+                } else if conf.base.trim_end_matches('/').ends_with("/chat/completions") {
+                    conf.base.trim_end_matches('/').to_string()
+                } else {
+                    join_url(&conf.base, "/chat/completions")
+                };
+                if azure {
+                    // Azure OpenAI 使用 api-key 头，Bearer 仅适用于 Entra ID 令牌
+                    if let Some(v) = key_header(conf, false)? {
+                        headers.insert("api-key", v);
+                    }
+                } else if let Some(v) = key_header(conf, true)? {
+                    headers.insert("authorization", v);
+                }
+                body = json!({
+                    "model": conf.model,
+                    "messages": msgs,
+                    "temperature": conf.temp,
+                    "top_p": conf.top_p,
+                    "max_tokens": conf.max_tokens,
+                    "stream": conf.stream
+                });
+            }
         }
     }
     apply_custom_headers(&mut headers, &conf.headers_raw);
@@ -1007,6 +1093,73 @@ fn full_text(ptype: &str, j: &Value) -> String {
             .unwrap_or_default(),
         _ => j["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string(),
     }
+}
+
+// ================= Ollama 原生协议（/api/chat，NDJSON） =================
+
+fn ollama_delta(line: &str) -> Option<String> {
+    let j: Value = serde_json::from_str(line).ok()?;
+    let t = j["message"]["content"]
+        .as_str()
+        .or_else(|| j["response"].as_str())
+        .unwrap_or("");
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
+fn ollama_line_error(line: &str) -> Option<String> {
+    let j: Value = serde_json::from_str(line).ok()?;
+    j["error"].as_str().map(|s| s.to_string())
+}
+
+fn ollama_text(j: &Value) -> String {
+    j["message"]["content"]
+        .as_str()
+        .or_else(|| j["response"].as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+// 本地模型加载 OOM：Ollama 会在 500 响应里原样带回 llama-server 的启动错误
+fn is_local_oom(msg: &str) -> bool {
+    let l = msg.to_lowercase();
+    [
+        "out-of-memory",
+        "out of memory",
+        "failed to allocate",
+        "ggml_assert",
+        "llama-server startup failed",
+        "terminateprocess",
+        "内存不足",
+    ]
+    .iter()
+    .any(|k| l.contains(k))
+}
+
+// 仅当确实是 OOM 时才附上本地模型的排障建议，其它错误（模型不存在等）原样透出
+fn ollama_error_text(model: &str, err: &str) -> String {
+    if is_local_oom(err) {
+        local_oom_hint(model, err)
+    } else {
+        err.to_string()
+    }
+}
+
+fn local_oom_hint(model: &str, detail: &str) -> String {
+    format!(
+        "本地模型「{m}」加载失败：内存不足（Ollama 启动 llama-server 时无法分配内存）。\n\
+         这是 Ollama 在加载模型时系统可用内存不够，不是 DeskPet 的请求格式问题。可依次尝试：\n\
+         ① 关闭其他占用内存较多的程序后重试；\n\
+         ② 设置 → 模型 → 该供应商：把「上下文 Token 上限」调到 4096 或更低（决定 KV cache 大小）；\n\
+         ③ 换更小的模型；qwen3.5 等视觉模型即使纯文本对话也要额外加载 600MB+ 图像投影层；\n\
+         ④ 终端执行 ollama stop {m} 释放已加载模型，或重启 Ollama 服务。\n\n\
+         原始错误：{d}",
+        m = model,
+        d = detail
+    )
 }
 
 fn err_message(body: &str) -> String {
@@ -1168,15 +1321,14 @@ async fn run_chat(app: AppHandle, args: ChatArgs) {
                 .to_string()
         };
         let reply = mock_reply(&last_user, &persona);
-        let chunk = (reply.len() / 90).max(1);
-        let bytes: Vec<(usize, usize)> = (0..reply.len()).step_by(chunk).map(|i| (i, chunk)).collect();
-        for (i, c) in bytes {
+        // 按字符（而非字节）切块：中文/emoji 是多字节，按字节切片会落在非字符边界直接 panic，
+        // release 构建 panic="abort" → 整个进程静默退出（v0.2.7 演示模式对话崩溃根因）
+        for piece in mock_chunks(&reply) {
             if app.state::<AppCtx>().stop.load(Ordering::SeqCst) {
                 let _ = app.emit_to("bubble", "chat-stopped", ());
                 return;
             }
-            let end = (i + c).min(reply.len());
-            let _ = app.emit_to("bubble", "chat-delta", json!({"text": &reply[i..end]}));
+            let _ = app.emit_to("bubble", "chat-delta", json!({"text": piece}));
             tokio::time::sleep(Duration::from_millis(16)).await;
         }
         let _ = app.emit_to("bubble", "chat-done", ());
@@ -1189,9 +1341,10 @@ async fn run_chat(app: AppHandle, args: ChatArgs) {
     let host = host_of(&conf.base);
     let mut messages = args.messages.clone();
     // FR-MDL-012：发送前按供应商 ctxTokens 预算裁剪，预留输出空间
-    let budget = (conf.ctx_tokens - conf.max_tokens).max(256);
+    let ctx_budget = effective_ctx_tokens(&conf);
+    let budget = (ctx_budget - conf.max_tokens).max(256);
     if trim_to_budget(&mut messages, budget) {
-        emit_notice(format!("上下文超出 {} tokens 预算，已自动裁剪较早消息", conf.ctx_tokens));
+        emit_notice(format!("上下文超出 {} tokens 预算，已自动裁剪较早消息", ctx_budget));
     }
     let mut attempt: i64 = 0;
     let mut trims = 0;
@@ -1236,8 +1389,15 @@ async fn run_chat(app: AppHandle, args: ChatArgs) {
         if !status_code.is_success() {
             let retry_after = retry_after_secs(resp.headers());
             let body = resp.text().await.unwrap_or_default();
-            let msg = err_message(&body);
+            let mut msg = err_message(&body);
             record_outbound(&app, &host, &conf.ptype, &conf.model, Some(status_code.as_u16()), false, latency, attempt);
+            // 本地模型 OOM：这是 Ollama 加载模型时系统内存/显存不足，重试只会再次拉起
+            // 一个失败的 llama-server（日志里还会刷 "TerminateProcess: Access is denied"），
+            // 因此直接给出可操作的建议而不做退避重试。
+            if is_local_oom(&msg) || is_local_oom(&body) {
+                msg = local_oom_hint(&conf.model, &msg);
+                return emit_err(Some(status_code.as_u16()), msg, None);
+            }
             // 上下文超长：自动裁剪较早消息并重试（最多 2 次）
             if status_code.as_u16() == 400 && is_context_too_long(&msg) && trims < 2 {
                 if trim_context(&mut messages) {
@@ -1264,7 +1424,77 @@ async fn run_chat(app: AppHandle, args: ChatArgs) {
             .unwrap_or(false);
         let idle = Duration::from_secs(((conf.timeout * 2).clamp(30, 240)) as u64);
         let ptype = conf.ptype.clone();
-        if want_stream && is_sse {
+        let native_ollama = conf.ollama && !conf.base.trim_end_matches('/').ends_with("/chat/completions");
+        if native_ollama {
+            // Ollama 原生 /api/chat：流式为 NDJSON（每行一个 JSON），非流式为单个 JSON
+            let is_ndjson = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|c| c.contains("ndjson"))
+                .unwrap_or(want_stream);
+            if want_stream && is_ndjson {
+                use futures_util::StreamExt;
+                let mut stream = resp.bytes_stream();
+                let mut buf = String::new();
+                loop {
+                    if app.state::<AppCtx>().stop.load(Ordering::SeqCst) {
+                        let _ = app.emit_to("bubble", "chat-stopped", ());
+                        return;
+                    }
+                    let next = match tokio::time::timeout(idle, stream.next()).await {
+                        Err(_) => return emit_err(None, "流式响应超时（长时间无数据）".into(), None),
+                        Ok(None) => break,
+                        Ok(Some(Err(e))) => return emit_err(None, format!("流中断：{}", e), None),
+                        Ok(Some(Ok(bytes))) => bytes,
+                    };
+                    buf.push_str(&String::from_utf8_lossy(&next));
+                    while let Some(idx) = buf.find('\n') {
+                        let line: String = buf.drain(..=idx).collect();
+                        let line = line.trim();
+                        if line.is_empty() {
+                            continue;
+                        }
+                        if let Some(err) = ollama_line_error(line) {
+                            return emit_err(Some(status_code.as_u16()), ollama_error_text(&conf.model, &err), None);
+                        }
+                        if let Some(text) = ollama_delta(line) {
+                            let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
+                        }
+                    }
+                }
+                let rest = buf.trim().to_string();
+                if let Some(err) = ollama_line_error(&rest) {
+                    return emit_err(Some(status_code.as_u16()), ollama_error_text(&conf.model, &err), None);
+                }
+                if let Some(text) = ollama_delta(&rest) {
+                    let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
+                }
+                let _ = app.emit_to("bubble", "chat-done", ());
+            } else {
+                let body = match resp.text().await {
+                    Ok(b) => b,
+                    Err(e) => return emit_err(None, format!("读取响应失败：{}", e), None),
+                };
+                let j: Value = match serde_json::from_str(&body) {
+                    Ok(j) => j,
+                    Err(_) => return emit_err(Some(status_code.as_u16()), "Ollama 返回的不是合法 JSON".into(), None),
+                };
+                if let Some(err) = j["error"].as_str() {
+                    return emit_err(Some(status_code.as_u16()), ollama_error_text(&conf.model, err), None);
+                }
+                let text = ollama_text(&j);
+                if text.is_empty() {
+                    return emit_err(
+                        Some(status_code.as_u16()),
+                        "模型返回空内容（若为思考型模型，可调大 Max Tokens 或改用非思考模型）".into(),
+                        None,
+                    );
+                }
+                let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
+                let _ = app.emit_to("bubble", "chat-done", ());
+            }
+        } else if want_stream && is_sse {
             use futures_util::StreamExt;
             let mut stream = resp.bytes_stream();
             let mut buf = String::new();
@@ -1312,6 +1542,16 @@ async fn run_chat(app: AppHandle, args: ChatArgs) {
         }
         return;
     }
+}
+
+// 演示模式逐字流式：按字符切块（绝不在 UTF-8 多字节序列中间切断）
+fn mock_chunks(reply: &str) -> Vec<String> {
+    let chars: Vec<char> = reply.chars().collect();
+    if chars.is_empty() {
+        return vec![];
+    }
+    let chunk = (chars.len() / 90).max(1);
+    chars.chunks(chunk).map(|c| c.iter().collect()).collect()
 }
 
 fn mock_reply(last_user: &str, persona: &str) -> String {
@@ -1495,6 +1735,9 @@ async fn provider_test(app: AppHandle, id: String) -> Result<Value, String> {
                 }
                 if conf.base.trim_end_matches('/').ends_with("/models") {
                     conf.base.trim_end_matches('/').to_string()
+                } else if conf.ollama {
+                    // Ollama 原生模型列表；用户填 .../v1 或裸地址都能测通
+                    format!("{}/api/tags", ollama_root(&conf.base))
                 } else {
                     join_url(&conf.base, "/models")
                 }
@@ -1564,25 +1807,38 @@ async fn provider_test(app: AppHandle, id: String) -> Result<Value, String> {
         Ok(j) => j,
         Err(_) => return Ok(json!({"ok": false, "message": "响应不是合法 JSON"})),
     };
-    let models: Vec<String> = match conf.ptype.as_str() {
-        "gemini" => j["models"]
+    let models: Vec<String> = if conf.ollama && j["models"].is_array() {
+        // Ollama /api/tags：{"models":[{"name":"qwen2.5:7b",...}]}
+        j["models"]
             .as_array()
             .map(|a| {
                 a.iter()
-                    .filter_map(|m| m["name"].as_str())
-                    .map(|s| s.trim_start_matches("models/").to_string())
-                    .collect()
-            })
-            .unwrap_or_default(),
-        _ => j["data"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|m| m["id"].as_str().or(m["name"].as_str()))
+                    .filter_map(|m| m["name"].as_str().or(m["model"].as_str()))
                     .map(|s| s.to_string())
                     .collect()
             })
-            .unwrap_or_default(),
+            .unwrap_or_default()
+    } else {
+        match conf.ptype.as_str() {
+            "gemini" => j["models"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m["name"].as_str())
+                        .map(|s| s.trim_start_matches("models/").to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => j["data"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m["id"].as_str().or(m["name"].as_str()))
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
     };
     let note = if is_local && conf.key.is_empty() {
         format!("{} 个可用模型（本地服务，无需 Key）", models.len())
@@ -2192,6 +2448,7 @@ mod tests {
                 timeout: 30,
                 retry: 2,
                 stream: true,
+                ollama: true,
             }
         }
 
@@ -2449,5 +2706,58 @@ mod tests {
             assert!(est_tokens("hello") <= 3);
             let mut only_sys = vec![ChatMsg { role: "system".into(), content: "很长".repeat(200) }];
             assert!(!trim_to_budget(&mut only_sys, 10));
+        }
+
+        #[test]
+        fn mock_chunks_split_on_char_boundary() {
+            // 回归：v0.2.7 按字节切片，中文/emoji 落在非字符边界 → panic → 进程崩溃
+            let s = "你好，我是团子🐱。**粗体** abc";
+            let out = mock_chunks(s);
+            assert_eq!(out.concat(), s);
+            let long = "专注搭子番茄钟提醒".repeat(60);
+            let parts = mock_chunks(&long);
+            assert!(parts.len() > 1);
+            assert_eq!(parts.concat(), long);
+            assert!(mock_chunks("").is_empty());
+        }
+
+        #[test]
+        fn ollama_endpoint_detection_and_urls() {
+            assert!(is_ollama_endpoint("http://localhost:11434/v1"));
+            assert!(is_ollama_endpoint("http://127.0.0.1:11434"));
+            assert!(is_ollama_endpoint("https://ollama.example.com/v1"));
+            assert!(!is_ollama_endpoint("https://api.deepseek.com/v1"));
+            assert_eq!(ollama_chat_url("http://localhost:11434/v1"), "http://localhost:11434/api/chat");
+            assert_eq!(ollama_chat_url("http://localhost:11434"), "http://localhost:11434/api/chat");
+            assert_eq!(ollama_chat_url("http://localhost:11434/api"), "http://localhost:11434/api/chat");
+            assert_eq!(ollama_chat_url("http://localhost:11434/api/chat"), "http://localhost:11434/api/chat");
+            assert_eq!(ollama_root("http://localhost:11434/v1/"), "http://localhost:11434");
+        }
+
+        #[test]
+        fn ollama_ndjson_parsing_and_oom_hint() {
+            let line = r#"{"message":{"role":"assistant","content":"hi"},"done":false}"#;
+            assert_eq!(ollama_delta(line).unwrap(), "hi");
+            assert!(ollama_delta(r#"{"message":{"content":""},"done":true}"#).is_none());
+            assert!(ollama_line_error(
+                r#"{"error":"llama-server reported out-of-memory during startup"}"#
+            )
+            .unwrap()
+            .contains("out-of-memory"));
+            assert!(ollama_delta(r#"{"response":"pong","done":true}"#).unwrap() == "pong");
+            assert!(is_local_oom(
+                "llama-server startup failed before projector CPU offload retry: GGML_ASSERT(buffer) failed"
+            ));
+            assert!(is_local_oom("failed to allocate CPU buffer of size 671354880"));
+            assert!(!is_local_oom("rate limited"));
+            let hint = local_oom_hint("qwen3.5:2b", "out-of-memory");
+            assert!(hint.contains("qwen3.5:2b"));
+            assert!(hint.contains("上下文 Token 上限"));
+            // 非 OOM 错误不应被误包装成内存建议
+            assert_eq!(
+                ollama_error_text("m", "model 'x' not found"),
+                "model 'x' not found"
+            );
+            assert!(ollama_error_text("m", "failed to allocate CPU buffer").contains("内存不足"));
         }
 }

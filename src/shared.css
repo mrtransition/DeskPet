@@ -55,7 +55,7 @@ label{color:var(--t2);cursor:pointer}
 .msg.ai{align-self:flex-start;background:#fff;border:1px solid var(--line);border-bottom-left-radius:var(--r-sm);box-shadow:0 1px 3px rgba(31,39,51,.05)}
 .msg.sys{align-self:center;max-width:94%;background:#F1F4F9;color:var(--t2);font-size:var(--fs-xs);padding:5px 12px;border-radius:999px;text-align:center;border:1px solid var(--line)}
 .msg.sys.warn{background:var(--warn-bg);color:#9A6B1F;border-color:#F0DFC0}
-.msg.err{align-self:stretch;max-width:100%;background:var(--err-bg);border:1px solid #F3CACA;color:#A33A3A;border-radius:var(--r-lg)}
+.msg.err{align-self:stretch;max-width:100%;background:var(--err-bg);border:1px solid #F3CACA;color:#A33A3A;border-radius:var(--r-lg);white-space:pre-wrap}
 .msg .m-act{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
 .msg .m-act button{padding:3px 9px;font-size:var(--fs-xs)}
 .msg .m-copy{position:absolute;right:5px;bottom:-9px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:1px 8px;font-size:10px;color:var(--t3);opacity:0;transition:opacity .15s}

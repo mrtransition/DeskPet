@@ -85,6 +85,9 @@ let lastFitH = 0;
 let fitTimer = null;
 let cooldownUntil = 0;
 let cdTimer = null;
+// 本次气泡是否由后端「提醒」自动弹出：是的话，确认提醒后直接把气泡关掉，
+// 否则用户会觉得点了「知道了」窗口还挂着（v0.2.7 仅移除了消息，窗口仍在）。
+let openedByReminder = false;
 
 /* ---- 高度自适应（FR-BUB-003） ---- */
 function fitHeight() {
@@ -123,6 +126,7 @@ function makeMsgEl(m) {
       '<div class="m-act"><button data-act="retry">重试</button><button data-act="switch">切换模型</button><button data-act="settings">打开设置</button></div>';
   } else {
     d = el('div', 'msg sys' + (m.warn ? ' warn' : ''), esc(m.content));
+    if (m.reminder) d.dataset.reminder = '1';
     if (m.actions) {
       const act = el('div', 'm-act');
       m.actions.forEach(a => {
@@ -134,6 +138,11 @@ function makeMsgEl(m) {
               d.remove();
               scrollMsgs(false);
               fitHeight();
+              // 提醒由后端自动弹出时，处理完就收起气泡；若还有其它提醒未确认则保留
+              if (a.closeBubble && openedByReminder && !bMsgs.querySelector('[data-reminder]')) {
+                openedByReminder = false;
+                invoke('hide_bubble_cmd');
+              }
             }
           }
         };
@@ -166,6 +175,7 @@ function pushSys(content, opts) {
   const s = curSession();
   const m = { role: 'system', content, ts: Date.now(), warn: opts && opts.warn };
   if (opts && opts.actions) m.actions = opts.actions;
+  if (opts && opts.reminder) m.reminder = true;
   if (opts && opts.ephemeral) { appendMsg(m); return; }
   if (s) { s.msgs.push(m); s.updatedAt = Date.now(); saveState(); }
   appendMsg(m);
@@ -446,6 +456,7 @@ function autoGrow() {
   fitHeight();
 }
 bInput.addEventListener('input', autoGrow);
+bInput.addEventListener('focus', () => { openedByReminder = false; });
 bInput.addEventListener('keydown', e => {
   const enterSend = S ? S.settings.enterSend !== false : true;
   if (e.key === 'Enter') {
@@ -456,6 +467,7 @@ bInput.addEventListener('keydown', e => {
 function doSend() {
   const t = bInput.value.trim();
   if (!t || streaming) return;
+  openedByReminder = false;
   bInput.value = ''; autoGrow();
   send(t);
 }
@@ -504,8 +516,10 @@ document.addEventListener('mouseup', () => {
 function touchBubbleAct() { lastBubbleAct = Date.now(); }
 ['mousemove', 'mousedown', 'keydown', 'input', 'wheel', 'touchstart'].forEach(ev =>
   card.addEventListener(ev, touchBubbleAct, { passive: true }));
-async function onShown(reason) {
+async function onShown(reason, auto) {
   await loadState();
+  // 只有「后端自动弹出的提醒」才在确认后自动收起；用户原本就开着气泡则保持不动
+  openedByReminder = reason === 'reminder' && auto !== false;
   // 应用持久化的气泡宽度（FR-BUB-003）
   try { await invoke('bubble_set_width', { width: S.settings.bubbleW || 340, side: 'center', finalize: true }); } catch (e) { }
   if (reason === 'click' && S.settings.newSessionPerClick && curSession() && curSession().msgs.length) {
@@ -529,17 +543,19 @@ function renderNotice(n) {
     const r = n.reminder;
     pushSys('⏰ 叮！提醒：' + r.content + '（' + remRuleText(r) + '）', {
       ephemeral: true,
+      reminder: true,
       actions: [
-        { label: '稍后 5 分钟', dismiss: true, onClick: () => { invoke('reminder_snooze', { id: r.id, content: r.content }); pushSys('已稍后提醒：' + fmtDT(Date.now() + 5 * 60000), { ephemeral: true }); } },
-        { label: '知道了', dismiss: true, onClick: () => { } },
+        { label: '稍后 5 分钟', dismiss: true, closeBubble: true, onClick: () => { invoke('reminder_snooze', { id: r.id, content: r.content }); pushSys('已稍后提醒：' + fmtDT(Date.now() + 5 * 60000), { ephemeral: true }); } },
+        { label: '知道了', dismiss: true, closeBubble: true, onClick: () => { } },
       ],
     });
   }
 }
 tListen('bubble-shown', ev => {
   const reason = ev.payload && ev.payload.reason;
+  const auto = ev.payload ? ev.payload.auto !== false : true;
   card.classList.toggle('below', !!(ev.payload && ev.payload.below));
-  onShown(reason || 'click');
+  onShown(reason || 'click', auto);
 });
 tListen('new-session-req', async () => {
   await loadState();
