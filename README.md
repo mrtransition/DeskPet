@@ -139,6 +139,8 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 
 ## 🗺️ Roadmap
 
+> 详细排期、验收标准与风险应对见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
 - [x] 完整动画皮肤包（`.deskpet-skin.zip`：图集 / 状态机 / 音效）
 - [ ] SQLite 存储与会话全文检索增强（当前为 JSON 原子写盘 + 备份回退）
 - [x] 自动更新（HTTPS 更新清单 + 手动下载安装，不做静默安装）
