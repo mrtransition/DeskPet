@@ -274,12 +274,12 @@ body { background: var(--bg); display: flex; flex-direction: column; }
       <!-- 关于 -->
       <div class="pane about" id="tab-about">
         <h3>桌面 AI 宠物</h3>
-        <div class="ver" id="verLine">桌面版 v2.1 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.0</div>
+        <div class="ver" id="verLine">桌面版 v2.1 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.1</div>
         <details open>
           <summary>v2.1 新增了什么</summary>
           <ul>
             <li>会话摘要压缩（FR-MEM-003）：超过阈值后由当前模型压缩较早消息，摘要作为上下文前缀；失败自动回退截断</li>
-            <li>TTS 朗读（FR-VOI-001 部分）：系统语音选择、语速调节、自动朗读与逐条重读，全程不联网</li>
+            <li>TTS 朗读（FR-VOI-001）：系统语音选择、语速调节、自动朗读与逐条重读，全程不联网</li>
             <li>低帧率模式（FR-PET-010）：工作 / 睡眠状态约 30fps，降低 CPU 占用</li>
             <li>结构化日志（NFR-MNT-001）：JSON Lines + 级别 + 密钥脱敏</li>
           </ul>
@@ -294,27 +294,38 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           </ul>
         </details>
         <details>
-          <summary>SRS 需求覆盖对照（v2.0）</summary>
+          <summary>SRS 需求覆盖对照（v1.1 / DeskPet 2.1.0）</summary>
           <table>
             <tr><th>需求</th><th>说明</th><th>状态</th></tr>
             <tr><td>FR-PET-001~008/010</td><td>透明置顶、任务栏可见性、拖拽记忆、多屏回收、八态动画、缩放、穿透、低帧率</td><td class="st-ok">完整（置顶层级支持 TOPMOST 提升；v2.1 低帧率 30fps）</td></tr>
-            <tr><td>FR-PET-002</td><td>置顶层级「普通 / 置顶」+ Win32 TOPMOST 提升</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-PET-009</td><td>APNG/GIF/WebP 单图形象 + 皮肤包多状态帧</td><td class="st-part">Live2D / Spine / Lottie 运行时未内置</td></tr>
-            <tr><td>FR-BUB-001~014/16/17</td><td>弹出、定位、宽度拖拽、跟随、渲染、流式、停止、会话、关闭条件、快捷键</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-MDL-001~013</td><td>模板、自定义、测试、多配置、切换、密钥安全、代理、参数、上下文、降级、错误分类</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-PET-009</td><td>APNG/GIF/WebP 单图形象 + 皮肤包多状态帧</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-PET-011</td><td>Live2D / Spine / Lottie 运行时</td><td class="st-part">P3，v3 后置</td></tr>
+            <tr><td>FR-BUB-001~016/018</td><td>弹出、定位、宽度拖拽、跟随、渲染、流式、停止、会话、关闭条件、快捷键、输出转义</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-BUB-017</td><td>全局快捷键打开设置</td><td class="st-ok">完整（P2）</td></tr>
+            <tr><td>FR-MDL-001~007/009~013</td><td>模板、自定义、测试、多配置、切换、密钥安全、参数、上下文、降级、错误分类</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-MDL-014</td><td>供应商能力矩阵（流式 / 工具 / 视觉 / 模型列表）</td><td class="st-part">按协议分支处理；无显式矩阵与视觉标记（P1）</td></tr>
+            <tr><td>FR-MDL-008</td><td>HTTP / SOCKS5 代理</td><td class="st-part">后端支持，设置页无输入项（P2）</td></tr>
             <tr><td>FR-PSN-001~005</td><td>人格卡片、模板、切换生效、导入导出、皮肤绑定</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-MEM-001/002/004</td><td>显式记忆、相关度注入（≤5 条）、可视化管理</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-MEM-003</td><td>超长会话摘要压缩</td><td class="st-ok">模型摘要 + 轮数/token 兜底（v2.1）</td></tr>
-            <tr><td>FR-TOOL-001~004</td><td>函数调用（提醒/剪贴板/链接/应用/天气/搜索）、逐项授权、结果回传、多轮工具循环</td><td class="st-ok">完整（OpenAI / Anthropic / Gemini 三协议）</td></tr>
+            <tr><td>FR-MEM-001~004</td><td>显式记忆、相关度注入（≤5 条）、摘要压缩、可视化管理</td><td class="st-ok">完整（003 为 P2，v2.1 摘要）</td></tr>
+            <tr><td>FR-TOOL-001/003/004</td><td>函数调用、逐项授权、结果回传、多轮工具循环</td><td class="st-ok">完整（OpenAI / Anthropic / Gemini 三协议）</td></tr>
+            <tr><td>FR-TOOL-002</td><td>天气与联网搜索</td><td class="st-ok">完整（P2）</td></tr>
+            <tr><td>FR-TOOL-005</td><td>截图分析</td><td class="st-part">P3，v3 后置</td></tr>
             <tr><td>FR-REM-001~007</td><td>自然语言提醒、中央播报+稍后、重复规则、免打扰与时段、主动搭话、久坐喝水、剪贴板感知</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-REM-008</td><td>睡眠 / 重启 / 时区变化后的补发策略</td><td class="st-part">错过只触发一次；DST 与时区未显式处理</td></tr>
             <tr><td>FR-SKN-001/002</td><td>3 套内置皮肤；皮肤包（图集+状态机+音效）导入</td><td class="st-ok">完整（.deskpet-skin.zip）</td></tr>
-            <tr><td>FR-VOI-001</td><td>语音输入与朗读</td><td class="st-part">TTS 已实现（系统语音，零联网）；ASR 待本地运行时</td></tr>
-            <tr><td>FR-SYS-001~006</td><td>托盘、自启、设置分组、更新检查与手动安装、用量与费用、中英文界面</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-DAT-001~004、DR-001~004</td><td>本地持久化、检索导出、清理二次确认、零未授权上传</td><td class="st-ok">完整</td></tr>
-            <tr><td>NFR-INT/PERF/SEC/REL</td><td>不抢前台、协议适配、原子写盘、密钥隔离、出站审计</td><td class="st-ok">完整</td></tr>
+            <tr><td>FR-VOI-001</td><td>TTS 朗读</td><td class="st-ok">完整（系统语音，零联网，P2）</td></tr>
+            <tr><td>FR-VOI-002</td><td>ASR 语音输入</td><td class="st-part">P3，v3 后置</td></tr>
+            <tr><td>FR-SYS-001~004</td><td>托盘、自启、设置分组、更新检查与手动安装</td><td class="st-ok">完整（更新无签名，见 NFR-SEC-004）</td></tr>
+            <tr><td>FR-SYS-005~006</td><td>用量与费用、中英文界面</td><td class="st-part">005 完整；006 仅部分文案接入 i18n（P2）</td></tr>
+            <tr><td>FR-SYS-007~008</td><td>单实例、首次启动引导</td><td class="st-part">未实现（P0，v2.2 补齐）</td></tr>
+            <tr><td>FR-SYS-009</td><td>更新失败降级与版本保留</td><td class="st-part">有错误提示，无回退机制</td></tr>
+            <tr><td>FR-SYS-010</td><td>安装 / 卸载与数据保留询问</td><td class="st-part">便携版不适用，v2.3 安装器启用</td></tr>
+            <tr><td>FR-DAT-001~004、DR-001~004</td><td>本地持久化、检索导出、清理二次确认、零未授权上传</td><td class="st-ok">完整（JSON 原子写盘 + 备份回退）</td></tr>
+            <tr><td>FR-DAT-005~006</td><td>迁移备份恢复、会话批量管理</td><td class="st-part">仅有默认值补齐与单条删除，v2.3 补齐</td></tr>
+            <tr><td>NFR-INT/PERF/SEC/REL</td><td>不抢前台、协议适配、原子写盘、密钥隔离、出站审计</td><td class="st-part">SEC-004、REL-004 待 v2.2 / v2.3 补齐；SEC-005/006 为 v1 必须项</td></tr>
             <tr><td>NFR-MNT-001</td><td>统一日志级别与结构化日志，内容脱敏</td><td class="st-ok">完整（JSON Lines，v2.1）</td></tr>
-            <tr><td>NFR-PERF-007</td><td>安装包 ≤ 30 MB</td><td class="">需在 release 构建中实测</td></tr>
-          </table></table>
+            <tr><td>NFR-PERF-007</td><td>安装包 ≤ 30 MB</td><td class="st-ok">v2.1.0 release 实测约 14.0 MB</td></tr>
+          </table>
         </details>
         <details>
           <summary>隐私与用量统计</summary>
@@ -1260,7 +1271,7 @@ $id('clrAll').addEventListener('click', () => {
 
 /* ============ 关于 ============ */
 async function renderAbout() {
-  try { $id('verLine').textContent = '桌面版 ' + (await invoke('get_app_version')) + ' · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.0'; } catch (e) { }
+  try { $id('verLine').textContent = '桌面版 ' + (await invoke('get_app_version')) + ' · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.1'; } catch (e) { }
   const lg = document.querySelector('input[name=langSel][value="' + (S.settings.lang === 'en' ? 'en' : 'zh') + '"]');
   if (lg) lg.checked = true;
   $id('updateUrl').value = S.settings.updateUrl || '';

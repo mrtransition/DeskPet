@@ -142,12 +142,15 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 > 详细排期、验收标准与风险应对见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 - [x] 完整动画皮肤包（`.deskpet-skin.zip`：图集 / 状态机 / 音效）
+- [ ] 单实例运行与首次启动引导（P0，计划 v2.2）
+- [ ] CSP、自定义请求头脱敏与更新签名（计划 v2.2）
+- [ ] 数据备份 / 一键恢复与安装器（计划 v2.2 / v2.3）
 - [ ] SQLite 存储与会话全文检索增强（当前为 JSON 原子写盘 + 备份回退）
-- [x] 自动更新（HTTPS 更新清单 + 手动下载安装，不做静默安装）
-- [x] 多语言（中 / 英界面）
+- [x] 自动更新（HTTPS 更新清单 + 手动下载安装，不做静默安装；签名校验待补）
+- [ ] 完整中英界面（当前仅导航与少量文案接入 i18n）
 - [x] 语音朗读（TTS，系统语音包，零联网）
-- [ ] 语音输入（ASR，需本地运行时）
-- [ ] Live2D / Spine / Lottie 运行时
+- [ ] 语音输入（ASR，P3，需本地运行时）
+- [ ] Live2D / Spine / Lottie 运行时（P3）
 - [ ] macOS / Linux 支持（依赖透明窗口与托盘的跨平台适配）
 - [x] 久坐提醒、剪贴板感知、免打扰时段等 P2 特性（见 SRS）
 
@@ -157,7 +160,7 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 <summary><b>v2.1.0</b> — 会话摘要压缩、TTS 朗读、低帧率模式与结构化日志</summary>
 
 - **会话摘要（FR-MEM-003）**：会话超过可配置阈值后，气泡在发送前调用当前模型把较早消息压缩成摘要（三协议 + Ollama 通用），摘要写入会话并作为上下文前缀；最近若干轮仍以原文发送。模型失败 / 空摘要自动回退到轮数 / token 截断，不阻断对话；导出 Markdown 会附带摘要。
-- **TTS 朗读（FR-VOI-001 部分）**：设置页新增语音开关、系统语音选择与语速调节；AI 回复可自动朗读，也可逐条点击 🔊 重读。使用 WebView2 内置 SpeechSynthesis 与系统语音包，零网络请求；ASR 仍待本地运行时。
+- **TTS 朗读（FR-VOI-001）**：设置页新增语音开关、系统语音选择与语速调节；AI 回复可自动朗读，也可逐条点击 🔊 重读。使用 WebView2 内置 SpeechSynthesis 与系统语音包，零网络请求；ASR 已拆分为 FR-VOI-002（P3，v3 后置）。
 - **低帧率模式（FR-PET-010）**：可配置开关；工作 / 睡眠等非交互状态将连续动画量化为约 30fps，降低 CPU 占用，交互反馈不受影响。
 - **结构化日志（NFR-MNT-001）**：日志改为 JSON Lines（ts / level / event / msg），统一 info / warn / error 级别，并在写入前遮盖 `sk-`、Bearer、`api_key` 等密钥形态；时间戳改为 ISO 8601，旧版纯文本日志在启动时自动归档。
 - **升级兼容**：旧 `data.json` 缺失的新设置项自动补默认值，不覆盖用户已有配置；扩展非设置窗口保存时的后端权威字段白名单，避免旧快照回滚摘要阈值、语音、健康提醒、工具授权等设置。
@@ -254,7 +257,7 @@ Tauri v2 桌面壳：透明置顶宠物窗口、气泡对话、托盘、全局�
 单文件零依赖 HTML 原型，验证全部交互与数据链路，保留于 [`docs/MVP-浏览器模拟版.html`](docs/MVP-浏览器模拟版.html)。
 </details>
 
-完整需求规格（SRS-DESKPET-AI-001 v1.0）与需求追溯矩阵见 [`docs/`](docs)。
+完整需求规格（[SRS-DESKPET-AI-001 v1.1](桌面%20AI%20宠物软件需求规格说明书（SRS）.md)，含 P0/P1/P2/P3 分层与需求追溯矩阵）；后续排期见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
 
 ## 🤝 贡献
 
