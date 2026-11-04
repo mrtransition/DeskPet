@@ -31,6 +31,9 @@ body { cursor: default; }
 .pet-img { position: absolute; left: 0; top: 0; width: 120px; height: 112px; object-fit: contain; display: none; pointer-events: none; filter: drop-shadow(0 5px 8px rgba(31,39,51,.14)); transform-origin: 50% 100%; }
 .pet.has-img #petSvg { display: none; }
 .pet.has-img .pet-img { display: block; }
+/* PNG/WebP 自带透明通道时，矩形 drop-shadow 会得到一块方形阴影；改用柔和的下沉投影 */
+.pet.has-img.no-alpha .pet-img { filter: drop-shadow(0 5px 8px rgba(31,39,51,.14)); }
+.pet.has-img:not(.no-alpha) .pet-img { filter: drop-shadow(0 6px 5px rgba(31,39,51,.18)); }
 .pet.has-img.state-idle .pet-img { animation: pBob 3.2s ease-in-out infinite; }
 .pet.has-img.state-click .pet-img { animation: pSquash .4s ease; }
 .pet.has-img.state-drag .pet-img { animation: pDangle 1s ease-in-out infinite; transform-origin: 50% 20%; }
@@ -98,6 +101,13 @@ body { cursor: default; }
 .state-sleep .z2 { animation-delay: .9s; }
 .state-sleep .z3 { animation-delay: 1.8s; }
 @keyframes zFloat { 0% { opacity: 0; transform: translate(0, 4px); } 30% { opacity: .95; } 100% { opacity: 0; transform: translate(9px, -16px); } }
+/* FR-PET-010：低帧率模式。仅作用于非交互的长时状态（work / sleep），
+   用 steps() 把连续动画量化为约 30fps，减少合成器持续刷新。 */
+.pet.low-fps.state-work .pet-root,
+.pet.low-fps.state-work .pet-img { animation-timing-function: steps(21, end); }
+.pet.low-fps.state-sleep .pet-root,
+.pet.low-fps.state-sleep .pet-img { animation-timing-function: steps(82, end); }
+.pet.low-fps.state-sleep .zzz { animation-timing-function: steps(84, end); }
 /* ===== 主动搭话小气泡（舞台上半区） ===== */
 #miniBubble {
   position: absolute;
@@ -177,6 +187,7 @@ body { cursor: default; }
 </div>
 
 <script src="shared.js"></script>
+<script src="i18n.js"></script>
 <script>
 'use strict';
 const pet = $id('pet');
@@ -223,21 +234,66 @@ function applySkin(name) {
   if (!SKINS[name]) name = 'blue';
   pet.className = pet.className.replace(/skin-\w+/g, '').trim() + ' skin-' + name;
   applyCustomSkin();
+  applyLowFps();
+}
+// FR-PET-010：开关由设置页写入；具体帧率限制由 CSS 按状态应用
+function applyLowFps() {
+  const on = !!(S && S.settings && S.settings.lowFps !== false);
+  pet.classList.toggle('low-fps', on);
 }
 function applyCustomSkin() {
+  // FR-SKN-002：皮肤包优先于单图形象；按状态机取帧，缺帧回退 idle
+  const pack = S && S.settings ? S.settings.skinPack : null;
+  if (pack && pack.files) {
+    const states = pack.states || {};
+    const file = states[petState] || states.idle;
+    const src = (file && pack.files[file]) || '';
+    if (src) {
+      if (petImg.getAttribute('src') !== src) petImg.setAttribute('src', src);
+      pet.classList.remove('no-alpha');
+      pet.classList.add('has-img');
+      return;
+    }
+  }
   const cs = S && S.settings ? S.settings.customSkin : null;
   if (cs && cs.data) {
-    if (petImg.getAttribute('src') !== cs.data) petImg.setAttribute('src', cs.data);
+    if (petImg.getAttribute('src') !== cs.data) {
+      petImg.setAttribute('src', cs.data);
+      // FR-PET-009：GIF 必定带透明；PNG/WebP 需要检测 alpha，否则会加出一圈方形阴影
+      pet.classList.toggle('no-alpha', !/^data:image\/gif/i.test(cs.data) && !cs.alpha);
+      if (!/^data:image\/gif/i.test(cs.data) && cs.alpha === undefined) {
+        const probe = new Image();
+        probe.onload = () => {
+          let alpha = true;
+          try {
+            const c = document.createElement('canvas');
+            c.width = Math.min(64, probe.naturalWidth);
+            c.height = Math.min(64, probe.naturalHeight);
+            const g = c.getContext('2d');
+            g.drawImage(probe, 0, 0, c.width, c.height);
+            const d = g.getImageData(0, 0, c.width, c.height).data;
+            alpha = false;
+            for (let i = 3; i < d.length; i += 4) { if (d[i] < 250) { alpha = true; break; } }
+          } catch (e) { alpha = true; }
+          if (S.settings.customSkin) S.settings.customSkin.alpha = alpha;
+          pet.classList.toggle('no-alpha', !alpha);
+        };
+        probe.onerror = () => { };
+        probe.src = cs.data;
+      }
+    }
     pet.classList.add('has-img');
   } else {
-    pet.classList.remove('has-img');
+    pet.classList.remove('has-img', 'no-alpha');
     petImg.removeAttribute('src');
   }
 }
 function setPetState(s) {
   clearTimeout(stateTimer);
+  const skinChanged = s !== petState;
   petState = s;
   pet.className = pet.className.replace(/state-\w+/g, '').trim() + ' state-' + s;
+  if (skinChanged && S && S.settings && S.settings.skinPack) applyCustomSkin();
   if (s === 'click') stateTimer = setTimeout(() => { if (petState === 'click') setPetState('idle'); }, 430);
   if (s === 'happy') stateTimer = setTimeout(() => { if (petState === 'happy') setPetState('idle'); }, 1900);
   if (s === 'error') stateTimer = setTimeout(() => { if (petState === 'error') setPetState('idle'); }, 2400);
@@ -282,8 +338,8 @@ pet.addEventListener('contextmenu', async e => {
   // 加高窗口以容纳完整菜单（原 220px 高度会导致菜单被裁切/挤压）
   await grow(440);
   showMenu([
-    { icon: '💬', label: '打开对话', onClick: async () => { await shrink(); invoke('show_bubble_cmd'); } },
-    { icon: '✨', label: '新会话', onClick: async () => { await shrink(); await invoke('show_bubble_cmd'); tEmitTo('bubble', 'new-session-req'); } },
+    { icon: '💬', label: t('pet.chat'), onClick: async () => { await shrink(); invoke('show_bubble_cmd'); } },
+    { icon: '✨', label: t('pet.newSession'), onClick: async () => { await shrink(); await invoke('show_bubble_cmd'); tEmitTo('bubble', 'new-session-req'); } },
     '-',
     ...Object.keys(SKINS).map(k => ({
       icon: '🎨', label: '皮肤：' + SKINS[k].label,
@@ -291,9 +347,9 @@ pet.addEventListener('contextmenu', async e => {
       onClick: async () => { switchSkin(k); applySkin(S.settings.skin); saveState(); await shrink(); },
     })),
     '-',
-    { icon: '⚙', label: '设置', onClick: async () => { await shrink(); invoke('open_settings_cmd'); } },
-    { icon: '🌙', label: '免打扰（睡眠）', check: S.settings.dnd, onClick: async () => { await shrink(); invoke('set_dnd', { on: !S.settings.dnd }); } },
-    { icon: '📍', label: '复位宠物位置', onClick: async () => { await shrink(); invoke('reset_pet_pos'); } },
+    { icon: '⚙', label: t('pet.settings'), onClick: async () => { await shrink(); invoke('open_settings_cmd'); } },
+    { icon: '🌙', label: t('pet.dnd'), check: S.settings.dnd, onClick: async () => { await shrink(); invoke('set_dnd', { on: !S.settings.dnd }); } },
+    { icon: '📍', label: t('pet.resetPos'), onClick: async () => { await shrink(); invoke('reset_pet_pos'); } },
   ], e.clientX + 40, e.clientY - 200);
 });
 document.addEventListener('mousedown', e => {
@@ -325,6 +381,7 @@ curWin.onResized(async ev => {
 
 /* ---- 主动搭话 ---- */
 async function showMini(text) {
+  miniBubble.dataset.mode = '';
   miniBubble.textContent = text;
   miniBubble.classList.add('show');
   await grow();
@@ -335,9 +392,13 @@ async function showMini(text) {
   }, 6500);
 }
 miniBubble.addEventListener('click', async () => {
+  const clip = miniBubble.dataset.mode === 'clip';
   miniBubble.classList.remove('show');
+  miniBubble.dataset.mode = '';
+  clearTimeout(miniTimer);
   await shrink();
-  invoke('show_bubble_cmd');
+  await invoke('show_bubble_cmd');
+  if (clip) tEmitTo('bubble', 'clipboard-process-req');
 });
 
 /* ---- 事件 ---- */
@@ -347,9 +408,28 @@ tListen('chat-state', ev => {
 });
 tListen('reminder-fx', () => setPetState('happy'));
 tListen('chatter', ev => showMini(ev.payload && ev.payload.text));
+/* FR-REM-007：剪贴板变化提示。点击后才把内容交给气泡处理，未点击不发送任何数据。 */
+tListen('clipboard-changed', ev => {
+  const preview = (ev.payload && ev.payload.preview) || '';
+  if (!preview) return;
+  miniBubble.innerHTML = '📋 刚复制了：' + esc(cut(preview, 40)) + '<br><b>点我处理 →</b>';
+  miniBubble.dataset.mode = 'clip';
+  miniBubble.classList.add('show');
+  grow();
+  clearTimeout(miniTimer);
+  miniTimer = setTimeout(async () => {
+    miniBubble.classList.remove('show');
+    miniBubble.dataset.mode = '';
+    await shrink();
+  }, 15000);
+});
 tListen('dnd-changed', ev => {
   if (ev.payload && ev.payload.on) setPetState('sleep');
   else if (petState === 'sleep') setPetState('idle');
+});
+tListen('lang-changed', async ev => {
+  await loadState();
+  applyI18n();
 });
 tListen('state-changed', async ev => {
   if (ev.payload && ev.payload.origin === 'pet') return;
@@ -380,6 +460,7 @@ tListen('state-reset', async () => {
 /* ---- 启动 ---- */
 (async function init() {
   await loadState();
+  applyI18n();
   applySkin(S.settings.skin);
   petSc = S.settings.petScale || 1;
   curW = 120 * petSc; curH = 112 * petSc;

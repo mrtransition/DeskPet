@@ -56,11 +56,21 @@ label{color:var(--t2);cursor:pointer}
 .msg.sys{align-self:center;max-width:94%;background:#F1F4F9;color:var(--t2);font-size:var(--fs-xs);padding:5px 12px;border-radius:999px;text-align:center;border:1px solid var(--line)}
 .msg.sys.warn{background:var(--warn-bg);color:#9A6B1F;border-color:#F0DFC0}
 .msg.err{align-self:stretch;max-width:100%;background:var(--err-bg);border:1px solid #F3CACA;color:#A33A3A;border-radius:var(--r-lg);white-space:pre-wrap}
+.msg.tool{align-self:flex-start;max-width:94%;background:#fff;border:1px solid var(--line);border-left:3px solid var(--line-dk);font-size:var(--fs-xs);color:var(--t2)}
+.msg.tool.ok{border-left-color:#4CAF7D}
+.msg.tool.warn{border-left-color:#E8A33D}
+.msg.tool .tool-desc{margin-top:3px;color:var(--t2)}
+.msg.tool .tool-net,.msg.tool .tool-local{font-size:10px;padding:0 5px;border-radius:999px;margin-left:4px}
+.msg.tool .tool-net{background:#FDF1DF;color:#9A6B1F}
+.msg.tool .tool-local{background:#E9F5EE;color:#2F7A57}
+.msg.tool .tool-args{margin-top:4px;font-family:monospace;font-size:10px;color:var(--t3);word-break:break-all;max-height:60px;overflow:auto}
 .msg .m-act{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
 .msg .m-act button{padding:3px 9px;font-size:var(--fs-xs)}
 .msg .m-copy{position:absolute;right:5px;bottom:-9px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:1px 8px;font-size:10px;color:var(--t3);opacity:0;transition:opacity .15s}
 .msg.ai:hover .m-copy{opacity:1}
 .msg .m-copy:hover{color:var(--primary);border-color:var(--primary)}
+/* FR-VOI-001：朗读按钮与复制按钮并排，悬停时出现 */
+.msg .m-speak{right:48px}
 .m-cursor{display:inline-block;width:7px;height:12px;background:var(--primary);vertical-align:-1px;margin-left:2px;animation:cBlink .8s steps(2) infinite;border-radius:1px}
 @keyframes cBlink{0%,49%{opacity:1}50%,100%{opacity:0}}
 /* Markdown */

@@ -86,6 +86,9 @@ function switchPersona(id) {
     // FR-PSN-003：尚未开始对话时同步新人格的开场白
     if (ps.greeting && !s.msgs.some(m => m.role === 'user')) {
       s.msgs = [{ role: 'assistant', content: ps.greeting, ts: Date.now() }];
+      // 旧摘要基于上一个人格/开场白，重置会话时一并清空（FR-MEM-003）
+      s.summary = '';
+      s.summaryCount = 0;
     }
   }
   if (ps.providerId && getProv(ps.providerId)) {
@@ -310,6 +313,7 @@ function sessionToMd(s) {
   const pers = getPers(s.personaId);
   const prov = getProv(s.providerId);
   const lines = ['# ' + (s.title || '未命名会话'), '', '- 人格：' + (pers ? pers.name : '（人格已删除）'), '- 模型：' + (prov ? prov.name + ' / ' + prov.model : '-'), '- 时间：' + new Date(s.createdAt).toLocaleString('zh-CN'), '', '---', ''];
+  if (s.summary) lines.push('> **较早对话摘要（FR-MEM-003）**', '', s.summary, '', '---', '');
   s.msgs.forEach(m => {
     if (m.role === 'user') lines.push('## 🧑 用户', '', m.content, '');
     else if (m.role === 'assistant') lines.push('## 🐱 ' + (pers ? pers.name : 'AI'), '', m.content, '');

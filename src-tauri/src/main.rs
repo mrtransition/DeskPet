@@ -19,6 +19,10 @@ use windows_sys::Win32::Foundation::{POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
+use windows_sys::Win32::System::DataExchange::{
+    CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+};
+use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
 // ================= 默认状态（与 MVP 版一致的数据结构，密钥不入库） =================
@@ -66,9 +70,18 @@ const DEFAULT_STATE: &str = r##"{
     "petScale": 1, "skin": "blue", "petPos": null, "clickThrough": false, "lowFps": true,
     "bubbleW": 340, "bubbleIdleClose": 60, "enterSend": true, "newSessionPerClick": false,
     "showInTaskbar": false, "alwaysOnTop": true,
-    "chatter": "off", "dnd": false, "lastPersonaId": "ps-1", "lastProviderId": null
+    "chatter": "off", "chatterStart": "09:00", "chatterEnd": "22:00",
+    "health": {"enabled": false, "sitMin": 60, "waterMin": 45},
+    "dnd": false, "dndStart": "", "dndEnd": "",
+    "clipboardWatch": false,
+    "lang": "zh", "voice": false, "voiceURI": "", "voiceRate": 1,
+    "summaryThreshold": 24, "priceIn": 0, "priceOut": 0,
+    "updateUrl": "https://api.github.com/repos/mrtransition/deskpet/releases/latest",
+    "updateAuto": true,
+    "toolSettings": {"enabled": true, "auth": {}, "openWhitelist": ["github.com", "www.github.com", "developer.mozilla.org", "www.bing.com", "www.baidu.com", "wikipedia.org"]},
+    "lastPersonaId": "ps-1", "lastProviderId": null
   },
-  "stats": {"requests": 0, "tokensIn": 0, "tokensOut": 0}
+  "stats": {"requests": 0, "tokensIn": 0, "tokensOut": 0, "costIn": 0, "costOut": 0}
 }"##;
 
 // ================= 应用上下文 =================
@@ -77,6 +90,10 @@ struct AppCtx {
     data_path: std::path::PathBuf,
     state: Mutex<Value>,
     stop: AtomicBool,
+    // 并发请求代际：新一轮请求递增 seq 并清空 cancelled，旧请求看到 seq 变化即自我终止，
+    // 不会因 stop 被新一轮重置而「复活」。
+    chat_seq: std::sync::atomic::AtomicU64,
+    chat_cancelled: AtomicBool,
     bubble_anchor_below: Mutex<bool>,
     fg_before: Mutex<usize>,
     pet_visible: Mutex<bool>,
@@ -84,7 +101,40 @@ struct AppCtx {
     dnd_queue: Mutex<Vec<Value>>,
     outbound: Mutex<Vec<Value>>,
     file_lock: Mutex<()>,
+    // 按授权 id 索引：并发工具调用（多窗口/连续调用）不会互相覆盖等待槽
+    tool_wait: Mutex<std::collections::HashMap<String, ToolWait>>,
+    clipboard_last: Mutex<String>,
+    usage: Mutex<UsageAcc>,
     http: reqwest::Client,
+}
+
+// FR-SYS-005：token 用量与估算费用（仅本地累计，不上报）
+#[derive(Default, Clone)]
+struct UsageAcc {
+    requests: i64,
+    tokens_in: i64,
+    tokens_out: i64,
+}
+
+// FR-REM-006：久坐 / 喝水计时器
+#[derive(Clone, Copy)]
+struct HealthTimer {
+    sit: std::time::Instant,
+    water: std::time::Instant,
+    sit_water_next: bool,
+}
+
+struct ToolDecision {
+    allow: bool,
+    remember: bool,
+}
+
+struct ToolWait {
+    #[allow(dead_code)] // 与 map 键一致，保留便于排查授权超时的现场
+    id: String,
+    #[allow(dead_code)]
+    name: String,
+    tx: tokio::sync::oneshot::Sender<ToolDecision>,
 }
 
 fn load_or_default(path: &std::path::PathBuf) -> Value {
@@ -94,21 +144,38 @@ fn load_or_default(path: &std::path::PathBuf) -> Value {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
     };
-    if let Some(v) = try_read(path) {
+    if let Some(mut v) = try_read(path) {
+        fill_defaults(&default_state(), &mut v);
         return v;
     }
     let bak = path.with_extension("json.bak");
-    if let Some(v) = try_read(&bak) {
+    if let Some(mut v) = try_read(&bak) {
         // 保留损坏文件供排查，不让下一次写入直接覆盖现场
         if path.exists() {
             let _ = std::fs::rename(path, path.with_extension(format!("json.corrupt-{}", now_ms())));
         }
+        fill_defaults(&default_state(), &mut v);
         return v;
     }
     if path.exists() {
         let _ = std::fs::rename(path, path.with_extension(format!("json.corrupt-{}", now_ms())));
     }
     default_state()
+}
+
+// 升级兼容：旧版 data.json 没有新版本新增的字段。只补缺失的键，不覆盖用户已有值；
+// 数组（会话 / 供应商 / 人格）整体保留，避免默认示例数据混入用户数据。
+fn fill_defaults(default: &Value, loaded: &mut Value) {
+    if let (Value::Object(d), Value::Object(l)) = (default, loaded) {
+        for (k, dv) in d {
+            match l.get_mut(k) {
+                Some(lv) => fill_defaults(dv, lv),
+                None => {
+                    l.insert(k.clone(), dv.clone());
+                }
+            }
+        }
+    }
 }
 
 fn default_state() -> Value {
@@ -159,10 +226,23 @@ fn persist_state(ctx: &AppCtx) {
     }
 }
 
+// NFR-MNT-001：统一日志级别 + JSON Lines 结构化日志，写入前脱敏。
+// 保留 app_log 作为 info 级别快捷入口，避免所有调用点都传事件名。
 fn app_log(app: &AppHandle, msg: &str) {
+    log_event(app, "info", "app", msg);
+}
+
+fn log_event(app: &AppHandle, level: &str, event: &str, msg: &str) {
     if let Ok(dir) = app.path().app_data_dir() {
         let _ = std::fs::create_dir_all(&dir);
-        let line = format!("[{}] {}\n", chrono_now(), msg);
+        let line = json!({
+            "ts": chrono_now(),
+            "level": level,
+            "event": event,
+            "msg": redact_secrets(msg),
+        });
+        let mut text = line.to_string();
+        text.push('\n');
         let p = dir.join("deskpet.log");
         if let Ok(mut len) = std::fs::metadata(&p).map(|m| m.len()) {
             if len > 200_000 {
@@ -173,9 +253,67 @@ fn app_log(app: &AppHandle, msg: &str) {
         }
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
-            let _ = f.write_all(line.as_bytes());
+            let _ = f.write_all(text.as_bytes());
         }
     }
+}
+
+// 升级兼容：v2.0 及之前写的是纯文本日志。首次启动时把旧文件改名保留，
+// 保证 deskpet.log 从本次运行起始终是 JSON Lines（NFR-MNT-001）。
+fn migrate_legacy_log(app: &AppHandle) {
+    if let Ok(dir) = app.path().app_data_dir() {
+        let p = dir.join("deskpet.log");
+        let Ok(text) = std::fs::read_to_string(&p) else { return };
+        if has_legacy_log_lines(&text) {
+            let legacy = dir.join(format!("deskpet.log.legacy-{}", now_ms()));
+            let _ = std::fs::rename(&p, legacy);
+        }
+    }
+}
+
+// 混入任意一行旧版纯文本日志都需要归档（例如先运行旧版、再升级到 v2.1）。
+fn has_legacy_log_lines(text: &str) -> bool {
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .any(|l| !l.trim_start().starts_with('{'))
+}
+
+// 日志脱敏：隐藏 sk- 令牌、Bearer 令牌与显式 api_key 值。
+// 不依赖正则库，按标记扫描；宁可多遮盖，也不把密钥写进日志。
+fn redact_secrets(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    loop {
+        let lower = rest.to_lowercase();
+        let mut best: Option<(usize, &'static str)> = None;
+        for pat in ["sk-", "bearer ", "api_key=", "apikey=", "api-key=", "authorization:"] {
+            if let Some(pos) = lower.find(pat) {
+                if best.map(|(b, _)| pos < b).unwrap_or(true) {
+                    best = Some((pos, pat));
+                }
+            }
+        }
+        let Some((pos, pat)) = best else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..pos]);
+        out.push_str(&rest[pos..pos + pat.len()]);
+        let after = &rest[pos + pat.len()..];
+        if pat == "authorization:" {
+            // Authorization 头后面通常是 "Bearer <token>"，整段行内值遮盖
+            out.push_str(" ***");
+            break;
+        }
+        let secret_len = after
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace() || matches!(c, ',' | ';' | '"' | '\''))
+            .map(|(i, _)| i)
+            .unwrap_or(after.len());
+        out.push_str("***");
+        rest = &after[secret_len..];
+    }
+    out
 }
 
 fn chrono_now() -> String {
@@ -188,7 +326,173 @@ fn chrono_now() -> String {
     let d = secs / 86400;
     let rem = secs % 86400;
     let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    format!("D{} {:02}:{:02}:{:02}", d, h, mi, s)
+    let (y, mo, day) = days_to_ymd(d as i64);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}+08:00", y, mo, day, h, mi, s)
+}
+
+// 公历日期换算（Howard Hinnant 算法），避免为日志时间引入额外依赖。
+fn days_to_ymd(z: i64) -> (i64, u32, u32) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
+}
+
+// 本地时间（UTC+8）当天的分钟数，用于主动搭话 / 免打扰时段判断
+fn local_minutes() -> i64 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+        + 8 * 3600;
+    (secs % 86400) / 60
+}
+
+fn parse_hhmm(s: &str) -> Option<i64> {
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let (h, m) = t.split_once(':').or_else(|| t.split_once('：'))?;
+    let h: i64 = h.trim().parse().ok()?;
+    let m: i64 = m.trim().parse().ok()?;
+    if !(0..=23).contains(&h) || !(0..=59).contains(&m) {
+        return None;
+    }
+    Some(h * 60 + m)
+}
+
+// 跨零点时段（如 22:00–08:00）也应正确命中
+fn in_time_window(now_min: i64, start: &str, end: &str) -> bool {
+    let (Some(s), Some(e)) = (parse_hhmm(start), parse_hhmm(end)) else {
+        return false;
+    };
+    if s == e {
+        return false;
+    }
+    if s < e {
+        now_min >= s && now_min < e
+    } else {
+        now_min >= s || now_min < e
+    }
+}
+
+fn dnd_active(st: &Value) -> bool {
+    st["settings"]["dnd"].as_bool().unwrap_or(false)
+        || in_time_window(
+            local_minutes(),
+            st["settings"]["dndStart"].as_str().unwrap_or(""),
+            st["settings"]["dndEnd"].as_str().unwrap_or(""),
+        )
+}
+
+fn chatter_in_window(st: &Value) -> bool {
+    let start = st["settings"]["chatterStart"].as_str().unwrap_or("09:00");
+    let end = st["settings"]["chatterEnd"].as_str().unwrap_or("22:00");
+    if parse_hhmm(start).is_none() || parse_hhmm(end).is_none() {
+        return true;
+    }
+    in_time_window(local_minutes(), start, end)
+}
+
+// ================= Windows 剪贴板（只读，按次/开关授权） =================
+fn clipboard_read_text() -> Option<String> {
+    const CF_UNICODETEXT: u32 = 13;
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
+            return None;
+        }
+        let result = if IsClipboardFormatAvailable(CF_UNICODETEXT) != 0 {
+            let h = GetClipboardData(CF_UNICODETEXT);
+            if h.is_null() {
+                None
+            } else {
+                let p = GlobalLock(h);
+                if p.is_null() {
+                    None
+                } else {
+                    let size = GlobalSize(h);
+                    let len = size / 2;
+                    let slice = std::slice::from_raw_parts(p as *const u16, len);
+                    let end = slice.iter().position(|&c| c == 0).unwrap_or(len);
+                    let text = String::from_utf16_lossy(&slice[..end]);
+                    let _ = GlobalUnlock(h);
+                    if text.trim().is_empty() { None } else { Some(text) }
+                }
+            }
+        } else {
+            None
+        };
+        let _ = CloseClipboard();
+        result
+    }
+}
+
+fn cut_chars(s: &str, n: usize) -> String {
+    let mut out: String = s.chars().take(n).collect();
+    if s.chars().count() > n {
+        out.push('…');
+    }
+    out
+}
+
+// ================= 外部打开（仅 http/https / 白名单可执行文件） =================
+fn open_external_url(url: &str) -> Result<(), String> {
+    let u = reqwest::Url::parse(url.trim()).map_err(|_| "URL 格式无效".to_string())?;
+    if !matches!(u.scheme(), "http" | "https") {
+        return Err("只允许打开 http / https 链接".into());
+    }
+    std::process::Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url.trim()])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("打开链接失败：{}", e))
+}
+
+fn host_allowed(host: &str, whitelist: &[String]) -> bool {
+    let h = host.trim().trim_start_matches("www.").to_lowercase();
+    whitelist.iter().any(|w| {
+        let w = w.trim().trim_start_matches("www.").to_lowercase();
+        !w.is_empty() && (h == w || h.ends_with(&format!(".{}", w)))
+    })
+}
+
+fn open_whitelisted_url(st: &Value, url: &str) -> Result<(), String> {
+    let u = reqwest::Url::parse(url.trim()).map_err(|_| "URL 格式无效".to_string())?;
+    if !matches!(u.scheme(), "http" | "https") {
+        return Err("只允许打开 http / https 链接".into());
+    }
+    let list: Vec<String> = st["settings"]["toolSettings"]["openWhitelist"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    let host = u.host_str().unwrap_or("");
+    if !host_allowed(host, &list) {
+        return Err(format!("域名 {} 不在打开链接白名单中（设置 → 隐私 → 工具授权可添加）", host));
+    }
+    open_external_url(url)
+}
+
+fn open_whitelisted_app(app: &str) -> Result<(), String> {
+    let key = app.trim().to_lowercase();
+    let exe = match key.as_str() {
+        "notepad" | "记事本" => "notepad.exe",
+        "calc" | "计算器" => "calc.exe",
+        "mspaint" | "paint" | "画图" => "mspaint.exe",
+        "explorer" | "资源管理器" => "explorer.exe",
+        "snippingtool" | "截图工具" => "snippingtool.exe",
+        _ => return Err(format!("应用「{}」不在白名单中（仅支持 notepad / calc / mspaint / explorer / snippingtool）", app)),
+    };
+    std::process::Command::new(exe)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("启动应用失败：{}", e))
 }
 
 // ================= Win32 工具 =================
@@ -204,6 +508,29 @@ fn work_area_at(x: i32, y: i32) -> RECT {
             info.rcWork
         } else {
             RECT { left: 0, top: 0, right: 1920, bottom: 1040 }
+        }
+    }
+}
+
+// FR-PET-002：置顶层级枚举「置顶且覆盖任务栏」。
+// tauri 的 always_on_top 只做一次 SetWindowPos(HWND_TOPMOST)；全屏应用/新建窗口后需要
+// 周期性重新提升，否则宠物会被盖住。这里把窗口提为 TOPMOST 并保持置顶位。
+fn apply_top_level(win: &WebviewWindow, on: bool) {
+    if let Ok(hwnd) = win.hwnd() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        };
+        let insert = if on { HWND_TOPMOST } else { HWND_NOTOPMOST };
+        unsafe {
+            SetWindowPos(
+                hwnd.0 as _,
+                insert,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
         }
     }
 }
@@ -284,7 +611,11 @@ fn apply_bubble_anchor(app: &AppHandle, pos: &BubblePos) -> Result<(), String> {
 fn show_bubble_reason(app: &AppHandle, reason: &str) -> Result<(), String> {
     let bubble = app.get_webview_window("bubble").ok_or("bubble 窗口不存在")?;
     let was_visible = bubble_visible(app);
-    let pos = compute_bubble_pos(app)?;
+    let pos = if reason == "reminder" {
+        compute_reminder_pos(app)?
+    } else {
+        compute_bubble_pos(app)?
+    };
     apply_bubble_anchor(app, &pos)?;
     // 只有真正从隐藏转为显示时才记录前台窗口，避免提醒在气泡已打开时覆盖原前台句柄
     if !was_visible {
@@ -300,9 +631,28 @@ fn show_bubble_reason(app: &AppHandle, reason: &str) -> Result<(), String> {
     let _ = app.emit_to(
         "bubble",
         "bubble-shown",
-        json!({"below": pos.below, "reason": reason, "auto": !was_visible}),
+        json!({"below": pos.below, "reason": reason, "auto": !was_visible, "center": reason == "reminder"}),
     );
     Ok(())
+}
+
+// FR-REM-002：提醒在屏幕中央附近播报，而不是只在宠物旁
+fn compute_reminder_pos(app: &AppHandle) -> Result<BubblePos, String> {
+    let bubble = app.get_webview_window("bubble").ok_or("bubble 窗口不存在")?;
+    let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
+    let p_pos = pet.outer_position().map_err(|e| e.to_string())?;
+    let p_size = pet.outer_size().map_err(|e| e.to_string())?;
+    let b_size = bubble.outer_size().map_err(|e| e.to_string())?;
+    let work = work_area_at(p_pos.x + p_size.width as i32 / 2, p_pos.y + p_size.height as i32 / 2);
+    let w = b_size.width as i32;
+    let h = b_size.height as i32;
+    let x = work.left + ((work.right - work.left - w) / 2).max(0);
+    let y = work.top + (((work.bottom - work.top) * 38 / 100) - h / 2).max(0);
+    Ok(BubblePos {
+        x: x.clamp(work.left, (work.right - w).max(work.left)),
+        y: y.clamp(work.top, (work.bottom - h).max(work.top)),
+        below: false,
+    })
 }
 
 fn hide_bubble(app: &AppHandle) -> Result<(), String> {
@@ -576,7 +926,7 @@ fn migrate_legacy_secrets(app: &AppHandle) {
     }
     if changed {
         persist_state(&ctx);
-        app_log(app, "已将旧版明文 API Key 迁移到系统凭据管理器");
+        log_event(app, "info", "secrets.migrated", "已将旧版明文 API Key 迁移到系统凭据管理器");
     }
 }
 
@@ -585,12 +935,22 @@ fn migrate_legacy_secrets(app: &AppHandle) {
 fn start_scheduler(app: AppHandle) {
     std::thread::spawn(move || {
         let mut chatter_at = std::time::Instant::now() + Duration::from_secs(120);
+        let mut health = HealthTimer {
+            sit: std::time::Instant::now(),
+            water: std::time::Instant::now(),
+            sit_water_next: false,
+        };
         let mut tick: u64 = 0;
         loop {
             std::thread::sleep(Duration::from_secs(1));
             tick = tick.wrapping_add(1);
             tick_reminders(&app);
             tick_chatter(&app, &mut chatter_at);
+            tick_health(&app, &mut health);
+            // FR-REM-007：剪贴板变化感知（默认关闭，需用户在设置中显式开启）
+            if tick % 2 == 0 {
+                tick_clipboard(&app);
+            }
             // FR-PET-005：定期检查显示器拓扑/分辨率变化后宠物是否仍在可视区
             if tick % 5 == 0 {
                 ensure_pet_on_screen(&app);
@@ -666,7 +1026,7 @@ fn tick_reminders(app: &AppHandle) {
     let dnd = {
         let ctx = app.state::<AppCtx>();
         let g = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
-        g["settings"]["dnd"].as_bool().unwrap_or(false)
+        dnd_active(&g)
     };
     if dnd {
         let ctx = app.state::<AppCtx>();
@@ -698,7 +1058,7 @@ fn tick_chatter(app: &AppHandle, chatter_at: &mut std::time::Instant) {
     let interval = {
         let ctx = app.state::<AppCtx>();
         let st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
-        if st["settings"]["dnd"].as_bool().unwrap_or(true) {
+        if dnd_active(&st) || !chatter_in_window(&st) {
             return;
         }
         match st["settings"]["chatter"].as_str() {
@@ -731,12 +1091,652 @@ fn tick_chatter(app: &AppHandle, chatter_at: &mut std::time::Instant) {
     let _ = app.emit_to("pet", "reminder-fx", json!({"kind": "happy"}));
 }
 
+// FR-REM-006：久坐 / 喝水健康提醒（主进程计时，不依赖前端存活）。
+// 命中时先在宠物旁轻提示，同时占用一个「健康提醒」槽位，避免和主动搭话叠在一起。
+fn tick_health(app: &AppHandle, at: &mut HealthTimer) {
+    let now = std::time::Instant::now();
+    let (sit_min, water_min, enabled) = {
+        let ctx = app.state::<AppCtx>();
+        let st = state_lock(&ctx);
+        if dnd_active(&st) {
+            return;
+        }
+        let hs = &st["settings"]["health"];
+        (
+            hs["sitMin"].as_u64().unwrap_or(0),
+            hs["waterMin"].as_u64().unwrap_or(0),
+            hs["enabled"].as_bool().unwrap_or(false),
+        )
+    };
+    if !enabled {
+        return;
+    }
+    // 用户在气泡内交互即视为「离开久坐」，重置计时
+    if bubble_visible(app) {
+        *at = HealthTimer { sit: now, water: now, ..*at };
+        return;
+    }
+    let mut fire: Option<&str> = None;
+    if sit_min >= 5 && now.duration_since(at.sit).as_secs() >= sit_min * 60 {
+        at.sit = now;
+        fire = Some(if at.sit_water_next {
+            "站起来走两步，顺便接杯水吧～"
+        } else {
+            "已经坐了一小时啦，起来活动一下肩膀和腰吧。"
+        });
+        at.sit_water_next = !at.sit_water_next;
+    }
+    if water_min >= 5 && now.duration_since(at.water).as_secs() >= water_min * 60 {
+        at.water = now;
+        if fire.is_none() {
+            fire = Some("该喝水啦，一口气喝半杯再继续～");
+        }
+    }
+    if let Some(text) = fire {
+        let _ = app.emit_to("pet", "chatter", json!({"text": text, "kind": "health"}));
+        let _ = app.emit_to("pet", "reminder-fx", json!({"kind": "happy"}));
+    }
+}
+
+// FR-REM-007：检测剪贴板变化，在宠物旁给出「点我处理」提示。
+// 默认关闭；只读取纯文本，最多保留 2000 字符，不写日志、不自动发送给模型。
+fn tick_clipboard(app: &AppHandle) {
+    let enabled = {
+        let ctx = app.state::<AppCtx>();
+        let st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
+        st["settings"]["clipboardWatch"].as_bool().unwrap_or(false) && !dnd_active(&st)
+    };
+    if !enabled {
+        return;
+    }
+    let ctx = app.state::<AppCtx>();
+    let now_text = clipboard_read_text().unwrap_or_default();
+    let text: String = now_text.chars().take(2000).collect();
+    if text.trim().len() < 4 {
+        return;
+    }
+    {
+        let mut last = ctx.clipboard_last.lock().unwrap_or_else(|e| e.into_inner());
+        if *last == text {
+            return;
+        }
+        *last = text.clone();
+    }
+    let _ = app.emit_to(
+        "pet",
+        "clipboard-changed",
+        json!({"preview": cut_chars(text.trim(), 80)}),
+    );
+    let _ = app.emit_to("pet", "reminder-fx", json!({"kind": "happy"}));
+}
+
+// ================= 工具调用（FR-TOOL-001/003/004） =================
+
+fn tool_defs_raw() -> Value {
+    json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "create_reminder",
+                "description": "创建一条本地定时提醒。用户说「提醒我…」时调用。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string", "description": "提醒内容，如「喝水」"},
+                        "minutes": {"type": "number", "description": "多少分钟后提醒（相对时间）"},
+                        "at": {"type": "string", "description": "本地时间 HH:MM（绝对时间，若已过则顺延到明天）"},
+                        "rule": {"type": "string", "enum": ["once", "daily", "weekly", "interval"], "description": "重复规则，默认 once"},
+                        "intervalMin": {"type": "number", "description": "rule=interval 时的间隔分钟数"}
+                    },
+                    "required": ["content"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_clipboard",
+                "description": "读取当前剪贴板中的纯文本。敏感能力，首次调用需用户授权。",
+                "parameters": {"type": "object", "properties": {"max_chars": {"type": "number", "description": "最多返回字符数，默认 2000"}}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "open_url",
+                "description": "在默认浏览器中打开链接。仅允许白名单域名。",
+                "parameters": {"type": "object", "properties": {"url": {"type": "string", "description": "完整 http/https 链接"}}, "required": ["url"]}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "open_app",
+                "description": "启动白名单内的本地应用：notepad / calc / mspaint / explorer / snippingtool。",
+                "parameters": {"type": "object", "properties": {"app": {"type": "string", "description": "应用名"}}, "required": ["app"]}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "查询城市当前天气（Open-Meteo，无需 API Key）。",
+                "parameters": {"type": "object", "properties": {"city": {"type": "string", "description": "城市名，如 杭州"}}, "required": ["city"]}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "使用 DuckDuckGo 做一次网页搜索，返回标题、链接与摘要。",
+                "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "搜索关键词"}}, "required": ["query"]}
+            }
+        }
+    ])
+}
+
+// 按协议把工具定义转成请求体片段（FR-TOOL-001、NFR-INT-004）
+fn tool_defs(ptype: &str) -> Value {
+    let openai = tool_defs_raw();
+    match ptype {
+        "anthropic" => {
+            let list: Vec<Value> = openai
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .map(|t| {
+                            json!({
+                                "name": t["function"]["name"],
+                                "description": t["function"]["description"],
+                                "input_schema": t["function"]["parameters"],
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            json!(list)
+        }
+        "gemini" => {
+            let list: Vec<Value> = openai
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .map(|t| {
+                            json!({
+                                "name": t["function"]["name"],
+                                "description": t["function"]["description"],
+                                "parameters": t["function"]["parameters"],
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            json!([{ "functionDeclarations": list }])
+        }
+        _ => openai,
+    }
+}
+
+// 把客户端解析到的工具调用还原为各协议的 assistant 消息结构
+fn tool_calls_payload(ptype: &str, calls: &[ToolCall]) -> Value {
+    match ptype {
+        "anthropic" => json!(calls
+            .iter()
+            .map(|c| {
+                json!({
+                    "type": "tool_use",
+                    "id": c.id,
+                    "name": c.name,
+                    "input": tool_call_args(c),
+                })
+            })
+            .collect::<Vec<_>>()),
+        "gemini" => json!(calls
+            .iter()
+            .map(|c| json!({ "functionCall": { "name": c.name, "args": tool_call_args(c) } }))
+            .collect::<Vec<_>>()),
+        _ => json!(calls
+            .iter()
+            .map(|c| {
+                json!({
+                    "id": c.id,
+                    "type": "function",
+                    "function": { "name": c.name, "arguments": if c.args.trim().is_empty() { "{}".to_string() } else { c.args.clone() } },
+                })
+            })
+            .collect::<Vec<_>>()),
+    }
+}
+
+fn tool_label(name: &str) -> &'static str {
+    match name {
+        "create_reminder" => "创建提醒",
+        "read_clipboard" => "读取剪贴板",
+        "open_url" => "打开链接",
+        "open_app" => "打开应用",
+        "get_weather" => "查询天气",
+        "web_search" => "联网搜索",
+        _ => "工具",
+    }
+}
+
+fn tool_auth_state(app: &AppHandle, name: &str) -> String {
+    let ctx = app.state::<AppCtx>();
+    let st = state_lock(&ctx);
+    st["settings"]["toolSettings"]["auth"][name]
+        .as_str()
+        .unwrap_or("ask")
+        .to_string()
+}
+
+fn set_tool_auth(app: &AppHandle, name: &str, value: &str) {
+    let ctx = app.state::<AppCtx>();
+    {
+        let mut st = state_lock(&ctx);
+        if !st["settings"]["toolSettings"]["auth"].is_object() {
+            st["settings"]["toolSettings"]["auth"] = json!({});
+        }
+        st["settings"]["toolSettings"]["auth"][name] = json!(value);
+    }
+    persist_state(&ctx);
+    let _ = app.emit("state-changed", json!({"origin": "backend"}));
+}
+
+// FR-TOOL-003 / AC-012：首次调用弹窗授权；支持「始终允许/拒绝」，可随时撤销。
+async fn request_tool_auth(app: &AppHandle, name: &str, args: &Value) -> bool {
+    let state = tool_auth_state(app, name);
+    if state == "allow" {
+        return true;
+    }
+    if state == "deny" {
+        let _ = app.emit_to(
+            "bubble",
+            "chat-tool",
+            json!({"tool": name, "label": tool_label(name), "ok": false, "summary": "此前已被用户拒绝授权"}),
+        );
+        return false;
+    }
+    let id = format!("tool-{}-{}", now_ms(), rand_suffix());
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    {
+        let ctx = app.state::<AppCtx>();
+        let mut wait = ctx.tool_wait.lock().unwrap_or_else(|e| e.into_inner());
+        wait.insert(id.clone(), ToolWait { id: id.clone(), name: name.to_string(), tx });
+    }
+    let _ = show_bubble_reason(app, "tool");
+    let preview = cut_chars(&args.to_string(), 400);
+    let _ = app.emit_to(
+        "bubble",
+        "tool-auth-request",
+        json!({
+            "id": id,
+            "tool": name,
+            "label": tool_label(name),
+            "args": preview,
+            "description": match name {
+                "read_clipboard" => "读取你当前剪贴板中的纯文本内容（内容会作为工具结果发回模型）",
+                "open_url" => "在你的默认浏览器中打开一个链接（仅限白名单域名）",
+                "open_app" => "在你的电脑上启动一个白名单应用",
+                "create_reminder" => "在本地创建一条定时提醒",
+                "get_weather" => "向 Open-Meteo 发送城市名以查询天气",
+                "web_search" => "向 DuckDuckGo 发送搜索关键词",
+                _ => "执行一个本地工具",
+            },
+            // NFR-PRV-003：敏感能力要明确告知用户在本地还是出站
+            "egress": match name {
+                "get_weather" | "web_search" => "outbound",
+                "open_url" => "outbound",
+                _ => "local",
+            }
+        }),
+    );
+    match tokio::time::timeout(Duration::from_secs(120), rx).await {
+        Ok(Ok(d)) => {
+            if d.remember {
+                set_tool_auth(app, name, if d.allow { "allow" } else { "deny" });
+            }
+            d.allow
+        }
+        _ => {
+            let ctx = app.state::<AppCtx>();
+            ctx.tool_wait
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&id);
+            let _ = app.emit_to(
+                "bubble",
+                "chat-tool",
+                json!({"tool": name, "label": tool_label(name), "ok": false, "summary": "授权超时，已拒绝执行"}),
+            );
+            false
+        }
+    }
+}
+
+fn weather_text(code: i64) -> &'static str {
+    match code {
+        0 => "晴",
+        1..=3 => "多云",
+        45 | 48 => "雾",
+        51..=57 => "毛毛雨",
+        61..=67 => "雨",
+        71..=77 | 85 | 86 => "雪",
+        80..=82 => "阵雨",
+        95..=99 => "雷雨",
+        _ => "未知天气",
+    }
+}
+
+fn html_unescape(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+}
+
+async fn execute_tool(app: &AppHandle, conf: &ProvConf, name: &str, args: &Value) -> Result<Value, String> {
+    match name {
+        "create_reminder" => {
+            let content = args["content"].as_str().unwrap_or("提醒").trim().to_string();
+            if content.is_empty() {
+                return Err("提醒内容为空".into());
+            }
+            let now = now_ms();
+            let mut due = args["due"].as_i64().unwrap_or(0);
+            if due <= 0 {
+                if let Some(at) = args["at"].as_str().and_then(parse_hhmm) {
+                    let cur = local_minutes();
+                    let mut diff = at - cur;
+                    if diff <= 0 {
+                        diff += 1440;
+                    }
+                    due = now + diff * 60_000;
+                } else {
+                    let minutes = args["minutes"].as_f64().unwrap_or(25.0).clamp(0.1, 10080.0);
+                    due = now + (minutes * 60_000.0).round() as i64;
+                }
+            }
+            let rule = args["rule"].as_str().unwrap_or("once");
+            let rule = if ["daily", "weekly", "interval"].contains(&rule) { rule } else { "once" };
+            let interval = args["intervalMin"].as_i64().unwrap_or(30).clamp(1, 10080);
+            let rem = json!({
+                "id": format!("rem-tool-{}", now),
+                "content": cut_chars(&content, 60),
+                "due": due,
+                "rule": rule,
+                "intervalMin": if rule == "interval" { json!(interval) } else { Value::Null },
+                "enabled": true,
+                "createdBy": "tool"
+            });
+            {
+                let ctx = app.state::<AppCtx>();
+                let mut st = state_lock(&ctx);
+                if !st["reminders"].is_array() {
+                    st["reminders"] = json!([]);
+                }
+                st["reminders"].as_array_mut().unwrap().push(rem.clone());
+            }
+            let ctx = app.state::<AppCtx>();
+            persist_state(&ctx);
+            let _ = app.emit("state-changed", json!({"origin": "backend"}));
+            Ok(json!({"created": true, "reminder": rem}))
+        }
+        "read_clipboard" => {
+            let text = clipboard_read_text().ok_or("剪贴板中没有可读取的纯文本")?;
+            let max = args["max_chars"].as_i64().unwrap_or(2000).clamp(1, 8000) as usize;
+            let cut_text = cut_chars(&text, max);
+            Ok(json!({"text": cut_text, "length": text.chars().count(), "truncated": text.chars().count() > max}))
+        }
+        "open_url" => {
+            let url = args["url"].as_str().unwrap_or("");
+            let ctx = app.state::<AppCtx>();
+            {
+                let st = state_lock(&ctx);
+                open_whitelisted_url(&st, url)?;
+            }
+            Ok(json!({"opened": true, "url": url}))
+        }
+        "open_app" => {
+            let name = args["app"].as_str().unwrap_or("");
+            open_whitelisted_app(name)?;
+            Ok(json!({"opened": true, "app": name}))
+        }
+        "get_weather" => {
+            let city = args["city"].as_str().unwrap_or("").trim();
+            if city.is_empty() {
+                return Err("缺少城市名".into());
+            }
+            let client = client_for(app, conf)?;
+            let geo_url = format!(
+                "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=zh&format=json",
+                urlencode(city)
+            );
+            let geo: Value = client
+                .get(&geo_url)
+                .timeout(Duration::from_secs(12))
+                .send()
+                .await
+                .map_err(|e| format!("地理编码请求失败：{}", e))?
+                .json()
+                .await
+                .map_err(|e| format!("地理编码响应无效：{}", e))?;
+            let loc = &geo["results"][0];
+            if loc.is_null() {
+                return Err(format!("没有找到城市「{}」", city));
+            }
+            let (lat, lon) = (loc["latitude"].as_f64().unwrap_or(0.0), loc["longitude"].as_f64().unwrap_or(0.0));
+            let label = loc["name"].as_str().unwrap_or(city);
+            let url = format!(
+                "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto",
+                lat, lon
+            );
+            let j: Value = client
+                .get(&url)
+                .timeout(Duration::from_secs(12))
+                .send()
+                .await
+                .map_err(|e| format!("天气请求失败：{}", e))?
+                .json()
+                .await
+                .map_err(|e| format!("天气响应无效：{}", e))?;
+            let cur = &j["current"];
+            let temp = cur["temperature_2m"].as_f64().unwrap_or(0.0);
+            let hum = cur["relative_humidity_2m"].as_f64().unwrap_or(0.0);
+            let wind = cur["wind_speed_10m"].as_f64().unwrap_or(0.0);
+            let code = cur["weather_code"].as_i64().unwrap_or(-1);
+            Ok(json!({
+                "city": label,
+                "weather": weather_text(code),
+                "temperature_c": temp,
+                "humidity": hum,
+                "wind_kmh": wind,
+                "summary": format!("{}：{}，{}°C，湿度 {}%，风速 {} km/h", label, weather_text(code), temp, hum, wind)
+            }))
+        }
+        "web_search" => {
+            let q = args["query"].as_str().unwrap_or("").trim();
+            if q.is_empty() {
+                return Err("缺少搜索关键词".into());
+            }
+            let client = client_for(app, conf)?;
+            let url = format!("https://html.duckduckgo.com/html/?q={}", urlencode(q));
+            let body = client
+                .get(&url)
+                .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) DeskPet/2.0")
+                .timeout(Duration::from_secs(12))
+                .send()
+                .await
+                .map_err(|e| format!("搜索请求失败：{}", e))?
+                .text()
+                .await
+                .map_err(|e| format!("搜索结果读取失败：{}", e))?;
+            let mut results: Vec<Value> = vec![];
+            for chunk in body.split("result__a").skip(1) {
+                if results.len() >= 5 {
+                    break;
+                }
+                let href = chunk
+                    .split("href=\"")
+                    .nth(1)
+                    .and_then(|s| s.split('"').next())
+                    .unwrap_or("");
+                let title = chunk
+                    .split('>')
+                    .nth(1)
+                    .and_then(|s| s.split("</a>").next())
+                    .map(html_unescape)
+                    .unwrap_or_default();
+                if href.starts_with("http") && !title.trim().is_empty() {
+                    results.push(json!({"title": title.trim(), "url": href}));
+                }
+            }
+            Ok(json!({"query": q, "count": results.len(), "results": results}))
+        }
+        _ => Err(format!("未知工具：{}", name)),
+    }
+}
+
+fn urlencode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        match *b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(*b as char),
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+// ================= 工具调用增量解析（OpenAI SSE / Ollama NDJSON） =================
+
+#[derive(Default)]
+struct ToolAcc {
+    map: std::collections::BTreeMap<i64, ToolCall>,
+}
+
+struct ToolCall {
+    id: String,
+    name: String,
+    args: String,
+}
+
+impl ToolAcc {
+    fn push_openai(&mut self, deltas: &Value) {
+        let Some(arr) = deltas.as_array() else { return };
+        for d in arr {
+            let idx = d["index"].as_i64().unwrap_or(0);
+            let e = self.map.entry(idx).or_insert_with(|| ToolCall {
+                id: String::new(),
+                name: String::new(),
+                args: String::new(),
+            });
+            if let Some(id) = d["id"].as_str() {
+                if !id.is_empty() {
+                    e.id = id.to_string();
+                }
+            }
+            if let Some(n) = d["function"]["name"].as_str() {
+                if !n.is_empty() && !e.name.contains(n) {
+                    e.name.push_str(n);
+                }
+            }
+            if let Some(a) = d["function"]["arguments"].as_str() {
+                e.args.push_str(a);
+            }
+        }
+    }
+
+    fn push_ollama(&mut self, calls: &Value) {
+        let Some(arr) = calls.as_array() else { return };
+        for (i, c) in arr.iter().enumerate() {
+            let idx = i as i64;
+            let e = self.map.entry(idx).or_insert_with(|| ToolCall {
+                id: format!("ollama-{}-{}", now_ms(), i),
+                name: String::new(),
+                args: String::new(),
+            });
+            if e.name.is_empty() {
+                e.name = c["function"]["name"].as_str().unwrap_or("").to_string();
+            }
+            let a = &c["function"]["arguments"];
+            e.args = if let Some(s) = a.as_str() {
+                s.to_string()
+            } else if a.is_object() {
+                a.to_string()
+            } else {
+                String::new()
+            };
+        }
+    }
+
+    fn into_calls_snapshot(&self) -> Vec<&ToolCall> {
+        self.map.values().filter(|c| !c.name.trim().is_empty()).collect()
+    }
+
+    fn into_calls(self) -> Vec<ToolCall> {
+        self.map
+            .into_values()
+            .filter(|c| !c.name.trim().is_empty())
+            .collect()
+    }
+}
+
+fn sse_tool_deltas(line: &str) -> Option<Value> {
+    let payload = line.strip_prefix("data:")?.trim();
+    if payload.is_empty() || payload == "[DONE]" {
+        return None;
+    }
+    let j: Value = serde_json::from_str(payload).ok()?;
+    let tc = &j["choices"][0]["delta"]["tool_calls"];
+    if tc.is_array() {
+        Some(tc.clone())
+    } else {
+        None
+    }
+}
+
+fn ollama_tool_calls(line: &str) -> Option<Value> {
+    let j: Value = serde_json::from_str(line).ok()?;
+    let tc = &j["message"]["tool_calls"];
+    if tc.is_array() {
+        Some(tc.clone())
+    } else {
+        None
+    }
+}
+
+fn nonstream_tool_calls(j: &Value) -> Option<Value> {
+    let tc = if j["choices"][0]["message"]["tool_calls"].is_array() {
+        j["choices"][0]["message"]["tool_calls"].clone()
+    } else {
+        j["message"]["tool_calls"].clone()
+    };
+    if tc.is_array() {
+        Some(tc)
+    } else {
+        None
+    }
+}
+
+fn tool_call_args(c: &ToolCall) -> Value {
+    serde_json::from_str(&c.args).unwrap_or_else(|_| json!({}))
+}
+
 // ================= 聊天流式（主进程，FR-MDL-013） =================
 
-#[derive(serde::Deserialize, Clone)]
+#[derive(serde::Deserialize, Clone, Default)]
 struct ChatMsg {
     role: String,
     content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -746,12 +1746,15 @@ struct ChatArgs {
     messages: Vec<ChatMsg>,
 }
 
+#[derive(Clone)]
 struct ProvConf {
     ptype: String,
     base: String,
     model: String,
     key: String,
     headers_raw: String,
+    proxy: String,
+    proxy_type: String,
     temp: f64,
     top_p: f64,
     max_tokens: i64,
@@ -766,6 +1769,22 @@ struct ProvConf {
 }
 
 // 锁中毒防护：任一持锁线程 panic 后应用仍可继续运行（NFR-CON-003 单点异常不得导致进程崩溃）
+// 请求是否已被用户停止，或已被更新的一轮请求取代
+fn chat_aborted(app: &AppHandle, seq: u64) -> bool {
+    let ctx = app.state::<AppCtx>();
+    ctx.stop.load(Ordering::SeqCst)
+        || ctx.chat_cancelled.load(Ordering::SeqCst)
+        || ctx.chat_seq.load(Ordering::SeqCst) != seq
+}
+
+fn bump_chat_seq(app: &AppHandle) -> u64 {
+    let ctx = app.state::<AppCtx>();
+    let n = ctx.chat_seq.fetch_add(1, Ordering::SeqCst) + 1;
+    ctx.chat_cancelled.store(false, Ordering::SeqCst);
+    ctx.stop.store(false, Ordering::SeqCst);
+    n
+}
+
 fn state_lock(ctx: &AppCtx) -> std::sync::MutexGuard<'_, Value> {
     ctx.state.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -787,6 +1806,8 @@ fn resolve_provider(app: &AppHandle, id: &str) -> Result<ProvConf, String> {
         model: p["model"].as_str().unwrap_or("").to_string(),
         key: key_get(id).unwrap_or_default(),
         headers_raw: p["headers"].as_str().unwrap_or("").to_string(),
+        proxy: p["proxy"].as_str().unwrap_or("").to_string(),
+        proxy_type: p["proxyType"].as_str().unwrap_or("auto").to_string(),
         temp: params["temp"].as_f64().unwrap_or(0.8),
         top_p: params["topP"].as_f64().unwrap_or(1.0),
         max_tokens: params["maxTokens"].as_i64().unwrap_or(1024),
@@ -800,6 +1821,28 @@ fn resolve_provider(app: &AppHandle, id: &str) -> Result<ProvConf, String> {
 fn join_url(base: &str, path: &str) -> String {
     let b = base.trim().trim_end_matches('/');
     format!("{}{}", b, path)
+}
+
+// FR-MDL-008：每个供应商可单独配置 HTTP / SOCKS5 代理。
+// 未配置时复用应用级客户端；配置后按代理类型构建独立客户端（reqwest socks feature）。
+fn client_for(app: &AppHandle, conf: &ProvConf) -> Result<reqwest::Client, String> {
+    let proxy = conf.proxy.trim();
+    if proxy.is_empty() {
+        return Ok(app.state::<AppCtx>().http.clone());
+    }
+    let builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(15));
+    let ptype = conf.proxy_type.trim().to_lowercase();
+    let p = if ptype == "http" || ptype == "https" {
+        reqwest::Proxy::http(proxy).map_err(|e| format!("HTTP 代理配置无效：{}", e))?
+    } else if ptype == "socks5" || ptype == "socks5h" || proxy.to_lowercase().starts_with("socks5") {
+        reqwest::Proxy::all(proxy).map_err(|e| format!("SOCKS5 代理配置无效：{}", e))?
+    } else {
+        reqwest::Proxy::all(proxy).map_err(|e| format!("代理配置无效：{}", e))?
+    };
+    builder
+        .proxy(p)
+        .build()
+        .map_err(|e| format!("代理客户端构建失败：{}", e))
 }
 
 fn is_azure_endpoint(base: &str) -> bool {
@@ -907,12 +1950,101 @@ fn key_header(conf: &ProvConf, openai_bearer: bool) -> Result<Option<reqwest::he
     }
 }
 
-fn build_request(app: &AppHandle, conf: &ProvConf, messages: &[ChatMsg]) -> Result<reqwest::RequestBuilder, String> {
-    let client = &app.state::<AppCtx>().http;
+fn openai_messages(messages: &[ChatMsg]) -> Vec<Value> {
+    messages
+        .iter()
+        .map(|m| {
+            let mut o = json!({"role": m.role, "content": m.content});
+            if let Some(tc) = &m.tool_calls {
+                o["tool_calls"] = tc.clone();
+            }
+            // OpenAI 协议不允许 assistant 消息 content 为 null 且同时含 tool_calls 时缺省字段
+            if m.role == "assistant" && m.content.is_empty() && m.tool_calls.is_some() {
+                o["content"] = Value::Null;
+            }
+            if let Some(id) = &m.tool_call_id {
+                o["tool_call_id"] = json!(id);
+            }
+            if let Some(n) = &m.name {
+                o["name"] = json!(n);
+                o["tool_name"] = json!(n);
+            }
+            o
+        })
+        .collect()
+}
+
+// Anthropic：tool_use / tool_result 必须以 content block 形式出现（FR-TOOL-001）
+fn anthropic_block(m: &ChatMsg) -> Vec<Value> {
+    if m.role == "assistant" {
+        if let Some(calls) = &m.tool_calls {
+            return calls
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .map(|c| {
+                            json!({
+                                "type": "tool_use",
+                                "id": c["id"].as_str().unwrap_or(""),
+                                "name": c["name"].as_str().unwrap_or(""),
+                                "input": c["input"].clone(),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+    }
+    if m.role == "tool" {
+        return vec![json!({
+            "type": "tool_result",
+            "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
+            "content": m.content,
+        })];
+    }
+    vec![]
+}
+
+// Gemini：functionCall / functionResponse 同样只能出现在 parts 里
+fn gemini_parts(m: &ChatMsg) -> Vec<Value> {
+    if m.role == "tool" {
+        return vec![json!({
+            "functionResponse": {
+                "name": m.name.clone().unwrap_or_default(),
+                "response": serde_json::from_str::<Value>(&m.content).unwrap_or_else(|_| json!({"result": m.content})),
+            }
+        })];
+    }
+    if m.role == "assistant" {
+        if let Some(calls) = &m.tool_calls {
+            return calls
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .map(|c| json!({"functionCall": {"name": c["name"], "args": c["input"]}}))
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+    }
+    if m.content.is_empty() {
+        vec![]
+    } else {
+        vec![json!({"text": m.content})]
+    }
+}
+
+fn build_request(
+    app: &AppHandle,
+    conf: &ProvConf,
+    messages: &[ChatMsg],
+    tools: Option<&Value>,
+) -> Result<reqwest::RequestBuilder, String> {
+    let client = client_for(app, conf)?;
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("content-type", "application/json".parse().unwrap());
     let url;
-    let body;
+    let mut body;
     match conf.ptype.as_str() {
         "anthropic" => {
             url = if conf.base.trim_end_matches('/').ends_with("/messages") {
@@ -925,29 +2057,40 @@ fn build_request(app: &AppHandle, conf: &ProvConf, messages: &[ChatMsg]) -> Resu
             }
             headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
             let mut sys = String::new();
-            let mut convo: Vec<(String, String)> = vec![];
+            // (role, 纯文本片段, 结构化 content blocks)；含工具调用时走 blocks 形式
+            let mut convo: Vec<(String, String, Vec<Value>)> = vec![];
             for m in messages {
                 if m.role == "system" {
                     sys.push_str(&m.content);
                     sys.push('\n');
-                } else {
-                    let role = if m.role == "assistant" { "assistant" } else { "user" };
-                    if let Some(last) = convo.last_mut() {
-                        if last.0 == role {
+                    continue;
+                }
+                let block = anthropic_block(m);
+                let role = if m.role == "assistant" { "assistant" } else { "user" };
+                if let Some(last) = convo.last_mut() {
+                    if last.0 == role {
+                        if !m.content.is_empty() {
                             last.1.push('\n');
                             last.1.push_str(&m.content);
-                            continue;
                         }
+                        last.2.extend(block);
+                        continue;
                     }
-                    convo.push((role.to_string(), m.content.clone()));
                 }
+                convo.push((role.to_string(), m.content.clone(), block));
             }
             while convo.first().map(|m| m.0 != "user").unwrap_or(false) {
                 convo.remove(0);
             }
             let msgs: Vec<Value> = convo
                 .into_iter()
-                .map(|(r, c)| json!({"role": r, "content": c}))
+                .map(|(r, c, blocks)| {
+                    if blocks.is_empty() {
+                        json!({"role": r, "content": c})
+                    } else {
+                        json!({"role": r, "content": blocks})
+                    }
+                })
                 .collect();
             body = json!({
                 "model": conf.model,
@@ -973,14 +2116,17 @@ fn build_request(app: &AppHandle, conf: &ProvConf, messages: &[ChatMsg]) -> Resu
                     sys.push('\n');
                 } else {
                     let role = if m.role == "assistant" { "model" } else { "user" };
+                    let parts = gemini_parts(m);
                     if let Some(last) = contents.last_mut() {
                         if last["role"].as_str() == Some(role) {
-                            let t = m.content.clone();
-                            last["parts"][0]["text"] = json!(format!("{}\n{}", last["parts"][0]["text"].as_str().unwrap_or(""), t));
+                            let arr = last["parts"].as_array_mut().unwrap();
+                            for p in parts {
+                                arr.push(p);
+                            }
                             continue;
                         }
                     }
-                    contents.push(json!({"role": role, "parts": [{"text": m.content}]}));
+                    contents.push(json!({"role": role, "parts": parts}));
                 }
             }
             while contents.first().map(|c| c["role"].as_str() != Some("user")).unwrap_or(false) {
@@ -998,10 +2144,7 @@ fn build_request(app: &AppHandle, conf: &ProvConf, messages: &[ChatMsg]) -> Resu
         }
         _ => {
             let azure = is_azure_endpoint(&conf.base);
-            let msgs: Vec<Value> = messages
-                .iter()
-                .map(|m| json!({"role": m.role, "content": m.content}))
-                .collect();
+            let msgs = openai_messages(messages);
             if conf.ollama && !azure && !conf.base.trim_end_matches('/').ends_with("/chat/completions") {
                 // 原生 Ollama：显式限制 num_ctx（KV cache 上限）与 num_predict，
                 // 并关闭思考模式，避免 262144 原生上下文 + 视觉投影层把内存撑爆
@@ -1050,6 +2193,15 @@ fn build_request(app: &AppHandle, conf: &ProvConf, messages: &[ChatMsg]) -> Resu
         }
     }
     apply_custom_headers(&mut headers, &conf.headers_raw);
+    // FR-TOOL-001：工具定义按协议注入；tool_choice 由服务端决定何时调用
+    if let Some(t) = tools {
+        if t.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+            body["tools"] = t.clone();
+            if conf.ptype != "anthropic" && conf.ptype != "gemini" {
+                body["tool_choice"] = json!("auto");
+            }
+        }
+    }
     Ok(client.post(&url).headers(headers).json(&body))
 }
 
@@ -1291,6 +2443,295 @@ fn record_outbound(
     }));
 }
 
+// 一次请求的流式结果：正文增量已通过事件推给气泡，这里只回传工具调用与统计。
+struct TurnOutcome {
+    text: String,
+    calls: Vec<ToolCall>,
+    tin: i64,
+    tout: i64,
+}
+
+// FR-TOOL-001/004 与 FR-MDL-009/010/011/012：单轮请求 + 重试/裁剪 + 流式解析。
+// 工具调用循环在 run_chat 中完成，本函数只负责「发出一次请求并读完响应」。
+#[allow(clippy::too_many_arguments)]
+async fn run_turn(
+    app: &AppHandle,
+    seq: u64,
+    conf: &ProvConf,
+    messages: &mut Vec<ChatMsg>,
+    tools: Option<&Value>,
+) -> Result<TurnOutcome, (Option<u16>, String, Option<u64>)> {
+    let emit_notice = |msg: String| {
+        let _ = app.emit_to("bubble", "chat-notice", json!({"message": msg}));
+    };
+    let want_stream = conf.stream;
+    let host = host_of(&conf.base);
+    // FR-MDL-012：发送前按供应商 ctxTokens 预算裁剪，预留输出空间
+    let ctx_budget = effective_ctx_tokens(conf);
+    let budget = (ctx_budget - conf.max_tokens).max(256);
+    if trim_to_budget(messages, budget) {
+        emit_notice(format!("上下文超出 {} tokens 预算，已自动裁剪较早消息", ctx_budget));
+    }
+    let mut attempt: i64 = 0;
+    let mut trims = 0;
+    loop {
+        if chat_aborted(app, seq) {
+            return Err((None, "__stopped__".into(), None));
+        }
+        let rb = match build_request(app, conf, messages, tools) {
+            Ok(rb) => rb,
+            Err(e) => return Err((None, e, None)),
+        };
+        let t0 = std::time::Instant::now();
+        // FR-MDL-009：超时参数作用于建连/首字节；流式阶段另用空闲超时
+        let sent = tokio::time::timeout(Duration::from_secs(conf.timeout as u64), rb.send()).await;
+        let resp = match sent {
+            Err(_) => {
+                record_outbound(app, &host, &conf.ptype, &conf.model, None, false, t0.elapsed().as_millis() as u64, attempt);
+                if attempt < conf.retry {
+                    attempt += 1;
+                    emit_notice(format!("连接超时，正在重试（{}/{}）…", attempt, conf.retry));
+                    tokio::time::sleep(Duration::from_millis(300u64 << attempt.min(3))).await;
+                    continue;
+                }
+                return Err((None, "连接超时：请检查网络或在模型参数中调大超时时间".into(), None));
+            }
+            Ok(Err(e)) => {
+                record_outbound(app, &host, &conf.ptype, &conf.model, None, false, t0.elapsed().as_millis() as u64, attempt);
+                let msg = net_error_msg(&e);
+                if attempt < conf.retry {
+                    attempt += 1;
+                    emit_notice(format!("{}，正在重试（{}/{}）…", msg, attempt, conf.retry));
+                    tokio::time::sleep(Duration::from_millis(300u64 << attempt.min(3))).await;
+                    continue;
+                }
+                return Err((None, msg, None));
+            }
+            Ok(Ok(r)) => r,
+        };
+        let status_code = resp.status();
+        let latency = t0.elapsed().as_millis() as u64;
+        if !status_code.is_success() {
+            let retry_after = retry_after_secs(resp.headers());
+            let body = resp.text().await.unwrap_or_default();
+            let mut msg = err_message(&body);
+            record_outbound(app, &host, &conf.ptype, &conf.model, Some(status_code.as_u16()), false, latency, attempt);
+            // 本地模型 OOM：重试只会再次拉起一个失败的 llama-server，直接给出可操作建议
+            if is_local_oom(&msg) || is_local_oom(&body) {
+                msg = local_oom_hint(&conf.model, &msg);
+                return Err((Some(status_code.as_u16()), msg, None));
+            }
+            // 上下文超长：自动裁剪较早消息并重试（最多 2 次）
+            if status_code.as_u16() == 400 && is_context_too_long(&msg) && trims < 2 {
+                if trim_context(messages) {
+                    trims += 1;
+                    emit_notice("上下文超长，已自动裁剪较早消息并重试…".into());
+                    continue;
+                }
+            }
+            // 5xx 自动重试；429 按规范显示倒计时，不自动重试
+            if status_code.is_server_error() && attempt < conf.retry {
+                attempt += 1;
+                emit_notice(format!("服务端错误（{}），正在重试（{}/{}）…", status_code.as_u16(), attempt, conf.retry));
+                tokio::time::sleep(Duration::from_millis(300u64 << attempt.min(3))).await;
+                continue;
+            }
+            return Err((Some(status_code.as_u16()), msg, retry_after));
+        }
+        record_outbound(app, &host, &conf.ptype, &conf.model, Some(status_code.as_u16()), true, latency, attempt);
+        if chat_aborted(app, seq) {
+            return Err((None, "__stopped__".into(), None));
+        }
+        let is_sse = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|c| c.contains("event-stream"))
+            .unwrap_or(false);
+        let idle = Duration::from_secs(((conf.timeout * 2).clamp(30, 240)) as u64);
+        let ptype = conf.ptype.clone();
+        let native_ollama = conf.ollama && !conf.base.trim_end_matches('/').ends_with("/chat/completions");
+        let mut text = String::new();
+        let mut acc = ToolAcc::default();
+        if native_ollama {
+            // Ollama 原生 /api/chat：流式为 NDJSON（每行一个 JSON），非流式为单个 JSON
+            let is_ndjson = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|c| c.contains("ndjson"))
+                .unwrap_or(want_stream);
+            if want_stream && is_ndjson {
+                use futures_util::StreamExt;
+                let mut stream = resp.bytes_stream();
+                let mut buf = String::new();
+                loop {
+                    if chat_aborted(app, seq) {
+                        return Err((None, "__stopped__".into(), None));
+                    }
+                    let next = match tokio::time::timeout(idle, stream.next()).await {
+                        Err(_) => return Err((None, "流式响应超时（长时间无数据）".into(), None)),
+                        Ok(None) => break,
+                        Ok(Some(Err(e))) => return Err((None, format!("流中断：{}", e), None)),
+                        Ok(Some(Ok(bytes))) => bytes,
+                    };
+                    buf.push_str(&String::from_utf8_lossy(&next));
+                    while let Some(idx) = buf.find('\n') {
+                        let line: String = buf.drain(..=idx).collect();
+                        let line = line.trim();
+                        if line.is_empty() {
+                            continue;
+                        }
+                        if let Some(err) = ollama_line_error(line) {
+                            return Err((Some(status_code.as_u16()), ollama_error_text(&conf.model, &err), None));
+                        }
+                        if let Some(tc) = ollama_tool_calls(line) {
+                            acc.push_ollama(&tc);
+                        }
+                        if let Some(t) = ollama_delta(line) {
+                            let _ = app.emit_to("bubble", "chat-delta", json!({"text": t}));
+                            text.push_str(&t);
+                        }
+                    }
+                }
+                let rest = buf.trim().to_string();
+                if let Some(err) = ollama_line_error(&rest) {
+                    return Err((Some(status_code.as_u16()), ollama_error_text(&conf.model, &err), None));
+                }
+                if let Some(tc) = ollama_tool_calls(&rest) {
+                    acc.push_ollama(&tc);
+                }
+                if let Some(t) = ollama_delta(&rest) {
+                    let _ = app.emit_to("bubble", "chat-delta", json!({"text": t}));
+                    text.push_str(&t);
+                }
+            } else {
+                let body = match resp.text().await {
+                    Ok(b) => b,
+                    Err(e) => return Err((None, format!("读取响应失败：{}", e), None)),
+                };
+                let j: Value = match serde_json::from_str(&body) {
+                    Ok(j) => j,
+                    Err(_) => return Err((Some(status_code.as_u16()), "Ollama 返回的不是合法 JSON".into(), None)),
+                };
+                if let Some(err) = j["error"].as_str() {
+                    return Err((Some(status_code.as_u16()), ollama_error_text(&conf.model, err), None));
+                }
+                if let Some(tc) = j["message"]["tool_calls"].as_array() {
+                    acc.push_ollama(&Value::Array(tc.clone()));
+                }
+                text = ollama_text(&j);
+                if text.is_empty() && acc.into_calls_snapshot().is_empty() {
+                    return Err((
+                        Some(status_code.as_u16()),
+                        "模型返回空内容（若为思考型模型，可调大 Max Tokens 或改用非思考模型）".into(),
+                        None,
+                    ));
+                }
+                if !text.is_empty() {
+                    let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
+                }
+                let calls = acc.into_calls();
+                return Ok(TurnOutcome { tin: est_tokens(&body), tout: est_tokens(&text), text, calls });
+            }
+        } else if want_stream && is_sse {
+            use futures_util::StreamExt;
+            let mut stream = resp.bytes_stream();
+            let mut buf = String::new();
+            loop {
+                if chat_aborted(app, seq) {
+                    return Err((None, "__stopped__".into(), None));
+                }
+                let next = match tokio::time::timeout(idle, stream.next()).await {
+                    Err(_) => return Err((None, "流式响应超时（长时间无数据）".into(), None)),
+                    Ok(None) => break,
+                    Ok(Some(Err(e))) => return Err((None, format!("流中断：{}", e), None)),
+                    Ok(Some(Ok(bytes))) => bytes,
+                };
+                buf.push_str(&String::from_utf8_lossy(&next));
+                while let Some(idx) = buf.find('\n') {
+                    let line: String = buf.drain(..=idx).collect();
+                    let line = line.trim_end();
+                    // OpenAI 兼容：工具调用以 delta.tool_calls 增量下发
+                    if let Some(tc) = sse_tool_deltas(line) {
+                        acc.push_openai(&tc);
+                    }
+                    if let Some(t) = sse_delta(&ptype, line) {
+                        let _ = app.emit_to("bubble", "chat-delta", json!({"text": t}));
+                        text.push_str(&t);
+                    }
+                }
+            }
+            let rest = buf.trim().to_string();
+            if let Some(tc) = sse_tool_deltas(&rest) {
+                acc.push_openai(&tc);
+            }
+            if let Some(t) = sse_delta(&ptype, &rest) {
+                let _ = app.emit_to("bubble", "chat-delta", json!({"text": t}));
+                text.push_str(&t);
+            }
+        } else {
+            // 非流式 / 供应商不支持流式时自动降级（FR-MDL-011）
+            let body = match resp.text().await {
+                Ok(b) => b,
+                Err(e) => return Err((None, format!("读取响应失败：{}", e), None)),
+            };
+            let j: Value = match serde_json::from_str(&body) {
+                Ok(j) => j,
+                Err(_) => return Err((Some(status_code.as_u16()), "响应不是合法 JSON（请检查 BaseURL 是否为 OpenAI 兼容端点）".into(), None)),
+            };
+            // Gemini 的函数调用在 candidates[0].content.parts[].functionCall
+            if ptype == "gemini" {
+                if let Some(parts) = j["candidates"][0]["content"]["parts"].as_array() {
+                    let calls: Vec<Value> = parts
+                        .iter()
+                        .filter_map(|p| p.get("functionCall"))
+                        .map(|fc| {
+                            json!({
+                                "function": {
+                                    "name": fc["name"].as_str().unwrap_or(""),
+                                    "arguments": fc.get("args").cloned().unwrap_or_else(|| json!({})),
+                                }
+                            })
+                        })
+                        .collect();
+                    if !calls.is_empty() {
+                        acc.push_ollama(&Value::Array(calls));
+                    }
+                }
+            } else if let Some(tc) = nonstream_tool_calls(&j) {
+                acc.push_openai(&tc);
+            }
+            text = full_text(&ptype, &j);
+            if text.is_empty() && acc.into_calls_snapshot().is_empty() {
+                return Err((Some(status_code.as_u16()), "模型返回空内容".into(), None));
+            }
+            if !text.is_empty() {
+                let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
+            }
+            let calls = acc.into_calls();
+            return Ok(TurnOutcome { tin: est_tokens(&body), tout: est_tokens(&text), text, calls });
+        }
+        let calls = acc.into_calls();
+        let tin = messages.iter().map(|m| est_tokens(&m.content)).sum::<i64>();
+        return Ok(TurnOutcome { tin, tout: est_tokens(&text), text, calls });
+    }
+}
+
+// 工具结果回传给模型的消息体：OpenAI 用 role=tool，Anthropic / Gemini 复用 user 角色（见 build_request）
+fn tool_result_msgs(results: &[(String, String, String)]) -> Vec<ChatMsg> {
+    results
+        .iter()
+        .map(|(id, name, content)| ChatMsg {
+            role: "tool".into(),
+            content: content.clone(),
+            tool_calls: None,
+            tool_call_id: Some(id.clone()),
+            name: Some(name.clone()),
+        })
+        .collect()
+}
+
 async fn run_chat(app: AppHandle, args: ChatArgs) {
     let emit_err = |status: Option<u16>, msg: String, retry_after: Option<u64>| {
         let _ = app.emit_to(
@@ -1298,16 +2739,15 @@ async fn run_chat(app: AppHandle, args: ChatArgs) {
             "chat-error",
             json!({"status": status, "message": msg, "retryAfter": retry_after}),
         );
-        app_log(&app, &format!("chat-error status={:?} msg={}", status, msg));
-    };
-    let emit_notice = |msg: String| {
-        let _ = app.emit_to("bubble", "chat-notice", json!({"message": msg}));
+        log_event(&app, "error", "chat.error", &format!("status={:?} msg={}", status, msg));
     };
     let conf = match resolve_provider(&app, &args.provider_id) {
         Ok(c) => c,
         Err(e) => return emit_err(None, e, None),
     };
-    app.state::<AppCtx>().stop.store(false, Ordering::SeqCst);
+    // 新一轮请求：递增代际。旧请求随后会看到 seq 变化而退出，
+    // 不会再出现「停止后旧请求复活、霸占前端 streaming 状态」的死锁。
+    let seq = bump_chat_seq(&app);
     // 演示模式（mock）
     if conf.ptype == "mock" {
         let last_user = args.messages.iter().rev().find(|m| m.role == "user").map(|m| m.content.clone()).unwrap_or_default();
@@ -1324,7 +2764,7 @@ async fn run_chat(app: AppHandle, args: ChatArgs) {
         // 按字符（而非字节）切块：中文/emoji 是多字节，按字节切片会落在非字符边界直接 panic，
         // release 构建 panic="abort" → 整个进程静默退出（v0.2.7 演示模式对话崩溃根因）
         for piece in mock_chunks(&reply) {
-            if app.state::<AppCtx>().stop.load(Ordering::SeqCst) {
+            if chat_aborted(&app, seq) {
                 let _ = app.emit_to("bubble", "chat-stopped", ());
                 return;
             }
@@ -1337,210 +2777,95 @@ async fn run_chat(app: AppHandle, args: ChatArgs) {
     if conf.base.trim().is_empty() {
         return emit_err(None, "BaseURL 未配置".into(), None);
     }
-    let want_stream = conf.stream;
-    let host = host_of(&conf.base);
+    // FR-TOOL-001：仅在用户开启工具且供应商协议支持时注入工具定义
+    let tools_enabled = {
+        let ctx = app.state::<AppCtx>();
+        let st = state_lock(&ctx);
+        st["settings"]["toolSettings"]["enabled"].as_bool().unwrap_or(true)
+    };
+    let tool_payload = if tools_enabled && ["openai", "anthropic", "gemini"].contains(&conf.ptype.as_str()) {
+        Some(tool_defs(&conf.ptype))
+    } else {
+        None
+    };
     let mut messages = args.messages.clone();
-    // FR-MDL-012：发送前按供应商 ctxTokens 预算裁剪，预留输出空间
-    let ctx_budget = effective_ctx_tokens(&conf);
-    let budget = (ctx_budget - conf.max_tokens).max(256);
-    if trim_to_budget(&mut messages, budget) {
-        emit_notice(format!("上下文超出 {} tokens 预算，已自动裁剪较早消息", ctx_budget));
-    }
-    let mut attempt: i64 = 0;
-    let mut trims = 0;
-    loop {
-        let rb = match build_request(&app, &conf, &messages) {
-            Ok(rb) => rb,
-            Err(e) => return emit_err(None, e, None),
+    let max_hops = 4;
+    for hop in 0..=max_hops {
+        let tools = if hop < max_hops { tool_payload.as_ref() } else { None };
+        let outcome = match run_turn(&app, seq, &conf, &mut messages, tools).await {
+            Ok(o) => o,
+            Err((_, msg, _)) if msg == "__stopped__" => {
+                let _ = app.emit_to("bubble", "chat-stopped", ());
+                return;
+            }
+            Err((status, msg, retry_after)) => return emit_err(status, msg, retry_after),
         };
-        let t0 = std::time::Instant::now();
-        // FR-MDL-009：超时参数作用于建连/首字节；流式阶段另用空闲超时
-        let sent = tokio::time::timeout(
-            Duration::from_secs(conf.timeout as u64),
-            rb.send(),
-        )
-        .await;
-        let resp = match sent {
-            Err(_) => {
-                record_outbound(&app, &host, &conf.ptype, &conf.model, None, false, t0.elapsed().as_millis() as u64, attempt);
-                if attempt < conf.retry {
-                    attempt += 1;
-                    emit_notice(format!("连接超时，正在重试（{}/{}）…", attempt, conf.retry));
-                    tokio::time::sleep(Duration::from_millis(300u64 << attempt.min(3))).await;
-                    continue;
-                }
-                return emit_err(None, "连接超时：请检查网络或在模型参数中调大超时时间".into(), None);
-            }
-            Ok(Err(e)) => {
-                record_outbound(&app, &host, &conf.ptype, &conf.model, None, false, t0.elapsed().as_millis() as u64, attempt);
-                let msg = net_error_msg(&e);
-                if attempt < conf.retry {
-                    attempt += 1;
-                    emit_notice(format!("{}，正在重试（{}/{}）…", msg, attempt, conf.retry));
-                    tokio::time::sleep(Duration::from_millis(300u64 << attempt.min(3))).await;
-                    continue;
-                }
-                return emit_err(None, msg, None);
-            }
-            Ok(Ok(r)) => r,
-        };
-        let status_code = resp.status();
-        let latency = t0.elapsed().as_millis() as u64;
-        if !status_code.is_success() {
-            let retry_after = retry_after_secs(resp.headers());
-            let body = resp.text().await.unwrap_or_default();
-            let mut msg = err_message(&body);
-            record_outbound(&app, &host, &conf.ptype, &conf.model, Some(status_code.as_u16()), false, latency, attempt);
-            // 本地模型 OOM：这是 Ollama 加载模型时系统内存/显存不足，重试只会再次拉起
-            // 一个失败的 llama-server（日志里还会刷 "TerminateProcess: Access is denied"），
-            // 因此直接给出可操作的建议而不做退避重试。
-            if is_local_oom(&msg) || is_local_oom(&body) {
-                msg = local_oom_hint(&conf.model, &msg);
-                return emit_err(Some(status_code.as_u16()), msg, None);
-            }
-            // 上下文超长：自动裁剪较早消息并重试（最多 2 次）
-            if status_code.as_u16() == 400 && is_context_too_long(&msg) && trims < 2 {
-                if trim_context(&mut messages) {
-                    trims += 1;
-                    emit_notice("上下文超长，已自动裁剪较早消息并重试…".into());
-                    continue;
-                }
-            }
-            // 5xx 自动重试；429 按规范显示倒计时，不自动重试
-            if status_code.is_server_error() && attempt < conf.retry {
-                attempt += 1;
-                emit_notice(format!("服务端错误（{}），正在重试（{}/{}）…", status_code.as_u16(), attempt, conf.retry));
-                tokio::time::sleep(Duration::from_millis(300u64 << attempt.min(3))).await;
-                continue;
-            }
-            return emit_err(Some(status_code.as_u16()), msg, retry_after);
+        // FR-SYS-005：逐轮累计 token 用量，供用量统计与费用估算
+        {
+            let ctx = app.state::<AppCtx>();
+            let mut u = ctx.usage.lock().unwrap_or_else(|e| e.into_inner());
+            u.tokens_in += outcome.tin;
+            u.tokens_out += outcome.tout;
+            u.requests += 1;
         }
-        record_outbound(&app, &host, &conf.ptype, &conf.model, Some(status_code.as_u16()), true, latency, attempt);
-        let is_sse = resp
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|c| c.contains("event-stream"))
-            .unwrap_or(false);
-        let idle = Duration::from_secs(((conf.timeout * 2).clamp(30, 240)) as u64);
-        let ptype = conf.ptype.clone();
-        let native_ollama = conf.ollama && !conf.base.trim_end_matches('/').ends_with("/chat/completions");
-        if native_ollama {
-            // Ollama 原生 /api/chat：流式为 NDJSON（每行一个 JSON），非流式为单个 JSON
-            let is_ndjson = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .map(|c| c.contains("ndjson"))
-                .unwrap_or(want_stream);
-            if want_stream && is_ndjson {
-                use futures_util::StreamExt;
-                let mut stream = resp.bytes_stream();
-                let mut buf = String::new();
-                loop {
-                    if app.state::<AppCtx>().stop.load(Ordering::SeqCst) {
-                        let _ = app.emit_to("bubble", "chat-stopped", ());
-                        return;
-                    }
-                    let next = match tokio::time::timeout(idle, stream.next()).await {
-                        Err(_) => return emit_err(None, "流式响应超时（长时间无数据）".into(), None),
-                        Ok(None) => break,
-                        Ok(Some(Err(e))) => return emit_err(None, format!("流中断：{}", e), None),
-                        Ok(Some(Ok(bytes))) => bytes,
-                    };
-                    buf.push_str(&String::from_utf8_lossy(&next));
-                    while let Some(idx) = buf.find('\n') {
-                        let line: String = buf.drain(..=idx).collect();
-                        let line = line.trim();
-                        if line.is_empty() {
-                            continue;
-                        }
-                        if let Some(err) = ollama_line_error(line) {
-                            return emit_err(Some(status_code.as_u16()), ollama_error_text(&conf.model, &err), None);
-                        }
-                        if let Some(text) = ollama_delta(line) {
-                            let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
-                        }
-                    }
-                }
-                let rest = buf.trim().to_string();
-                if let Some(err) = ollama_line_error(&rest) {
-                    return emit_err(Some(status_code.as_u16()), ollama_error_text(&conf.model, &err), None);
-                }
-                if let Some(text) = ollama_delta(&rest) {
-                    let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
-                }
-                let _ = app.emit_to("bubble", "chat-done", ());
+        if outcome.calls.is_empty() {
+            let _ = app.emit_to("bubble", "chat-done", ());
+            return;
+        }
+        // FR-TOOL-004：记录 assistant 的工具调用消息，逐个执行后以结构化结果回传
+        messages.push(ChatMsg {
+            role: "assistant".into(),
+            content: outcome.text.clone(),
+            tool_calls: Some(tool_calls_payload(&conf.ptype, &outcome.calls)),
+            tool_call_id: None,
+            name: None,
+        });
+        let mut results: Vec<(String, String, String)> = vec![];
+        for call in outcome.calls.iter() {
+            let args_value = tool_call_args(call);
+            let _ = app.emit_to("bubble", "tool-pending", json!({"tool": call.name, "label": tool_label(&call.name)}));
+            let allowed = request_tool_auth(&app, &call.name, &args_value).await;
+            let (ok, payload, summary) = if !allowed {
+                (false, json!({"error": "用户未授权该工具"}), "未授权，已跳过".to_string())
+            } else if chat_aborted(&app, seq) {
+                (false, json!({"error": "用户已停止生成"}), "已停止".to_string())
             } else {
-                let body = match resp.text().await {
-                    Ok(b) => b,
-                    Err(e) => return emit_err(None, format!("读取响应失败：{}", e), None),
-                };
-                let j: Value = match serde_json::from_str(&body) {
-                    Ok(j) => j,
-                    Err(_) => return emit_err(Some(status_code.as_u16()), "Ollama 返回的不是合法 JSON".into(), None),
-                };
-                if let Some(err) = j["error"].as_str() {
-                    return emit_err(Some(status_code.as_u16()), ollama_error_text(&conf.model, err), None);
-                }
-                let text = ollama_text(&j);
-                if text.is_empty() {
-                    return emit_err(
-                        Some(status_code.as_u16()),
-                        "模型返回空内容（若为思考型模型，可调大 Max Tokens 或改用非思考模型）".into(),
-                        None,
-                    );
-                }
-                let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
-                let _ = app.emit_to("bubble", "chat-done", ());
-            }
-        } else if want_stream && is_sse {
-            use futures_util::StreamExt;
-            let mut stream = resp.bytes_stream();
-            let mut buf = String::new();
-            loop {
-                if app.state::<AppCtx>().stop.load(Ordering::SeqCst) {
-                    let _ = app.emit_to("bubble", "chat-stopped", ());
-                    return;
-                }
-                let next = match tokio::time::timeout(idle, stream.next()).await {
-                    Err(_) => return emit_err(None, "流式响应超时（长时间无数据）".into(), None),
-                    Ok(None) => break,
-                    Ok(Some(Err(e))) => return emit_err(None, format!("流中断：{}", e), None),
-                    Ok(Some(Ok(bytes))) => bytes,
-                };
-                buf.push_str(&String::from_utf8_lossy(&next));
-                while let Some(idx) = buf.find('\n') {
-                    let line: String = buf.drain(..=idx).collect();
-                    let line = line.trim_end();
-                    if let Some(text) = sse_delta(&ptype, line) {
-                        let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
+                match execute_tool(&app, &conf, &call.name, &args_value).await {
+                    Ok(v) => {
+                        let s = tool_result_summary(&call.name, &v);
+                        (true, v, s)
                     }
+                    Err(e) => (false, json!({"error": e.clone()}), format!("执行失败：{}", e)),
                 }
-            }
-            let rest = buf.trim().to_string();
-            if let Some(text) = sse_delta(&ptype, &rest) {
-                let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
-            }
-            let _ = app.emit_to("bubble", "chat-done", ());
-        } else {
-            // 非流式 / 供应商不支持流式时自动降级（FR-MDL-011）
-            let body = match resp.text().await {
-                Ok(b) => b,
-                Err(e) => return emit_err(None, format!("读取响应失败：{}", e), None),
             };
-            let j: Value = match serde_json::from_str(&body) {
-                Ok(j) => j,
-                Err(_) => return emit_err(Some(status_code.as_u16()), "响应不是合法 JSON（请检查 BaseURL 是否为 OpenAI 兼容端点）".into(), None),
-            };
-            let text = full_text(&ptype, &j);
-            if text.is_empty() {
-                return emit_err(Some(status_code.as_u16()), "模型返回空内容".into(), None);
-            }
-            let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
-            let _ = app.emit_to("bubble", "chat-done", ());
+            let _ = app.emit_to(
+                "bubble",
+                "chat-tool",
+                json!({"tool": call.name, "label": tool_label(&call.name), "ok": ok, "summary": summary}),
+            );
+            results.push((call.id.clone(), call.name.clone(), payload.to_string()));
         }
-        return;
+        messages.extend(tool_result_msgs(&results));
+        if hop == max_hops - 1 {
+            let _ = app.emit_to("bubble", "chat-notice", json!({"message": "工具调用轮次已达上限，正在整理结果…"}));
+        }
+    }
+    let _ = app.emit_to("bubble", "chat-done", ());
+}
+
+// 工具执行结果的一句话摘要（展示在气泡内的工具卡片上，不参与上下文）
+fn tool_result_summary(name: &str, v: &Value) -> String {
+    let brief = |k: &str| v[k].as_str().map(|s| s.to_string());
+    match name {
+        "create_reminder" => brief("content")
+            .map(|c| format!("已创建提醒：{}", c))
+            .unwrap_or_else(|| "已创建提醒".into()),
+        "read_clipboard" => format!("读取到 {} 个字符", v["length"].as_i64().unwrap_or(0)),
+        "open_url" => format!("已打开 {}", brief("url").unwrap_or_default()),
+        "open_app" => format!("已启动 {}", brief("app").unwrap_or_default()),
+        "get_weather" => brief("summary").unwrap_or_else(|| "已获取天气".into()),
+        "web_search" => format!("找到 {} 条结果", v["count"].as_i64().unwrap_or(0)),
+        _ => "已完成".into(),
     }
 }
 
@@ -1618,6 +2943,9 @@ fn merge_state_snapshot(st: &mut Value, state: Value, origin: &str) {
         [
             "petScale", "clickThrough", "dnd", "bubbleW", "showInTaskbar", "alwaysOnTop",
             "bubbleIdleClose", "chatter", "enterSend", "newSessionPerClick", "lowFps", "customSkin",
+            "summaryThreshold", "voice", "voiceURI", "voiceRate", "reminderSound", "health",
+            "clipboardWatch", "toolSettings", "updateUrl", "updateAuto", "lang", "dndStart",
+            "dndEnd", "priceIn", "priceOut", "skinPack",
         ]
         .iter()
         .filter(|k| !st["settings"][*k].is_null())
@@ -1666,7 +2994,7 @@ fn reset_data(app: AppHandle, ctx: tauri::State<AppCtx>) -> Result<(), String> {
     rebuild_tray(&app);
     let _ = app.emit("state-reset", ());
     let _ = app.emit("state-changed", json!({"origin": "backend"}));
-    app_log(&app, "已重置全部数据");
+    log_event(&app, "warn", "data.reset", "已重置全部数据");
     Ok(())
 }
 
@@ -1856,9 +3184,359 @@ fn chat_start(app: AppHandle, args: ChatArgs) {
     });
 }
 
+// FR-MEM-003：会话超过阈值后，用模型把较早的消息压缩成摘要。
+// 渲染层只发送待压缩的历史片段，主进程复用现有三协议请求构造器（非流式），
+// 因此 OpenAI / Anthropic / Gemini / Ollama 都能生成摘要，且密钥仍不出主进程。
+#[tauri::command]
+async fn chat_summarize(
+    app: AppHandle,
+    provider_id: String,
+    messages: Vec<ChatMsg>,
+) -> Result<Value, String> {
+    if messages.iter().all(|m| m.role == "system" || m.content.trim().is_empty()) {
+        return Ok(json!({"summary": "", "skipped": true}));
+    }
+    let conf = resolve_provider(&app, &provider_id)?;
+    if conf.ptype == "mock" {
+        let text = mock_summary(&messages);
+        log_event(
+            &app,
+            "info",
+            "chat.summarized",
+            &format!("mock 压缩 {} 条消息，摘要 {} 字", messages.len(), text.chars().count()),
+        );
+        return Ok(json!({"summary": text, "mock": true}));
+    }
+    if conf.base.trim().is_empty() {
+        return Err("BaseURL 未配置，无法生成摘要".into());
+    }
+    let mut c = conf.clone();
+    c.stream = false;
+    c.temp = 0.2;
+    c.max_tokens = c.max_tokens.clamp(128, 512);
+    // 已有摘要一并交给模型，保证多次压缩后上下文仍然连贯
+    let previous: String = messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .map(|m| m.content.trim())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut transcript = String::new();
+    for m in messages.iter().filter(|m| m.role != "system") {
+        let role = if m.role == "assistant" { "助手" } else { "用户" };
+        if m.content.trim().is_empty() {
+            continue;
+        }
+        transcript.push_str(role);
+        transcript.push_str("：");
+        transcript.push_str(m.content.trim());
+        transcript.push('\n');
+    }
+    let user_content = if previous.is_empty() {
+        format!("对话记录：\n{}", transcript)
+    } else {
+        format!("已有摘要：\n{}\n\n新增对话记录：\n{}", previous, transcript)
+    };
+    let prompt = vec![
+        ChatMsg {
+            role: "system".into(),
+            content: "你是一个会话摘要助手。把给定对话压缩成简洁的要点，保留用户的事实、偏好、目标、待办与已确定的结论；不要编造，不要输出与摘要无关的话。用第三人称，200 字以内。".into(),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        },
+        ChatMsg {
+            role: "user".into(),
+            content: user_content,
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        },
+    ];
+    let rb = build_request(&app, &c, &prompt, None)?;
+    let host = host_of(&c.base);
+    let t0 = std::time::Instant::now();
+    // 摘要在发送前同步执行，必须比正常对话更快失败：即使供应商超时设为 120s，
+    // 也最多等 30s，避免一次摘要请求把用户的新消息卡住。
+    let summary_timeout = Duration::from_secs(c.timeout.clamp(5, 30) as u64);
+    let resp = rb
+        .timeout(summary_timeout)
+        .send()
+        .await
+        .map_err(|e| {
+            record_outbound(
+                &app,
+                &host,
+                &c.ptype,
+                &c.model,
+                None,
+                false,
+                t0.elapsed().as_millis() as u64,
+                0,
+            );
+            format!("摘要请求失败：{}", net_error_msg(&e))
+        })?;
+    let status = resp.status();
+    let latency = t0.elapsed().as_millis() as u64;
+    let body = resp.text().await.unwrap_or_default();
+    record_outbound(
+        &app,
+        &host,
+        &c.ptype,
+        &c.model,
+        Some(status.as_u16()),
+        status.is_success(),
+        latency,
+        0,
+    );
+    if !status.is_success() {
+        return Err(format!(
+            "摘要生成失败（HTTP {}）：{}",
+            status.as_u16(),
+            err_message(&body)
+        ));
+    }
+    let j: Value = serde_json::from_str(&body).map_err(|_| "摘要响应不是合法 JSON".to_string())?;
+    let text = if c.ollama && !c.base.trim_end_matches('/').ends_with("/chat/completions") {
+        ollama_text(&j)
+    } else {
+        full_text(&c.ptype, &j)
+    };
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("模型返回了空摘要".into());
+    }
+    log_event(
+        &app,
+        "info",
+        "chat.summarized",
+        &format!("压缩 {} 条消息，摘要 {} 字", messages.len(), text.chars().count()),
+    );
+    Ok(json!({"summary": text}))
+}
+
+// 演示模式摘要：无需联网，抽取用户侧关键句，保证完整链路可体验
+fn mock_summary(messages: &[ChatMsg]) -> String {
+    let mut parts: Vec<String> = vec![];
+    for m in messages.iter().filter(|m| m.role == "user") {
+        let t = m.content.trim();
+        if t.is_empty() {
+            continue;
+        }
+        parts.push(cut_chars(t, 40));
+        if parts.len() >= 4 {
+            break;
+        }
+    }
+    if parts.is_empty() {
+        "（较早对话没有可摘要的内容）".into()
+    } else {
+        format!("较早对话涉及：{}。", parts.join("；"))
+    }
+}
+
+// FR-TOOL-003 / AC-012：气泡内授权卡片的回执（允许 / 拒绝，可勾选记住）
+// FR-REM-007：用户在宠物旁点击「点我处理」后读取一次剪贴板（用户显式触发，非后台采集）
+// FR-SKN-002：皮肤包格式（.deskpet-skin，实为 zip）
+//   skin.json  {"name":"…","version":"1.0","states":{"idle":"idle.png", …},"sound":{"reminder":"ding.ogg"}}
+//   *.png / *.gif / *.webp  图集或各状态帧；sound/*.ogg|*.mp3|*.wav 可选
+// 校验点：压缩包 ≤ 8 MB、单文件 ≤ 2 MB、总解压 ≤ 24 MB、条目数 ≤ 200；拒绝路径穿越。
+const SKIN_MAX_ZIP: usize = 8 * 1024 * 1024;
+const SKIN_MAX_FILE: u64 = 2 * 1024 * 1024;
+const SKIN_MAX_TOTAL: u64 = 24 * 1024 * 1024;
+const SKIN_MAX_ENTRIES: usize = 200;
+const SKIN_STATES: [&str; 8] = ["idle", "drag", "click", "talk", "sleep", "work", "happy", "error"];
+
+fn mime_of(name: &str) -> Option<&'static str> {
+    let n = name.to_lowercase();
+    if n.ends_with(".png") { Some("image/png") }
+    else if n.ends_with(".gif") { Some("image/gif") }
+    else if n.ends_with(".webp") { Some("image/webp") }
+    else { None }
+}
+
+fn read_skin_zip(raw: &[u8]) -> Result<Value, String> {
+    use std::io::Read;
+    if raw.len() > SKIN_MAX_ZIP {
+        return Err(format!("皮肤包超过 {} MB 上限", SKIN_MAX_ZIP / 1024 / 1024));
+    }
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(raw)).map_err(|e| format!("不是有效的皮肤包（zip）：{}", e))?;
+    if zip.len() > SKIN_MAX_ENTRIES {
+        return Err("皮肤包条目过多".into());
+    }
+    let mut total: u64 = 0;
+    let mut files: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut sounds: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut manifest: Option<Value> = None;
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).map_err(|e| e.to_string())?;
+        if f.is_dir() {
+            continue;
+        }
+        let raw_name = f.mangled_name();
+        let name = raw_name
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("皮肤包内文件名编码异常")?
+            .to_string();
+        // 只取 basename：压缩包内即便写了 ../ 也无法落到包外
+        if name.starts_with('.') || name.contains(std::path::MAIN_SEPARATOR) || name.contains('/') {
+            continue;
+        }
+        if f.size() > SKIN_MAX_FILE {
+            return Err(format!("{} 超过 2 MB 单文件上限", name));
+        }
+        total += f.size();
+        if total > SKIN_MAX_TOTAL {
+            return Err("皮肤包解压后总大小超限".into());
+        }
+        let mut buf = Vec::with_capacity(f.size() as usize);
+        f.read_to_end(&mut buf).map_err(|e| format!("读取 {} 失败：{}", name, e))?;
+        if name.eq_ignore_ascii_case("skin.json") {
+            let txt = String::from_utf8(buf).map_err(|_| "skin.json 不是 UTF-8 文本")?;
+            manifest = Some(serde_json::from_str(&txt).map_err(|e| format!("skin.json 解析失败：{}", e))?);
+            continue;
+        }
+        let lower = name.to_lowercase();
+        if lower.ends_with(".png") || lower.ends_with(".gif") || lower.ends_with(".webp") {
+            let mime = mime_of(&name).unwrap_or("image/png");
+            files.insert(
+                name.clone(),
+                format!("data:{};base64,{}", mime, base64_encode(&buf)),
+            );
+        } else if lower.ends_with(".ogg") || lower.ends_with(".mp3") || lower.ends_with(".wav") {
+            let mime = if lower.ends_with(".mp3") { "audio/mpeg" } else if lower.ends_with(".wav") { "audio/wav" } else { "audio/ogg" };
+            sounds.insert(name.clone(), format!("data:{};base64,{}", mime, base64_encode(&buf)));
+        }
+    }
+    let manifest = manifest.ok_or("皮肤包缺少 skin.json")?;
+    let name = manifest["name"].as_str().unwrap_or("导入皮肤").trim();
+    if name.is_empty() {
+        return Err("skin.json 缺少 name".into());
+    }
+    // 状态机配置：states 里的文件名必须真实存在于包内，否则该状态回退到 idle
+    let mut states: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let src_states = manifest["states"].as_object().cloned().unwrap_or_default();
+    let fallback = if files.contains_key("idle.png") {
+        "idle.png".to_string()
+    } else {
+        files.keys().next().cloned().unwrap_or_default()
+    };
+    for st in SKIN_STATES {
+        let key = src_states
+            .get(st)
+            .and_then(|v| v.as_str())
+            .map(|s| s.rsplit('/').next().unwrap_or(s).to_string());
+        let pick = match key {
+            Some(k) if files.contains_key(&k) => k,
+            _ => fallback.clone(),
+        };
+        if !pick.is_empty() {
+            states.insert(st.to_string(), pick);
+        }
+    }
+    if states.is_empty() {
+        return Err("皮肤包里没有任何图片资源".into());
+    }
+    let mut group = serde_json::Map::new();
+    if let Some(g) = manifest["group"].as_object() {
+        for (k, v) in g {
+            let Some(f) = v.as_str() else { continue };
+            let base = f.rsplit('/').next().unwrap_or(f).to_string();
+            if files.contains_key(&base) {
+                group.insert(k.clone(), Value::String(base));
+            }
+        }
+    }
+    Ok(json!({
+        "name": cut_chars(name, 40),
+        "version": manifest["version"].as_str().unwrap_or("1.0"),
+        "states": states,
+        "group": group,
+        "files": files,
+        "sounds": sounds,
+        "byteSize": total,
+        "ts": now_ms(),
+    }))
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+// 渲染层只传 base64（Tauri IPC 的数组序列化开销很大）
+#[tauri::command]
+fn skin_pack_import(data: String) -> Result<Value, String> {
+    let raw = base64_decode(&data).map_err(|e| format!("皮肤包数据无效：{}", e))?;
+    read_skin_zip(&raw)
+}
+
+fn base64_decode(s: &str) -> Result<Vec<u8>, &'static str> {
+    let mut buf: Vec<u8> = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in s.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => (c - b'A') as u32,
+            b'a'..=b'z' => (c - b'a' + 26) as u32,
+            b'0'..=b'9' => (c - b'0' + 52) as u32,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' | b'\r' | b'\n' => continue,
+            _ => return Err("非 base64 字符"),
+        };
+        acc = (acc << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            buf.push((acc >> bits) as u8);
+        }
+    }
+    Ok(buf)
+}
+
+#[tauri::command]
+fn clipboard_read() -> Result<Value, String> {
+    let text = clipboard_read_text().ok_or("剪贴板中没有纯文本")?;
+    Ok(json!({"text": cut_chars(&text, 8000), "truncated": text.chars().count() > 8000}))
+}
+
+#[tauri::command]
+fn tool_auth_reply(ctx: tauri::State<AppCtx>, id: String, allow: bool, remember: bool) -> Result<(), String> {
+    let w = ctx
+        .tool_wait
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&id)
+        .ok_or("授权请求已过期或已被处理")?;
+    // 接收端已超时退出时发送会失败，属于正常情况
+    let _ = w.tx.send(ToolDecision { allow, remember });
+    Ok(())
+}
+
+// 授权 id 需要唯一（同一毫秒内可能连续发起多个工具调用）
+fn rand_suffix() -> String {
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    format!("{:x}", n)
+}
+
 #[tauri::command]
 fn chat_stop(ctx: tauri::State<AppCtx>) {
     ctx.stop.store(true, Ordering::SeqCst);
+    ctx.chat_cancelled.store(true, Ordering::SeqCst);
 }
 
 #[tauri::command]
@@ -1940,6 +3618,7 @@ fn set_pet_always_on_top(app: AppHandle, ctx: tauri::State<AppCtx>, on: bool) ->
     // FR-PET-002：默认置顶，支持配置（关闭后普通层级）
     let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
     pet.set_always_on_top(on).map_err(|e| e.to_string())?;
+    apply_top_level(&pet, on);
     {
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
         st["settings"]["alwaysOnTop"] = json!(on);
@@ -1995,6 +3674,33 @@ fn outbound_clear(ctx: tauri::State<AppCtx>) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clear();
+}
+
+// FR-SYS-005：用量统计与费用估算（单价由用户在设置页填写，元 / 百万 token）
+#[tauri::command]
+fn usage_snapshot(ctx: tauri::State<AppCtx>) -> Value {
+    let u = ctx.usage.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let (pin, pout) = {
+        let st = state_lock(&ctx);
+        (
+            st["settings"]["priceIn"].as_f64().unwrap_or(0.0),
+            st["settings"]["priceOut"].as_f64().unwrap_or(0.0),
+        )
+    };
+    let cost = (u.tokens_in as f64 * pin + u.tokens_out as f64 * pout) / 1_000_000.0;
+    json!({
+        "requests": u.requests,
+        "tokensIn": u.tokens_in,
+        "tokensOut": u.tokens_out,
+        "cost": (cost * 10000.0).round() / 10000.0,
+        "priceIn": pin,
+        "priceOut": pout,
+    })
+}
+
+#[tauri::command]
+fn usage_reset(ctx: tauri::State<AppCtx>) {
+    *ctx.usage.lock().unwrap_or_else(|e| e.into_inner()) = UsageAcc::default();
 }
 
 #[tauri::command]
@@ -2207,7 +3913,143 @@ fn quit_app(app: AppHandle) {
 #[tauri::command]
 fn get_app_version(app: AppHandle) -> String {
     // 版本号唯一来源：tauri.conf.json（此前硬编码曾与实际版本脱节）
-    format!("{}（桌面版 MVP）", app.package_info().version)
+    format!("{}（桌面版）", app.package_info().version)
+}
+
+// FR-SYS-004：检查更新。仅在用户点击「检查更新」时发起一次 HTTPS GET，
+// 读取托管在 updateUrl 的 JSON（形如 {"version":"2.0.0","notes":"…","url":"https://…"}）。
+// 不做后台轮询；安装包必须由用户手动下载并自行运行，应用不会静默执行任何可执行文件。
+fn version_tuple(v: &str) -> (u64, u64, u64) {
+    let core = v.trim().trim_start_matches('v').split(['-', '+']).next().unwrap_or("");
+    let mut it = core.split('.').map(|p| p.parse::<u64>().unwrap_or(0));
+    (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0))
+}
+
+#[tauri::command]
+async fn update_check(app: AppHandle) -> Result<Value, String> {
+    let (url, enabled) = {
+        let ctx = app.state::<AppCtx>();
+        let st = state_lock(&ctx);
+        (
+            st["settings"]["updateUrl"].as_str().unwrap_or("").to_string(),
+            st["settings"]["updateAuto"].as_bool().unwrap_or(true),
+        )
+    };
+    if url.trim().is_empty() {
+        return Ok(json!({"ok": false, "message": "未配置更新源地址"}));
+    }
+    if !enabled {
+        return Ok(json!({"ok": false, "message": "已关闭更新检查"}));
+    }
+    let u = reqwest::Url::parse(url.trim()).map_err(|_| "更新地址格式无效".to_string())?;
+    if u.scheme() != "https" {
+        return Err("更新地址必须使用 HTTPS（NFR-SEC-004）".into());
+    }
+    let host = u.host_str().unwrap_or("").to_string();
+    let client = app.state::<AppCtx>().http.clone();
+    let t0 = std::time::Instant::now();
+    let resp = client
+        .get(u)
+        .header("user-agent", "DeskPet-UpdateCheck")
+        .timeout(Duration::from_secs(12))
+        .send()
+        .await;
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            record_outbound(&app, &host, "update", "", None, false, t0.elapsed().as_millis() as u64, 0);
+            return Ok(json!({"ok": false, "message": net_error_msg(&e)}));
+        }
+    };
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    record_outbound(&app, &host, "update", "", Some(status), (200..300).contains(&status), t0.elapsed().as_millis() as u64, 0);
+    if !(200..300).contains(&status) {
+        return Ok(json!({"ok": false, "message": format!("更新源返回 HTTP {}", status)}));
+    }
+    let j: Value = serde_json::from_str(&body).map_err(|_| "更新清单不是合法 JSON".to_string())?;
+    let latest = j["version"].as_str().unwrap_or("").to_string();
+    if latest.is_empty() {
+        return Ok(json!({"ok": false, "message": "更新清单缺少 version 字段"}));
+    }
+    let current = app.package_info().version.to_string();
+    let newer = version_tuple(&latest) > version_tuple(&current);
+    let dl = j["url"].as_str().unwrap_or("").to_string();
+    if newer && !dl.is_empty() && !dl.starts_with("https://") {
+        return Ok(json!({"ok": false, "message": "更新下载地址必须使用 HTTPS"}));
+    }
+    Ok(json!({
+        "ok": true,
+        "current": current,
+        "latest": latest,
+        "newer": newer,
+        "notes": cut_chars(j["notes"].as_str().unwrap_or(""), 600),
+        "url": dl,
+        "checkedAt": now_ms(),
+    }))
+}
+
+// FR-SYS-004：用户确认后手动下载安装包到 exports 目录，再由用户自行运行；
+// 应用只负责下载与校验大小，绝不自动执行。
+#[tauri::command]
+async fn update_download(app: AppHandle, url: String) -> Result<String, String> {
+    let u = reqwest::Url::parse(url.trim()).map_err(|_| "下载地址无效".to_string())?;
+    if u.scheme() != "https" {
+        return Err("下载地址必须使用 HTTPS（NFR-SEC-004）".into());
+    }
+    let host = u.host_str().unwrap_or("").to_string();
+    let name = u
+        .path_segments()
+        .and_then(|s| s.last())
+        .filter(|s| !s.is_empty() && s.len() < 120)
+        .unwrap_or("DeskPet-setup")
+        .to_string();
+    let client = app.state::<AppCtx>().http.clone();
+    let t0 = std::time::Instant::now();
+    let resp = client
+        .get(u)
+        .header("user-agent", "DeskPet-UpdateCheck")
+        .timeout(Duration::from_secs(120))
+        .send()
+        .await;
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            record_outbound(&app, &host, "update-dl", "", None, false, t0.elapsed().as_millis() as u64, 0);
+            return Err(net_error_msg(&e));
+        }
+    };
+    let status = resp.status().as_u16();
+    if !(200..300).contains(&status) {
+        record_outbound(&app, &host, "update-dl", "", Some(status), false, t0.elapsed().as_millis() as u64, 0);
+        return Err(format!("下载失败：HTTP {}", status));
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("下载中断：{}", e))?;
+    if bytes.len() > 200 * 1024 * 1024 {
+        return Err("安装包超过 200 MB，已中止".into());
+    }
+    record_outbound(&app, &host, "update-dl", "", Some(status), true, t0.elapsed().as_millis() as u64, 0);
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("updates");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let safe: String = name.chars().filter(|c| !r#"\/*:"<>?|"#.contains(*c)).collect();
+    let path = dir.join(format!("{}-{}", now_ms(), safe));
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    log_event(&app, "info", "update.downloaded", &format!("已下载更新包（{} 字节），等待用户手动安装", bytes.len()));
+    Ok(path.to_string_lossy().to_string())
+}
+
+// 在资源管理器中定位已下载的安装包（仅打开文件夹，不执行文件）
+#[tauri::command]
+fn reveal_file(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err("文件不存在".into());
+    }
+    std::process::Command::new("explorer.exe")
+        .arg(format!("/select,{}", p.to_string_lossy()))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("打开目录失败：{}", e))
 }
 
 // ================= 入口 =================
@@ -2232,6 +4074,8 @@ fn main() {
                 data_path,
                 state: Mutex::new(state),
                 stop: AtomicBool::new(false),
+                chat_seq: std::sync::atomic::AtomicU64::new(0),
+                chat_cancelled: AtomicBool::new(false),
                 bubble_anchor_below: Mutex::new(false),
                 fg_before: Mutex::new(0),
                 pet_visible: Mutex::new(true),
@@ -2239,6 +4083,9 @@ fn main() {
                 dnd_queue: Mutex::new(vec![]),
                 outbound: Mutex::new(vec![]),
                 file_lock: Mutex::new(()),
+                tool_wait: Mutex::new(std::collections::HashMap::new()),
+                clipboard_last: Mutex::new(String::new()),
+                usage: Mutex::new(UsageAcc::default()),
                 http,
             });
 
@@ -2406,14 +4253,15 @@ fn main() {
             // 提醒 / 主动搭话调度线程
             start_scheduler(app.handle().clone());
 
-            app_log(app.handle(), "DeskPet 桌面版启动完成");
+            migrate_legacy_log(app.handle());
+            log_event(app.handle(), "info", "app.started", "DeskPet 桌面版启动完成");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             state_load, state_save, reset_data,
             key_set, key_delete, key_has,
             provider_test,
-            chat_start, chat_stop,
+            chat_start, chat_stop, chat_summarize, tool_auth_reply, clipboard_read, skin_pack_import,
             pet_clicked, pet_save_pos, pet_set_size, set_pet_scale,
             set_click_through, set_pet_visible, reset_pet_pos,
             show_bubble_cmd, hide_bubble_cmd, bubble_resize,
@@ -2422,8 +4270,8 @@ fn main() {
             set_pet_taskbar, set_pet_always_on_top,
             privacy_info, outbound_log, outbound_clear,
             reminder_add, reminder_snooze, reminder_delete,
-            take_pending_notices,
-            export_text, quit_app, get_app_version
+            take_pending_notices, usage_snapshot, usage_reset,
+            export_text, quit_app, get_app_version, update_check, update_download, reveal_file
         ])
         .run(tauri::generate_context!())
         .expect("DeskPet 运行失败");
@@ -2441,6 +4289,8 @@ mod tests {
                 model: "m".into(),
                 key: key.into(),
                 headers_raw: String::new(),
+                proxy: String::new(),
+                proxy_type: "auto".into(),
                 temp: 0.8,
                 top_p: 1.0,
                 max_tokens: 1024,
@@ -2504,6 +4354,51 @@ mod tests {
         }
 
         #[test]
+        fn summary_mock_uses_user_turns_and_never_leaks_empty() {
+            let msgs = vec![
+                ChatMsg { role: "user".into(), content: "我喜欢蓝色".into(), tool_calls: None, tool_call_id: None, name: None },
+                ChatMsg { role: "assistant".into(), content: "记住了".into(), tool_calls: None, tool_call_id: None, name: None },
+                ChatMsg { role: "user".into(), content: "下周要交周报".into(), tool_calls: None, tool_call_id: None, name: None },
+            ];
+            let s = mock_summary(&msgs);
+            assert!(s.contains("我喜欢蓝色"));
+            assert!(s.contains("下周要交周报"));
+            assert!(!s.contains("记住了"));
+            assert!(!mock_summary(&[]).is_empty());
+        }
+
+        #[test]
+        fn logs_redact_common_secret_shapes() {
+            let out = redact_secrets("key=sk-abc123DEF456 bearer xyzTOKEN authorization: Bearer secret-value");
+            assert!(!out.contains("abc123DEF456"), "{}", out);
+            assert!(!out.contains("xyzTOKEN"), "{}", out);
+            assert!(!out.contains("secret-value"), "{}", out);
+            assert!(out.contains("***"));
+            // 普通文案不被误伤
+            assert_eq!(redact_secrets("提醒已创建"), "提醒已创建");
+        }
+
+        #[test]
+        fn log_timestamp_is_iso_and_civil_dates_are_correct() {
+            assert_eq!(days_to_ymd(0), (1970, 1, 1));
+            assert_eq!(days_to_ymd(10957), (2000, 1, 1));
+            // 闰日：2024-02-29
+            assert_eq!(days_to_ymd(19782), (2024, 2, 29));
+            let ts = chrono_now();
+            assert_eq!(ts.len(), 25, "{}", ts);
+            assert_eq!(&ts[4..5], "-");
+            assert_eq!(&ts[10..11], "T");
+            assert!(ts.ends_with("+08:00"), "{}", ts);
+        }
+
+        #[test]
+        fn legacy_log_detection_handles_mixed_files() {
+            assert!(!has_legacy_log_lines(""));
+            assert!(!has_legacy_log_lines("{\"ts\":\"x\"}\n\n{\"ts\":\"y\"}\n"));
+            assert!(has_legacy_log_lines("[D1 00:00:00] 旧日志\n{\"ts\":\"y\"}\n"));
+        }
+
+        #[test]
         fn err_message_extracts_nested() {
             let body = r#"{"error":{"message":"rate limited"}}"#;
             assert_eq!(err_message(body), "rate limited");
@@ -2522,6 +4417,8 @@ mod tests {
                 data_path: path.clone(),
                 state: Mutex::new(json!({"reminders": []})),
                 stop: AtomicBool::new(false),
+                chat_seq: std::sync::atomic::AtomicU64::new(0),
+                chat_cancelled: AtomicBool::new(false),
                 bubble_anchor_below: Mutex::new(false),
                 fg_before: Mutex::new(0),
                 pet_visible: Mutex::new(true),
@@ -2529,6 +4426,9 @@ mod tests {
                 dnd_queue: Mutex::new(vec![]),
                 outbound: Mutex::new(vec![]),
                 file_lock: Mutex::new(()),
+                tool_wait: Mutex::new(std::collections::HashMap::new()),
+                clipboard_last: Mutex::new(String::new()),
+                usage: Mutex::new(UsageAcc::default()),
                 http: reqwest::Client::new(),
             };
             {
@@ -2592,17 +4492,17 @@ mod tests {
         #[test]
         fn context_trim_keeps_system_messages() {
             let mut msgs = vec![
-                ChatMsg { role: "system".into(), content: "SYS".into() },
-                ChatMsg { role: "user".into(), content: "u1".into() },
-                ChatMsg { role: "assistant".into(), content: "a1".into() },
-                ChatMsg { role: "user".into(), content: "u2".into() },
+                ChatMsg { role: "system".into(), content: "SYS".into(), ..Default::default() },
+                ChatMsg { role: "user".into(), content: "u1".into(), ..Default::default() },
+                ChatMsg { role: "assistant".into(), content: "a1".into(), ..Default::default() },
+                ChatMsg { role: "user".into(), content: "u2".into(), ..Default::default() },
             ];
             assert!(trim_context(&mut msgs));
             assert_eq!(msgs.len(), 2);
             assert_eq!(msgs[0].role, "system");
             assert_eq!(msgs[1].content, "u2");
             // 只剩 system 时无法再裁剪
-            let mut only_sys = vec![ChatMsg { role: "system".into(), content: "SYS".into() }];
+            let mut only_sys = vec![ChatMsg { role: "system".into(), content: "SYS".into(), ..Default::default() }];
             assert!(!trim_context(&mut only_sys));
         }
 
@@ -2661,6 +4561,29 @@ mod tests {
         }
 
         #[test]
+        fn upgrade_fills_missing_defaults_without_overwriting_user_data() {
+            let mut loaded = json!({
+                "settings": {"lowFps": false, "voice": true, "bubbleW": 300},
+                "sessions": [{"id": "s-user"}],
+                "providers": [{"id": "p-user"}]
+            });
+            fill_defaults(&default_state(), &mut loaded);
+            // 旧文件缺失的新字段补默认值
+            assert_eq!(loaded["settings"]["summaryThreshold"], 24);
+            assert_eq!(loaded["settings"]["voiceRate"], 1);
+            assert_eq!(loaded["settings"]["dndStart"], "");
+            // 用户已有值不被覆盖
+            assert_eq!(loaded["settings"]["lowFps"], false);
+            assert_eq!(loaded["settings"]["voice"], true);
+            assert_eq!(loaded["settings"]["bubbleW"], 300);
+            // 数组整体保留，不混入默认示例
+            assert_eq!(loaded["sessions"][0]["id"], "s-user");
+            assert_eq!(loaded["providers"][0]["id"], "p-user");
+            // 嵌套对象也只补缺失键
+            assert!(loaded["settings"]["toolSettings"]["openWhitelist"].is_array());
+        }
+
+        #[test]
         fn write_state_file_is_atomic_and_backs_up() {
             let dir = std::env::temp_dir().join("deskpet-regression-atomic");
             let _ = std::fs::remove_dir_all(&dir);
@@ -2670,6 +4593,8 @@ mod tests {
                 data_path: path.clone(),
                 state: Mutex::new(json!({})),
                 stop: AtomicBool::new(false),
+                chat_seq: std::sync::atomic::AtomicU64::new(0),
+                chat_cancelled: AtomicBool::new(false),
                 bubble_anchor_below: Mutex::new(false),
                 fg_before: Mutex::new(0),
                 pet_visible: Mutex::new(true),
@@ -2677,6 +4602,9 @@ mod tests {
                 dnd_queue: Mutex::new(vec![]),
                 outbound: Mutex::new(vec![]),
                 file_lock: Mutex::new(()),
+                tool_wait: Mutex::new(std::collections::HashMap::new()),
+                clipboard_last: Mutex::new(String::new()),
+                usage: Mutex::new(UsageAcc::default()),
                 http: reqwest::Client::new(),
             };
             write_state_file(&ctx, "{\"v\":1}");
@@ -2692,10 +4620,10 @@ mod tests {
         fn token_budget_trims_oldest_non_system() {
             // CJK 约 1 字 1 token；仅 system 时不得无限裁剪
             let mut msgs = vec![
-                ChatMsg { role: "system".into(), content: "系统提示".into() },
-                ChatMsg { role: "user".into(), content: "很早的消息".repeat(50) },
-                ChatMsg { role: "assistant".into(), content: "较早的回复".repeat(50) },
-                ChatMsg { role: "user".into(), content: "最新问题".into() },
+                ChatMsg { role: "system".into(), content: "系统提示".into(), ..Default::default() },
+                ChatMsg { role: "user".into(), content: "很早的消息".repeat(50), ..Default::default() },
+                ChatMsg { role: "assistant".into(), content: "较早的回复".repeat(50), ..Default::default() },
+                ChatMsg { role: "user".into(), content: "最新问题".into(), ..Default::default() },
             ];
             let before = msgs.len();
             assert!(trim_to_budget(&mut msgs, 80));
@@ -2704,7 +4632,7 @@ mod tests {
             assert_eq!(msgs.last().unwrap().content, "最新问题");
             assert!(est_tokens("你好") >= 2);
             assert!(est_tokens("hello") <= 3);
-            let mut only_sys = vec![ChatMsg { role: "system".into(), content: "很长".repeat(200) }];
+            let mut only_sys = vec![ChatMsg { role: "system".into(), content: "很长".repeat(200), ..Default::default() }];
             assert!(!trim_to_budget(&mut only_sys, 10));
         }
 
@@ -2759,5 +4687,165 @@ mod tests {
                 "model 'x' not found"
             );
             assert!(ollama_error_text("m", "failed to allocate CPU buffer").contains("内存不足"));
+        }
+
+        // FR-SKN-002：皮肤包解析（正常、缺清单、路径穿越、超大文件）
+        fn build_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+            use std::io::Write;
+            let mut buf = std::io::Cursor::new(Vec::new());
+            {
+                let mut w = zip::ZipWriter::new(&mut buf);
+                let opts = zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored);
+                for (name, data) in entries {
+                    w.start_file(*name, opts).unwrap();
+                    w.write_all(data).unwrap();
+                }
+                w.finish().unwrap();
+            }
+            buf.into_inner()
+        }
+
+        #[test]
+        fn skin_pack_parses_manifest_and_states() {
+            let png: &[u8] = b"PNGDATA";
+            let zip = build_zip(&[
+                ("skin.json", r#"{"name":"测试猫","version":"1.2","states":{"idle":"idle.png","happy":"../happy.png"},"sound":{"reminder":"ding.ogg"}}"#.as_bytes()),
+                ("idle.png", png),
+                ("happy.png", png),
+                ("ding.ogg", b"OGGDATA"),
+            ]);
+            let pack = read_skin_zip(&zip).unwrap();
+            assert_eq!(pack["name"], "测试猫");
+            assert_eq!(pack["version"], "1.2");
+            assert_eq!(pack["states"]["idle"], "idle.png");
+            // 条目里写 ../ 也只取 basename，无法逃出包外
+            assert_eq!(pack["states"]["happy"], "happy.png");
+            // 未在 states 中声明的状态回退到 idle
+            assert_eq!(pack["states"]["talk"], "idle.png");
+            assert!(pack["files"]["idle.png"].as_str().unwrap().starts_with("data:image/png;base64,"));
+            assert!(pack["sounds"]["ding.ogg"].as_str().unwrap().starts_with("data:audio/ogg;base64,"));
+            assert!(read_skin_zip(b"not a zip").is_err());
+        }
+
+        #[test]
+        fn skin_pack_rejects_missing_manifest_and_bad_name() {
+            let zip = build_zip(&[("idle.png", b"x")]);
+            assert!(read_skin_zip(&zip).unwrap_err().contains("skin.json"));
+            let zip2 = build_zip(&[
+                ("skin.json", r#"{"name":"","states":{"idle":"idle.png"}}"#.as_bytes()),
+                ("idle.png", b"x"),
+            ]);
+            assert!(read_skin_zip(&zip2).is_err());
+            let zip3 = build_zip(&[("skin.json", r#"{"name":"空包"}"#.as_bytes())]);
+            assert!(read_skin_zip(&zip3).unwrap_err().contains("图片"));
+        }
+
+
+        // 回归：旧请求不得因新一轮请求重置 stop 而「复活」，且被新请求取代后必须自认过期
+        #[test]
+        fn chat_abort_respects_generation() {
+            let stop = AtomicBool::new(false);
+            let cancelled = AtomicBool::new(false);
+            let seq = std::sync::atomic::AtomicU64::new(5);
+            let aborted = |seq_seen: u64| {
+                stop.load(Ordering::SeqCst)
+                    || cancelled.load(Ordering::SeqCst)
+                    || seq.load(Ordering::SeqCst) != seq_seen
+            };
+            assert!(!aborted(5));
+            // 用户点停止
+            stop.store(true, Ordering::SeqCst);
+            cancelled.store(true, Ordering::SeqCst);
+            assert!(aborted(5));
+            // 新一轮请求：代际 +1 并清空 stop/cancelled
+            seq.fetch_add(1, Ordering::SeqCst);
+            stop.store(false, Ordering::SeqCst);
+            cancelled.store(false, Ordering::SeqCst);
+            // 新请求继续跑，旧请求因为代际不一致仍然退出（关键：不会复活并抢占前端状态）
+            assert!(!aborted(6));
+            assert!(aborted(5));
+        }
+
+        #[test]
+        fn base64_roundtrip() {
+            for s in [&b""[..], b"a", b"ab", b"abc", b"hello world!", &[0u8, 255, 128, 7]] {
+                let enc = base64_encode(s);
+                assert_eq!(base64_decode(&enc).unwrap(), s.to_vec(), "{}", enc);
+            }
+            assert!(base64_decode("a$b").is_err());
+            assert_eq!(base64_decode("aGVs\nbG8=").unwrap(), b"hello".to_vec());
+        }
+
+        #[test]
+        fn version_compare_for_update() {
+            assert!(version_tuple("v2.0.0") > version_tuple("1.9.9"));
+            assert!(version_tuple("2.0.0-beta") > version_tuple("1.9.9"));
+            assert_eq!(version_tuple("0.2.8"), (0, 2, 8));
+            assert_eq!(version_tuple("bad"), (0, 0, 0));
+            assert!(version_tuple("2.0") > version_tuple("1.99.99"));
+        }
+
+        // FR-TOOL-001/004：工具调用消息转换（OpenAI / Anthropic / Gemini）
+        #[test]
+        fn tool_call_payloads_per_protocol() {
+            let calls = vec![ToolCall { id: "c1".into(), name: "read_clipboard".into(), args: r#"{"max_chars":10}"#.into() }];
+            let o = tool_calls_payload("openai", &calls);
+            assert_eq!(o[0]["function"]["name"], "read_clipboard");
+            assert_eq!(o[0]["id"], "c1");
+            let a = tool_calls_payload("anthropic", &calls);
+            assert_eq!(a[0]["type"], "tool_use");
+            assert_eq!(a[0]["input"]["max_chars"], 10);
+            let g = tool_calls_payload("gemini", &calls);
+            assert_eq!(g[0]["functionCall"]["name"], "read_clipboard");
+
+            let tool_msg = ChatMsg {
+                role: "tool".into(),
+                content: r#"{"ok":true}"#.into(),
+                tool_calls: None,
+                tool_call_id: Some("c1".into()),
+                name: Some("read_clipboard".into()),
+            };
+            let ab = anthropic_block(&tool_msg);
+            assert_eq!(ab[0]["type"], "tool_result");
+            assert_eq!(ab[0]["tool_use_id"], "c1");
+            let gp = gemini_parts(&tool_msg);
+            assert_eq!(gp[0]["functionResponse"]["name"], "read_clipboard");
+            // OpenAI 协议下 tool 消息必须带 tool_call_id
+            let om = openai_messages(std::slice::from_ref(&tool_msg));
+            assert_eq!(om[0]["role"], "tool");
+            assert_eq!(om[0]["tool_call_id"], "c1");
+        }
+
+
+        // 端到端：真实生成的皮肤包样例（assets/skin-packs）必须能被解析
+        #[test]
+        fn repo_sample_skin_pack_parses() {
+            let path = std::path::Path::new("../assets/skin-packs/round-cat.deskpet-skin.zip");
+            if !path.exists() {
+                return; // 样例未随仓库分发时跳过
+            }
+            let raw = std::fs::read(path).unwrap();
+            let pack = read_skin_zip(&raw).unwrap();
+            assert_eq!(pack["name"], "圆头小猫");
+            for st in SKIN_STATES {
+                assert!(
+                    pack["states"][st].as_str().map(|f| !f.is_empty()).unwrap_or(false),
+                    "状态 {} 缺失",
+                    st
+                );
+            }
+            assert_eq!(pack["files"].as_object().unwrap().len(), 8);
+        }
+
+        #[test]
+        fn tool_acc_merges_openai_stream_deltas() {
+            let mut acc = ToolAcc::default();
+            acc.push_openai(&json!([{"index":0,"id":"call_1","function":{"name":"get_","arguments":"{\"ci"}}]));
+            acc.push_openai(&json!([{"index":0,"function":{"name":"weather","arguments":"ty\":\"杭州\"}"}}]));
+            let calls = acc.into_calls();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].name, "get_weather");
+            assert_eq!(tool_call_args(&calls[0])["city"], "杭州");
         }
 }

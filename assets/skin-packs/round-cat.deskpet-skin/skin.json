@@ -1,0 +1,15 @@
+{
+  "name": "圆头小猫",
+  "version": "1.0.0",
+  "states": {
+    "idle": "idle.png",
+    "drag": "drag.png",
+    "click": "click.png",
+    "talk": "talk.png",
+    "sleep": "sleep.png",
+    "work": "work.png",
+    "happy": "happy.png",
+    "error": "error.png"
+  },
+  "sound": {}
+}

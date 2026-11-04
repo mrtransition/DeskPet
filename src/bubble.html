@@ -44,6 +44,11 @@ body { display: flex; flex-direction: column; }
 .b-input textarea { flex: 1; resize: none; border: 1px solid var(--line-dk); border-radius: var(--r-lg); padding: 7px 10px; font-size: var(--fs); line-height: 1.5; min-height: 34px; max-height: 86px; background: rgba(255,255,255,.9); }
 .b-send { width: 34px; height: 34px; flex: none; border-radius: 50%; padding: 0; font-size: 14px; display: flex; align-items: center; justify-content: center; border: none; }
 .b-send.stop { background: #fff; border: 1px solid #F0C7C7; color: var(--err); }
+.msg.tool { font-size: var(--fs-xs); color: var(--t2); }
+.msg.tool.ok { border-left: 3px solid var(--ok, #4CAF7D); }
+.msg.tool.warn { border-left: 3px solid #E8A33D; }
+.msg.tool .tool-desc { margin-top: 3px; color: var(--t2); }
+.msg.tool .tool-args { margin-top: 4px; font-family: monospace; font-size: 10px; color: var(--t3); word-break: break-all; max-height: 60px; overflow: auto; }
 .b-hint { padding: 0 10px 8px; font-size: 10px; color: var(--t3); display: flex; justify-content: space-between; flex: none; }
 </style>
 </head>
@@ -61,16 +66,17 @@ body { display: flex; flex-direction: column; }
     <button class="ib" id="bClose" title="关闭 (Esc)">✕</button>
   </div>
   <div class="b-msgs" id="bMsgs"></div>
-  <div class="b-think" id="bThink"><span class="tdots"><i></i><i></i><i></i></span><span id="bThinkText">思考中…</span></div>
+  <div class="b-think" id="bThink"><span class="tdots"><i></i><i></i><i></i></span><span id="bThinkText" data-i18n="bubble.thinking">思考中…</span></div>
   <div class="b-quick" id="bQuick"></div>
   <div class="b-input">
-    <textarea id="bInput" rows="1" placeholder="说点什么…（记住：… / N 分钟后提醒我…）"></textarea>
-    <button class="b-send primary" id="bSend" title="发送">➤</button>
+    <textarea id="bInput" rows="1" placeholder="说点什么…（记住：… / N 分钟后提醒我…）" data-i18n-ph="bubble.placeholder"></textarea>
+    <button class="b-send primary" id="bSend" title="发送" data-i18n-title="bubble.send">➤</button>
   </div>
-  <div class="b-hint"><span id="bHintL">Enter 发送 · Shift+Enter 换行 · Esc 关闭</span><span id="bHintR"></span></div>
+  <div class="b-hint"><span id="bHintL" data-i18n="bubble.hint">Enter 发送 · Shift+Enter 换行 · Esc 关闭</span><span id="bHintR"></span></div>
 </div>
 
 <script src="shared.js"></script>
+<script src="i18n.js"></script>
 <script>
 'use strict';
 const card = $id('card');
@@ -117,13 +123,18 @@ function makeMsgEl(m) {
   } else if (m.role === 'assistant') {
     d = el('div', 'msg ai');
     d.innerHTML = '<div class="md">' + md(m.content) + '</div>';
-    const cp = el('button', 'm-copy', '复制');
+    const cp = el('button', 'm-copy', t('common.copy'));
     cp.onclick = () => copyText(m.content);
     d.appendChild(cp);
+    // FR-VOI-001：逐条朗读（TTS），与自动朗读共用系统语音设置
+    const sp = el('button', 'm-copy m-speak', '🔊');
+    sp.title = t('bubble.speak');
+    sp.onclick = () => speakText(m.content);
+    d.appendChild(sp);
   } else if (m.role === 'error') {
     d = el('div', 'msg err');
     d.innerHTML = '<b>⚠ ' + esc(m.title || '请求失败') + '</b>' + (m.content ? '<div style="margin-top:3px">' + esc(m.content) + '</div>' : '') +
-      '<div class="m-act"><button data-act="retry">重试</button><button data-act="switch">切换模型</button><button data-act="settings">打开设置</button></div>';
+      '<div class="m-act"><button data-act="retry">' + t('bubble.retry') + '</button><button data-act="switch">' + t('bubble.switchModel') + '</button><button data-act="settings">' + t('bubble.openSettings') + '</button></div>';
   } else {
     d = el('div', 'msg sys' + (m.warn ? ' warn' : ''), esc(m.content));
     if (m.reminder) d.dataset.reminder = '1';
@@ -164,10 +175,24 @@ bMsgs.addEventListener('click', e => {
   else if (btn.dataset.act === 'switch') { $id('bSwitch').click(); }
   else if (btn.dataset.act === 'settings') invoke('open_settings_cmd');
 });
+/* 临时卡片（工具执行中 / 授权询问 / 系统提示）不写入会话历史。
+   授权期间主进程会弹出气泡并触发一次重渲染，若与持久消息同容器重建，卡片会被抹掉，
+   用户永远看不到授权入口、只能等到超时——因此单列容器，重渲染时不受影响。 */
+function tempHost() {
+  let h = $id('bTemp');
+  if (!h) {
+    h = el('div');
+    h.id = 'bTemp';
+    h.style.display = 'contents';
+    bMsgs.appendChild(h);
+  }
+  return h;
+}
 function renderSessionMsgs() {
-  bMsgs.innerHTML = '';
+  [...bMsgs.children].forEach(n => { if (n.id !== 'bTemp') n.remove(); });
   const s = curSession();
-  if (s) s.msgs.forEach(m => bMsgs.appendChild(makeMsgEl(m)));
+  if (s) s.msgs.forEach(m => { if (m && m.role) bMsgs.insertBefore(makeMsgEl(m), $id('bTemp')); });
+  if ($id('bTemp')) bMsgs.appendChild($id('bTemp'));
   scrollMsgs(true);
   fitHeight();
 }
@@ -180,6 +205,45 @@ function pushSys(content, opts) {
   if (s) { s.msgs.push(m); s.updatedAt = Date.now(); saveState(); }
   appendMsg(m);
 }
+
+/* ---- FR-VOI-001：TTS 朗读 ----
+   使用 WebView2 内置的 SpeechSynthesis（系统语音包），不产生任何网络请求；
+   语音输入（ASR）不在本轮范围，设置页会明确标注。 */
+function ttsReady() { return typeof window !== 'undefined' && 'speechSynthesis' in window; }
+function pickVoice() {
+  if (!ttsReady()) return null;
+  const voices = speechSynthesis.getVoices() || [];
+  if (!voices.length) return null;
+  const want = (S && S.settings && S.settings.voiceURI) || '';
+  return voices.find(v => v.voiceURI === want) ||
+    voices.find(v => /^zh/i.test(v.lang)) ||
+    voices[0];
+}
+function plainForSpeech(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, '（代码块）')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/[#>*_~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function speakText(text) {
+  if (!ttsReady()) { toast(t('bubble.ttsUnsupported'), 'warn'); return; }
+  const plain = plainForSpeech(text);
+  if (!plain) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(plain.slice(0, 800));
+    const v = pickVoice();
+    if (v) u.voice = v;
+    u.rate = Math.max(0.5, Math.min(2, parseFloat(S.settings.voiceRate) || 1));
+    u.lang = v ? v.lang : (S.settings.lang === 'en' ? 'en-US' : 'zh-CN');
+    speechSynthesis.speak(u);
+  } catch (e) { toast(t('bubble.ttsFailed') + e, 'err'); }
+}
+function stopSpeak() { try { if (ttsReady()) speechSynthesis.cancel(); } catch (e) { } }
 
 /* ---- 头部 / 快捷动作 ---- */
 function renderHead() {
@@ -232,10 +296,11 @@ $id('bSwitch').addEventListener('click', e => {
 });
 $id('bNew').addEventListener('click', () => { newSession(); toast('已开启新会话', 'ok'); });
 $id('bSettings').addEventListener('click', () => invoke('open_settings_cmd'));
-$id('bClose').addEventListener('click', () => invoke('hide_bubble_cmd'));
+$id('bClose').addEventListener('click', () => { stopSpeak(); invoke('hide_bubble_cmd'); });
 
 /* ---- 会话 ---- */
 function newSession() {
+  stopSpeak();
   const pers = activePers();
   // 新会话优先使用人格绑定的供应商（FR-PSN-002/FR-MDL-006），其次才是默认供应商
   const prov = (pers && getProv(pers.providerId)) || activeProv();
@@ -259,8 +324,12 @@ function buildContext(s) {
   const lastUser = [...s.msgs].reverse().find(m => m.role === 'user');
   const mems = pickMemories(lastUser ? lastUser.content : '');
   if (mems.length) sys += '\n\n[用户长期记忆]\n' + mems.map(m => '- ' + m.content).join('\n');
+  // FR-MEM-003：模型生成的较早对话摘要作为上下文前缀，替代被压缩掉的消息
+  if (s.summary) sys += '\n\n[较早对话摘要]\n' + s.summary;
   const params = (activeProv() && activeProv().params) || {};
-  const hist = s.msgs.filter(m => m.role === 'user' || m.role === 'assistant');
+  // summaryCount 是 s.msgs 的原始下标，只统计摘要点之后的消息，避免重复注入
+  const rawStart = Math.min(Math.max(0, s.summaryCount || 0), s.msgs.length);
+  const hist = s.msgs.slice(rawStart).filter(m => m.role === 'user' || m.role === 'assistant');
   const rounds = params.ctxRounds !== undefined ? params.ctxRounds : 10;
   let cutMsgs = rounds > 0 ? hist.slice(-rounds * 2) : hist.slice();
   const roundTrimmed = cutMsgs.length < hist.length;
@@ -285,8 +354,53 @@ function buildContext(s) {
   };
 }
 
+/* ---- FR-MEM-003：超长会话摘要压缩 ----
+   触发条件：自上次摘要点之后的消息数超过 summaryThreshold 轮。
+   保留最近 ctxRounds 轮原始消息，其余交给主进程调用模型压缩；
+   摘要写入会话后，buildContext 只发送摘要 + 最近若干轮，旧消息不再重复占用上下文。 */
+let summarizing = false;
+async function ensureSummary(s, prov) {
+  if (summarizing || !s || !prov || !s.msgs.length) return false;
+  const th = Math.max(4, Math.min(100, parseInt(S.settings.summaryThreshold, 10) || 24));
+  const rawStart = Math.min(Math.max(0, s.summaryCount || 0), s.msgs.length);
+  const pending = s.msgs.slice(rawStart).filter(m => m.role === 'user' || m.role === 'assistant');
+  if (pending.length <= th * 2) return false;
+  const params = prov.params || {};
+  const keepRounds = Math.max(2, Math.min(20, parseInt(params.ctxRounds, 10) || 10));
+  // cut 对齐到用户消息边界，避免把一问一答拆到摘要两侧
+  let cut = s.msgs.length - keepRounds * 2;
+  if (cut <= rawStart) return false;
+  while (cut > rawStart && s.msgs[cut] && s.msgs[cut].role !== 'user') cut--;
+  if (cut <= rawStart) return false;
+  const older = s.msgs.slice(rawStart, cut).filter(m => m.role === 'user' || m.role === 'assistant');
+  if (older.length < 4) return false;
+  const payload = [];
+  if (s.summary) payload.push({ role: 'system', content: s.summary });
+  older.forEach(m => payload.push({ role: m.role, content: m.content }));
+  const en = S.settings.lang === 'en';
+  summarizing = true;
+  pushSys(en ? 'Compressing earlier messages…' : '正在把较早的对话压缩成摘要…', { ephemeral: true });
+  try {
+    const res = await invoke('chat_summarize', { providerId: prov.id, messages: payload });
+    const text = res && res.summary ? String(res.summary).trim() : '';
+    if (!text) return false;
+    s.summary = text;
+    s.summaryCount = cut;
+    s.updatedAt = Date.now();
+    saveState();
+    pushSys((en ? 'Earlier messages summarized (' : '已将较早对话压缩为摘要（') + older.length + (en ? ' messages).' : ' 条消息）。'), { ephemeral: true });
+    return true;
+  } catch (e) {
+    pushSys((en ? 'Summary failed, falling back to truncation: ' : '摘要生成失败，已回退到截断：') + e, { warn: true, ephemeral: true });
+    return false;
+  } finally {
+    summarizing = false;
+  }
+}
+
 /* ---- 发送与流式 ---- */
 async function send(text) {
+  stopSpeak();
   let s = curSession();
   if (!s) s = newSession();
   s.msgs.push({ role: 'user', content: text, ts: Date.now() });
@@ -313,9 +427,10 @@ function sideEffects(text) {
     tEmitTo('pet', 'reminder-fx', { kind: 'happy' });
   }
 }
+let preparing = false;
 async function generate() {
   const s = curSession();
-  if (!s || streaming) return;
+  if (!s || streaming || preparing) return;
   if (Date.now() < cooldownUntil) {
     toast('请求过于频繁，请 ' + Math.ceil((cooldownUntil - Date.now()) / 1000) + ' 秒后再试', 'warn');
     return;
@@ -329,6 +444,10 @@ async function generate() {
       pushSys('当前为演示模式（内置回复，非真实模型）。已检测到配置「' + real.name + '」，点上方 ⚡ 可切换，或在设置 → 模型中将其设为默认', { warn: true, ephemeral: true });
     }
   }
+  // FR-MEM-003：先压缩较早对话，再按摘要 + 最近轮次构建上下文
+  preparing = true;
+  try { await ensureSummary(s, prov); } catch (e) { }
+  finally { preparing = false; }
   const { messages, roundTrimmed, tokenTrimmed, rounds, tokens, maxTokens } = buildContext(s);
   if (tokenTrimmed) pushSys('上下文已按 ' + maxTokens + ' tokens 预算裁剪（当前约 ' + tokens + ' tokens）', { warn: true, ephemeral: true });
   else if (roundTrimmed) pushSys('上下文已按最近 ' + rounds + ' 轮截断', { warn: true, ephemeral: true });
@@ -336,10 +455,10 @@ async function generate() {
   liveBuf = '';
   liveEl = null;
   const sendBtn = $id('bSend');
-  sendBtn.textContent = '■'; sendBtn.title = '停止生成'; sendBtn.classList.add('stop');
+  sendBtn.textContent = '■'; sendBtn.title = t('bubble.stop'); sendBtn.classList.add('stop');
   tEmitTo('pet', 'chat-state', { state: 'work' });
   const think = $id('bThink');
-  $id('bThinkText').textContent = '思考中 · ' + (prov.type === 'mock' ? '演示模式' : prov.model + ' @ ' + prov.name);
+  $id('bThinkText').textContent = (S.settings.lang==='en'?'Thinking · ':'思考中 · ') + (prov.type === 'mock' ? '演示模式' : prov.model + ' @ ' + prov.name);
   think.classList.add('show');
   scrollMsgs(true); fitHeight();
   S.stats.requests = (S.stats.requests || 0) + 1;
@@ -392,7 +511,7 @@ function startCooldown(secs) {
   scrollMsgs(true);
   fitHeight();
 }
-function finishStream(ok, errInfo, rawErr) {
+function finishStream(ok, errInfo, rawErr, opts) {
   const think = $id('bThink');
   think.classList.remove('show');
   const s = curSession();
@@ -417,13 +536,15 @@ function finishStream(ok, errInfo, rawErr) {
     tEmitTo('pet', 'chat-state', { state: 'error' });
   } else {
     tEmitTo('pet', 'chat-state', { state: 'idle' });
+    // FR-VOI-001：自动朗读本次完整回复（用户手动停止时不朗读）
+    if (liveBuf && S.settings.voice && !(opts && opts.noSpeak)) speakText(liveBuf);
   }
   if (s) { s.updatedAt = Date.now(); }
   saveState();
   streaming = false;
   liveBuf = '';
   const sendBtn = $id('bSend');
-  sendBtn.textContent = '➤'; sendBtn.title = '发送'; sendBtn.classList.remove('stop');
+  sendBtn.textContent = '➤'; sendBtn.title = t('bubble.send'); sendBtn.classList.remove('stop');
   scrollMsgs(true); fitHeight();
 }
 function errTitle(info) {
@@ -438,7 +559,7 @@ function errTitle(info) {
 }
 tListen('chat-delta', ev => { if (ev.payload && typeof ev.payload.text === 'string') onDelta(ev.payload.text); });
 tListen('chat-done', () => finishStream(true));
-tListen('chat-stopped', () => { finishStream(true); pushSys('已停止生成', { ephemeral: true }); });
+tListen('chat-stopped', () => { finishStream(true, null, null, { noSpeak: true }); pushSys('已停止生成', { ephemeral: true }); });
 tListen('chat-error', ev => finishStream(false, ev.payload, null));
 tListen('chat-notice', ev => {
   const msg = ev.payload && ev.payload.message;
@@ -447,6 +568,55 @@ tListen('chat-notice', ev => {
 });
 tListen('bubble-anchor', ev => {
   card.classList.toggle('below', !!(ev.payload && ev.payload.below));
+});
+
+/* ---- 工具调用（FR-TOOL-001/004）----
+   tool-auth-request：首次调用前的授权卡片；chat-tool：执行结果；tool-pending：执行中。
+   工具卡片是临时消息，不写入会话历史（上下文由主进程维护）。 */
+function toolCard(html, cls) {
+  const d = el('div', 'msg tool' + (cls ? ' ' + cls : ''));
+  d.innerHTML = html;
+  tempHost().appendChild(d);
+  scrollMsgs(true); fitHeight();
+  return d;
+}
+tListen('tool-pending', ev => {
+  const p = ev.payload || {};
+  const d = toolCard('<span class="tdots"><i></i><i></i><i></i></span>正在调用工具：' + esc(p.label || p.tool || ''));
+  d.dataset.tool = p.tool || '';
+  d.id = 'toolPend';
+});
+tListen('tool-auth-request', ev => {
+  const p = ev.payload || {};
+  const pend = $id('toolPend');
+  if (pend) pend.remove();
+  const d = toolCard(
+    '<b>🔐 允许我使用「' + esc(p.label || p.tool) + '」吗？</b>' +
+    '<div class="tool-desc">' + esc(p.description || '') +
+    (p.egress === 'outbound' ? ' <span class="tool-net">会出站</span>' : ' <span class="tool-local">仅本地</span>') + '</div>' +
+    (p.args ? '<div class="tool-args">' + esc(p.args) + '</div>' : '') +
+    '<div class="m-act"><button data-ta="allow">本次允许</button><button data-ta="always">始终允许</button>' +
+    '<button data-ta="deny">拒绝</button><button data-ta="never">始终拒绝</button></div>',
+    'warn'
+  );
+  d.querySelectorAll('[data-ta]').forEach(btn => {
+    btn.onclick = () => {
+      const k = btn.dataset.ta;
+      invoke('tool_auth_reply', { id: p.id, allow: k === 'allow' || k === 'always', remember: k === 'always' || k === 'never' })
+        .catch(e => toast('授权失败：' + e, 'err'));
+      const again = toolCard('<span class="tdots"><i></i><i></i><i></i></span>正在执行 ' + esc(p.label || ''), '');
+      again.id = 'toolPend';
+      d.remove();
+      fitHeight();
+    };
+  });
+  bMsgs.scrollTop = bMsgs.scrollHeight;
+});
+tListen('chat-tool', ev => {
+  const p = ev.payload || {};
+  const pend = $id('toolPend');
+  if (pend) pend.remove();
+  toolCard((p.ok ? '🛠 ' : '⚠️ ') + esc(p.label || p.tool || '工具') + '：' + esc(p.summary || ''), p.ok ? 'ok' : 'warn');
 });
 
 /* ---- 输入 ---- */
@@ -538,9 +708,32 @@ async function onShown(reason, auto) {
     (notices || []).forEach(renderNotice);
   } catch (e) { }
 }
+/* FR-REM-002：提醒播报音。皮肤包提供提醒音效时优先使用，否则用内置合成音；
+   总开关为「宠物与交互 → 提醒声音」。 */
+let audioCtx = null;
+function playReminderSound() {
+  if (!S || (S.settings.reminderSound === false)) return;
+  try {
+    const pack = S.settings.skinPack;
+    const src = pack && pack.sounds ? (pack.sounds.reminder || Object.values(pack.sounds)[0]) : '';
+    if (src) { const a = new Audio(src); a.volume = 0.7; a.play().catch(() => { }); return; }
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = audioCtx.currentTime;
+    [880, 1174].forEach((f, i) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + i * 0.18);
+      g.gain.exponentialRampToValueAtTime(0.18, t0 + i * 0.18 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.18 + 0.16);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t0 + i * 0.18); o.stop(t0 + i * 0.18 + 0.18);
+    });
+  } catch (e) { /* 无声环境不影响提醒本身 */ }
+}
 function renderNotice(n) {
   if (n.kind === 'reminder' && n.reminder) {
     const r = n.reminder;
+    playReminderSound();
     pushSys('⏰ 叮！提醒：' + r.content + '（' + remRuleText(r) + '）', {
       ephemeral: true,
       reminder: true,
@@ -562,15 +755,32 @@ tListen('new-session-req', async () => {
   newSession();
   bInput.focus();
 });
+/* FR-REM-007：用户在宠物旁点击剪贴板提示后，读取一次剪贴板并作为待处理内容填入输入框。
+   内容只在本地进入输入框，是否发送由用户决定。 */
+tListen('clipboard-process-req', async () => {
+  try {
+    const r = await invoke('clipboard_read');
+    const text = (r && r.text) || '';
+    if (!text) { toast('剪贴板里没有文本', 'warn'); return; }
+    bInput.value = '帮我处理下面这段内容（可以翻译、总结或纠错，视内容而定）：\n\n' + text;
+    autoGrow();
+    bInput.focus();
+  } catch (e) { toast('读取剪贴板失败：' + e, 'err'); }
+});
 tListen('confirm-reset', async () => {
   if (confirm('确定重置全部数据吗？\n将清除：全部会话与消息、长期记忆、提醒、供应商配置（含密钥）、人格、宠物位置与所有设置。\n该操作不可撤销。')) {
     invoke('reset_data');
     toast('已重置全部数据', 'ok');
   }
 });
+tListen('lang-changed', async ev => {
+  await loadState();
+  applyI18n();
+});
 tListen('state-changed', async ev => {
   if (ev.payload && ev.payload.origin === 'bubble') return;
   await loadState();
+  applyI18n();
   if (!streaming) { renderHead(); }
 });
 tListen('state-reset', async () => {
@@ -579,21 +789,23 @@ tListen('state-reset', async () => {
   renderHead();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && !streaming) invoke('hide_bubble_cmd');
+  if (e.key === 'Escape' && !streaming) { stopSpeak(); invoke('hide_bubble_cmd'); }
 });
 curWin.onBlur(() => {
-  if (!streaming) invoke('hide_bubble_cmd');
+  if (!streaming) { stopSpeak(); invoke('hide_bubble_cmd'); }
   else touchBubbleAct();
 });
 setInterval(() => {
   if (!S) return;
   const idle = (S.settings.bubbleIdleClose || 60) * 1000;
-  if (Date.now() - lastBubbleAct > idle && !streaming) invoke('hide_bubble_cmd');
+  if (Date.now() - lastBubbleAct > idle && !streaming) { stopSpeak(); invoke('hide_bubble_cmd'); }
 }, 1000);
 
 /* ---- 启动（窗口隐藏时保持轻量，显示时按 bubble-shown 渲染） ---- */
 (async function init() {
   await loadState();
+  applyI18n();
+
   renderHead();
 })();
 </script>

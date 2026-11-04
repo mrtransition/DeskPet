@@ -4,11 +4,11 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-0.2.8-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.1.0-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
-[![Size](https://img.shields.io/badge/安装包-13.4_MB-93A3B5?style=flat-square)](#快速开始)
+[![Size](https://img.shields.io/badge/安装包-14.0_MB-93A3B5?style=flat-square)](#快速开始)
 
 透明置顶 · 托盘常驻 · 多模型接入 · 密钥零泄露 · 数据全程本地
 
@@ -30,19 +30,25 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | 💬 **微型气泡对话** | 智能上下翻转 + 尾巴箭头定位；左右拖拽调宽（240–480 px）；流式逐 token 渲染、Markdown / 代码块高亮 / 一键复制；Esc / 外点 / 失焦 / 闲置自动关闭，关闭后恢复原前台窗口 |
 | 🤖 **多模型接入** | 12+ 供应商模板：OpenAI、DeepSeek、Claude、Gemini、Kimi、智谱 GLM、通义千问、Azure、Ollama、LM Studio、vLLM、自定义兼容端点；OpenAI / Anthropic / Gemini 三协议原生适配，主进程直连（无 CORS 限制） |
 | 🔐 **密钥零泄露** | API Key 存 **Windows 凭据管理器**，不进入数据文件、日志与导出内容；本地服务（Ollama 等）免 Key 直连 |
-| 🧠 **长期记忆** | 对它说「记住：我喜欢蓝色」即写入记忆库，之后每轮对话按相关度自动注入（≤5 条） |
+| 🧠 **长期记忆** | 对它说「记住：我喜欢蓝色」即写入记忆库，之后每轮对话按相关度自动注入（≤5 条）；超长会话自动生成摘要压缩上下文，失败时回退截断 |
 | ⏰ **自然语言提醒** | 「25 分钟后提醒我喝水」「每天 8:30 提醒我站会」「每周一 9:00」「每隔 2 小时」→ 主进程调度器准点触发，支持稍后 5 分钟与免打扰排队补发 |
 | 😼 **人格与皮肤** | 3 套内置人格（贴心小助手 / 毒舌吐槽役 / 专注工作搭子）+ 3 套皮肤联动切换；支持 GIF / APNG / 动态 WebP 自定义动画形象与人格导入导出 |
 | 🎭 **八态动画** | idle / drag / click / talk / sleep / work / happy / error 全矢量状态机，50%–200% 无级缩放 |
 | 🖥 **系统集成** | 托盘菜单（左键唤起气泡）、全局快捷键、开机自启、会话检索与 Markdown 导出 |
-| 🪶 **轻量** | 安装包 13.4 MB · 运行内存约 31 MB · 前端零构建（无 npm 依赖） |
+| 🛠 **工具调用** | 模型可调用本地工具：创建提醒、读剪贴板、打开白名单链接 / 应用、查天气、联网搜索。首次调用弹卡片授权，可逐项设「每次询问 / 始终允许 / 始终拒绝」，执行结果回传模型续答（最多 4 轮） |
+| 🎨 **皮肤包** | `.deskpet-skin.zip`：`skin.json` 状态机映射 + 八态图集 + 可选提示音，在设置里一键导入 |
+| 🩺 **健康提醒** | 久坐 / 喝水定时轻提示，与免打扰时段、主动搭话互不叠加；剪贴板感知点一下才处理 |
+| 🔊 **语音朗读** | AI 回复可自动朗读或逐条重读，支持系统语音选择与 0.5–2 倍语速；本地 TTS，零网络请求 |
+| 🌏 **中英双语** | 设置、气泡与宠物菜单即时切换中文 / English |
+| 📈 **用量与费用** | 主进程按轮累计输入 / 输出 token，按自填单价估算费用；更新检查只提示、安装包由用户手动运行 |
+| 🪶 **轻量** | 安装包约 14 MB · 前端零构建（无 npm 依赖）；工作 / 睡眠状态可开启 30fps 低帧率模式 |
 
 ## 🚀 快速开始
 
 无需构建，下载即用：
 
 1. 打开本仓库 [`dist/`](dist) 目录，下载两个文件：
-   - `DeskPet.exe`（13.4 MB，主程序）
+   - `DeskPet.exe`（14.0 MB，主程序）
    - `WebView2Loader.dll`（0.15 MB，引导库）
 2. 将两个文件放入**同一文件夹**，双击 `DeskPet.exe`
 
@@ -133,16 +139,43 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 
 ## 🗺️ Roadmap
 
-- [ ] 完整动画皮肤包（图集 / 状态机 / 音效；已支持单文件 GIF / APNG / 动态 WebP）
-- [ ] SQLite 存储与会话全文检索增强
-- [ ] 自动更新（GitHub Releases 通道）
-- [ ] 多语言（i18n）
+- [x] 完整动画皮肤包（`.deskpet-skin.zip`：图集 / 状态机 / 音效）
+- [ ] SQLite 存储与会话全文检索增强（当前为 JSON 原子写盘 + 备份回退）
+- [x] 自动更新（HTTPS 更新清单 + 手动下载安装，不做静默安装）
+- [x] 多语言（中 / 英界面）
+- [x] 语音朗读（TTS，系统语音包，零联网）
+- [ ] 语音输入（ASR，需本地运行时）
+- [ ] Live2D / Spine / Lottie 运行时
 - [ ] macOS / Linux 支持（依赖透明窗口与托盘的跨平台适配）
-- [ ] 久坐提醒、剪贴板感知等 P2 特性（见 SRS）
+- [x] 久坐提醒、剪贴板感知、免打扰时段等 P2 特性（见 SRS）
 
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.1.0</b> — 会话摘要压缩、TTS 朗读、低帧率模式与结构化日志</summary>
+
+- **会话摘要（FR-MEM-003）**：会话超过可配置阈值后，气泡在发送前调用当前模型把较早消息压缩成摘要（三协议 + Ollama 通用），摘要写入会话并作为上下文前缀；最近若干轮仍以原文发送。模型失败 / 空摘要自动回退到轮数 / token 截断，不阻断对话；导出 Markdown 会附带摘要。
+- **TTS 朗读（FR-VOI-001 部分）**：设置页新增语音开关、系统语音选择与语速调节；AI 回复可自动朗读，也可逐条点击 🔊 重读。使用 WebView2 内置 SpeechSynthesis 与系统语音包，零网络请求；ASR 仍待本地运行时。
+- **低帧率模式（FR-PET-010）**：可配置开关；工作 / 睡眠等非交互状态将连续动画量化为约 30fps，降低 CPU 占用，交互反馈不受影响。
+- **结构化日志（NFR-MNT-001）**：日志改为 JSON Lines（ts / level / event / msg），统一 info / warn / error 级别，并在写入前遮盖 `sk-`、Bearer、`api_key` 等密钥形态；时间戳改为 ISO 8601，旧版纯文本日志在启动时自动归档。
+- **升级兼容**：旧 `data.json` 缺失的新设置项自动补默认值，不覆盖用户已有配置；扩展非设置窗口保存时的后端权威字段白名单，避免旧快照回滚摘要阈值、语音、健康提醒、工具授权等设置。
+- **测试**：新增摘要 mock、日志脱敏、旧数据升级补默认值、ISO 时间戳与旧日志归档回归用例；`cargo test` 31 项全绿。
+
+</details>
+
+<details>
+<summary><b>v2.0.0</b> — 按 SRS 补齐 v2 需求：工具调用闭环、皮肤包、健康提醒、更新与 i18n</summary>
+
+- **工具调用（FR-TOOL-001~004）**：主进程实现 4 轮工具循环——模型返回 `tool_calls` → 逐项授权卡片（每次询问 / 始终允许 / 始终拒绝，可随时撤销）→ 本地执行 → 结构化结果回传 → 续答；OpenAI、Anthropic（`tool_use` / `tool_result`）、Gemini（`functionCall` / `functionResponse`）三协议各自成体
+- **皮肤包（FR-SKN-002）**：`.deskpet-skin.zip` 导入，主进程解压校验（≤8 MB、条目 ≤200、单文件 ≤2 MB、防路径穿越），按状态机取帧，支持提醒提示音
+- **健康提醒（FR-REM-006/007）**：久坐 / 喝水计时、免打扰时段（支持跨零点）、剪贴板感知提示（点击后才读取）
+- **系统（FR-SYS-004~006）**：HTTPS 更新清单检查 + 手动下载安装包；token 用量与费用估算；中英双语界面
+- **修复**：主进程编译中断（剪贴板句柄类型、工具调用断链、`build_request` 参数不匹配）；自定义形象透明通道的方形阴影
+- **测试**：25 项 `cargo test` 全绿；真实应用内端到端验证工具回环（含请求体断言）
+
+</details>
+
+<details>
 <summary><b>v0.2.8</b> — 修复演示模式崩溃、提醒弹窗不关闭与 Ollama 本地模型 OOM</summary>
 
 - **演示模式崩溃**：逐字流式此前按**字节**切片，中文 / emoji 落在 UTF-8 字符边界中间会 panic，而 release 构建 `panic="abort"`，进程直接静默消失。现改为按字符切块，并新增回归测试覆盖长中文与 emoji。

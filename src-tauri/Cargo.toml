@@ -1,6 +1,6 @@
 [package]
 name = "deskpet"
-version = "0.2.8"
+version = "2.1.0"
 description = "DeskPet - 桌面 AI 宠物：透明置顶小猫，点击即聊任意大模型（Tauri v2）"
 license = "MIT"
 edition = "2021"
@@ -14,15 +14,18 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["stream", "json"] }
-tokio = { version = "1", features = ["time", "macros", "rt"] }
+reqwest = { version = "0.12", features = ["stream", "json", "socks"] }
+tokio = { version = "1", features = ["time", "macros", "rt", "sync"] }
 futures-util = "0.3"
 keyring = "3"
 windows-sys = { version = "0.59", features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
 ] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [profile.release]
 strip = true
