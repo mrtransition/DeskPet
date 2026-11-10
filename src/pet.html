@@ -209,7 +209,8 @@ function updateTransform() {
   // 普通：宠物底边贴窗口底边；迷你气泡：底部留 54*scale；右键菜单：贴底以腾出上方空间
   let offY;
   if (!grown) offY = curH / 2 - 164;
-  else if (menuOpen) offY = curH - 164 - 56 * petSc;
+  // 菜单态：宠物竖直居中偏下（菜单由此居中展开），避免贴到底边后菜单也跟着下坠
+  else if (menuOpen) offY = curH / 2 - 164;
   else offY = curH - 164 - 110 * petSc;
   // 右键菜单态窗口变宽，宠物固定贴在左侧，右侧留给主菜单与子菜单
   const pivotX = menuOpen ? 130 : curW / 2;
@@ -422,9 +423,12 @@ async function onPetUp() {
   }
 }
 /* 皮肤二级菜单：内置皮肤始终可切换；导入皮肤额外提供删除 */
-const SKIN_MENU_MAX_H = 320; // 菜单可用高度上限，超出由滚动容器接管
-const MENU_WIN_W = 500;      // 主菜单 + 子菜单并排所需的窗口宽度
-function growHForMenu() { return SKIN_MENU_MAX_H + 120; }
+/* 右键菜单态窗口尺寸：宠物(左) + 主菜单 + 间距 + 子菜单 并排放得下，
+   否则子菜单只能翻折回主菜单身上，出现遮挡 */
+const SKIN_MENU_MAX_H = 360;      // 菜单内容最大高度，超出改为滚动
+const MENU_GAP = 8;               // 主菜单与子菜单的水平间距
+const MENU_WIN_W = 700;           // 宠物右缘 ~200 + 主菜单 210 + 间距 8 + 子菜单 250 + 边距
+function growHForMenu() { return SKIN_MENU_MAX_H + 80; }
 // 宠物贴左侧时，头部右缘的屏幕坐标（菜单从这里向右展开）
 function petHeadX() { return 130 + 62 * petSc; }
 function skinTypeTag(item) {
@@ -481,9 +485,13 @@ pet.addEventListener('contextmenu', async e => {
     { icon: '⚙', label: t('pet.settings'), onClick: async () => { await shrink(); invoke('open_settings_cmd'); } },
     { icon: '🌙', label: t('pet.dnd'), check: S.settings.dnd, onClick: async () => { await shrink(); invoke('set_dnd', { on: !S.settings.dnd }); } },
     { icon: '📍', label: t('pet.resetPos'), onClick: async () => { await shrink(); invoke('reset_pet_pos'); } },
-  ], e.clientX + 20, e.clientY - 200, {
-    // 宠物固定在窗口左侧，菜单向右展开；限制在窗口内避免被 WebView 裁切
-    bounds: { left: Math.round(petHeadX() + 10), top: 6, right: curW - 6, bottom: curH - 6 },
+  ], 0, 0, {
+    // 主菜单紧贴宠物右侧、竖直居中对齐宠物，而不是跟随鼠标坐标，
+    // 这样菜单始终挨着角色，且为子菜单留出可用的右侧空间
+    anchor: { x: Math.round(petHeadX() + MENU_GAP), y: 'center' },
+    anchorRef: pet.getBoundingClientRect(),
+    bounds: { left: 4, top: 4, right: curW - 4, bottom: curH - 4 },
+    gap: MENU_GAP,
   });
 });
 document.addEventListener('mousedown', e => {

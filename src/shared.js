@@ -270,23 +270,33 @@ function hideMenu() {
 }
 function menuOutside(e) { if (!e.target.closest('.ctxmenu')) hideMenu(); }
 
-// 在 bounds 内放置菜单：优先右下，越界则向左/向上翻转；高度超出时交给滚动容器
-function menuPlace(box, scroll, x, y, bounds) {
+// 在 bounds 内放置菜单。
+// anchor.x 为左边缘；anchor.y 为 'center' 时相对 anchorRef 竖直居中，否则为顶端坐标。
+// 越界时先夹紧，夹不下再交给滚动容器（max-height）。
+function menuPlace(box, scroll, x, y, bounds, anchor, anchorRef) {
   const b = bounds || { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
   const pad = 6;
   const maxW = Math.max(120, b.right - b.left - pad * 2);
   const maxH = Math.max(80, b.bottom - b.top - pad * 2);
   box.style.maxWidth = maxW + 'px';
   if (scroll) scroll.style.maxHeight = maxH + 'px';
-  let w = box.offsetWidth;
-  let left = x + w > b.right - pad ? x - w : x;
+
+  const w = box.offsetWidth;
+  const h = box.offsetHeight;
+
+  // 横向：有 anchor 时用 anchor.x 作为左边缘，否则沿用鼠标坐标 x
+  let left = (anchor && typeof anchor.x === 'number') ? anchor.x : x;
   left = Math.max(b.left + pad, Math.min(left, b.right - pad - w));
-  let h = box.offsetHeight;
-  let top = y + h > b.bottom - pad ? b.bottom - pad - h : y;
+
+  let top = y;
+  if (anchor && anchor.y === 'center' && anchorRef) {
+    top = anchorRef.top + (anchorRef.height - h) / 2;
+  }
   top = Math.max(b.top + pad, Math.min(top, b.bottom - pad - h));
+
   box.style.left = left + 'px';
   box.style.top = top + 'px';
-  return { left, top, width: box.offsetWidth, height: box.offsetHeight };
+  return { left, top, width: w, height: h };
 }
 
 function showMenu(items, x, y, opts) {
@@ -319,7 +329,12 @@ function showMenu(items, x, y, opts) {
 
   root.appendChild(box);
   root.classList.add('show');
-  const placed = menuPlace(box, scroll, x, y, b);
+  const anchor = opts && opts.anchor;
+  const ref = opts && opts.anchorRef;   // 用于竖直居中（通常是宠物元素）
+  const placed = menuPlace(box, scroll, x, y, b, anchor, ref);
+  const gap = (opts && opts.gap) || 6;
+  // 主菜单右缘 → 子菜单左缘的落点，供子菜单定位复用
+  const subAnchorX = placed.left + placed.width + gap;
 
   // ---- 子菜单 ----
   let subBox = null;
@@ -350,15 +365,34 @@ function showMenu(items, x, y, opts) {
     subOwner = btn;
     btn.classList.add('open');
 
-    // 计算位置：默认贴父项右缘；右边界不够则翻到左侧；再不行则整块左移
+    // 定位：优先贴主菜单右缘展开；右侧空间确实不够时才翻到左侧，
+    // 两侧都不够时靠滚动压缩高度，绝不允许压在父菜单上
     const pb = parentBox.getBoundingClientRect();
     const rb = btn.getBoundingClientRect();
     const pad = 6;
     subBox.style.maxHeight = Math.max(80, b.bottom - b.top - pad * 2) + 'px';
     const sw = subBox.offsetWidth, sh = subBox.offsetHeight;
-    let left = pb.right - 2;
-    if (left + sw > b.right - pad) left = pb.left - sw + 2;
-    left = Math.max(b.left + pad, Math.min(left, b.right - pad - sw));
+
+    const roomRight = b.right - pad - (pb.right + gap);
+    const roomLeft = (pb.left - gap) - (b.left + pad);
+    // 子菜单刚插入时 offsetWidth 是未受约束的自然宽度（含最小宽度），用它判定空间；
+    // 放不下时优先翻到左侧，两侧都不够才收窄，绝不压在父菜单上
+    const needW = Math.ceil(sw);
+    let left;
+    if (roomRight >= needW) {
+      left = pb.right + gap;                             // 正常：右侧展开
+    } else if (roomLeft >= needW) {
+      left = pb.left - gap - needW;                      // 右侧不够：翻到左侧
+    } else if (roomRight >= roomLeft) {                   // 两侧都不够：选空间大的一侧并收窄
+      left = pb.right + gap;
+      subBox.style.maxWidth = Math.max(120, roomRight) + 'px';
+    } else {
+      left = Math.max(b.left + pad, pb.left - gap - needW);
+      subBox.style.maxWidth = Math.max(120, roomLeft) + 'px';
+    }
+    left = Math.max(b.left + pad, Math.min(left, b.right - pad - Math.min(sw, subBox.offsetWidth)));
+
+    // 竖直：与父项顶对齐，超出下边界则上移，但不越过上边界
     let top = rb.top - 4;
     if (top + sh > b.bottom - pad) top = b.bottom - pad - sh;
     top = Math.max(b.top + pad, Math.min(top, rb.top));
