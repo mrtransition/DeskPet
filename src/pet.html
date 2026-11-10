@@ -422,12 +422,10 @@ async function onPetUp() {
     try { await invoke('pet_clicked'); } catch (e) { }
   }
 }
-/* 皮肤二级菜单：内置皮肤始终可切换；导入皮肤额外提供删除 */
-/* 右键菜单态窗口尺寸：宠物(左) + 主菜单 + 间距 + 子菜单 并排放得下，
-   否则子菜单只能翻折回主菜单身上，出现遮挡 */
-const SKIN_MENU_MAX_H = 360;      // 菜单内容最大高度，超出改为滚动
-const MENU_GAP = 8;               // 主菜单与子菜单的水平间距
-const MENU_WIN_W = 700;           // 宠物右缘 ~200 + 主菜单 210 + 间距 8 + 子菜单 250 + 边距
+/* 右键菜单：单层菜单，皮肤与常用操作平铺；菜单项过多时整体滚动 */
+const SKIN_MENU_MAX_H = 360;      // 菜单可视高度上限，超出由滚动容器接管
+const MENU_GAP = 8;               // 宠物与菜单之间的间距
+const MENU_WIN_W = 260 + 240;      // 宠物 120 + 菜单 ~240，并排放下且不压住角色
 function growHForMenu() { return SKIN_MENU_MAX_H + 80; }
 // 宠物贴左侧时，头部右缘的屏幕坐标（菜单从这里向右展开）
 function petHeadX() { return 130 + 62 * petSc; }
@@ -454,40 +452,33 @@ pet.addEventListener('contextmenu', async e => {
   e.preventDefault();
   if (menuOpen) return;
   menuOpen = true;
-  // 加高窗口以容纳完整菜单（原 220px 高度会导致菜单被裁切/挤压）
   await grow(growHForMenu(), MENU_WIN_W);
   const lib = skinLib();
   const builtin = lib.filter(x => x.type === 'builtin');
   const imported = lib.filter(x => x.type !== 'builtin');
-  const skinSub = [
+  const skinItems = [
     ...builtin.map(it => ({
       icon: it.id === 'blue' ? '🔵' : (it.id === 'orange' ? '🟠' : '🟢'),
       label: it.label, check: skinChecked(it), onClick: () => pickSkin(it),
     })),
-    '-',
     ...imported.map(it => ({
       icon: skinChecked(it) ? '✅' : '🎨',
       label: it.label + skinTypeTag(it), check: skinChecked(it), onClick: () => pickSkin(it),
     })),
+    { icon: '＋', label: t('pet.skinImport'), onClick: async () => { await shrink(); invoke('open_settings_cmd'); } },
   ];
-  // 导入与管理统一在设置页完成（皮肤管理中有删除入口）
-  skinSub.push('-', { icon: '＋', label: t('pet.skinImport'), onClick: async () => { await shrink(); invoke('open_settings_cmd'); } });
-  const cur = lib.find(skinChecked);
   showMenu([
     { icon: '💬', label: t('pet.chat'), onClick: async () => { await shrink(); invoke('show_bubble_cmd'); } },
     { icon: '✨', label: t('pet.newSession'), onClick: async () => { await shrink(); await invoke('show_bubble_cmd'); tEmitTo('bubble', 'new-session-req'); } },
     '-',
-    {
-      icon: '🎨', label: t('pet.skinMenu', { name: cur ? t('pet.skinLabel', { name: cur.label }) : '—' }),
-      sub: skinSub, emptyText: t('pet.skinNone'),
-    },
+    // 皮肤区：数量多时占用剩余高度并滚动，保证上方基础操作与下方设置始终可见
+    { header: t('pet.skinHeader', { n: lib.length }), items: skinItems, scroll: true },
     '-',
     { icon: '⚙', label: t('pet.settings'), onClick: async () => { await shrink(); invoke('open_settings_cmd'); } },
     { icon: '🌙', label: t('pet.dnd'), check: S.settings.dnd, onClick: async () => { await shrink(); invoke('set_dnd', { on: !S.settings.dnd }); } },
     { icon: '📍', label: t('pet.resetPos'), onClick: async () => { await shrink(); invoke('reset_pet_pos'); } },
   ], 0, 0, {
-    // 主菜单紧贴宠物右侧、竖直居中对齐宠物，而不是跟随鼠标坐标，
-    // 这样菜单始终挨着角色，且为子菜单留出可用的右侧空间
+    // 菜单紧贴宠物右侧、竖直居中对齐宠物
     anchor: { x: Math.round(petHeadX() + MENU_GAP), y: 'center' },
     anchorRef: pet.getBoundingClientRect(),
     bounds: { left: 4, top: 4, right: curW - 4, bottom: curH - 4 },

@@ -279,6 +279,8 @@ function menuPlace(box, scroll, x, y, bounds, anchor, anchorRef) {
   const maxW = Math.max(120, b.right - b.left - pad * 2);
   const maxH = Math.max(80, b.bottom - b.top - pad * 2);
   box.style.maxWidth = maxW + 'px';
+  // 菜单总高受窗口限制；内部若含可滚动分组，则由分组吃掉剩余高度
+  box.style.maxHeight = maxH + 'px';
   if (scroll) scroll.style.maxHeight = maxH + 'px';
 
   const w = box.offsetWidth;
@@ -309,7 +311,19 @@ function showMenu(items, x, y, opts) {
   box.appendChild(scroll);
 
   const row = (it, parent) => {
-    if (it === '-') { scroll.appendChild(el('div', 'cm-div')); return; }
+    if (it === '-') { parent.appendChild(el('div', 'cm-div')); return; }
+    // 分组块：{ header, items, scroll }。分组内的项目多时只让该块滚动，
+    // 上下方的固定项（对话 / 设置）始终可见，不必整菜单一起滚。
+    if (it && Array.isArray(it.items)) {
+      const group = el('div', 'cm-group');
+      if (it.header) group.appendChild(el('div', 'cm-group-head', esc(it.header)));
+      const body = el('div', it.scroll ? 'cm-group-body cm-scroll' : 'cm-group-body');
+      if (!it.items.length) body.appendChild(el('div', 'cm-empty', it.emptyText || '—'));
+      it.items.forEach(sub => row(sub, body));
+      group.appendChild(body);
+      parent.appendChild(group);
+      return;
+    }
     const btn = el('button', 'cm-item' + (it.danger ? ' danger' : '') + (it.sub ? ' has-sub' : ''));
     btn.innerHTML = (it.icon ? '<span class="cm-ic">' + it.icon + '</span>' : '') +
       '<span>' + esc(it.label) + '</span>' +
@@ -323,7 +337,7 @@ function showMenu(items, x, y, opts) {
       btn.addEventListener('mouseenter', () => closeSub());
       btn.onclick = () => { hideMenu(); it.onClick && it.onClick(); };
     }
-    scroll.appendChild(btn);
+    parent.appendChild(btn);
   };
   items.forEach(it => row(it, scroll));
 

@@ -345,6 +345,7 @@ const I18N = {
     "n214.title": "v2.1.4 新增了什么",
     "n214.i1": "宠物右键菜单的皮肤改为二级菜单，皮肤多时自动滚动，不再被窗口裁切",
     "n214.i2": "新增「皮肤管理」：查看全部导入皮肤的名称、类型与体积，可切换或删除；删除正在使用的皮肤会自动切回内置皮肤",
+    "pet.skinHeader": "皮肤（{n}）",
   },
   en: {
     "nav.model": "Models",
@@ -686,6 +687,7 @@ const I18N = {
     "n214.title": "What's new in v2.1.4",
     "n214.i1": "Skins in the pet context menu are now a submenu, and long lists scroll instead of being clipped by the window",
     "n214.i2": "New Skin Management panel: see every imported skin's name, type and size, then switch or delete it; deleting the skin in use falls back to the built-in skin automatically",
+    "pet.skinHeader": "Skins ({n})",
   },
 };
 
