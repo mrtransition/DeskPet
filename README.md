@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.1.2-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.1.3-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -39,10 +39,10 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | 🎨 **皮肤包** | `.deskpet-skin.zip`：`skin.json` 状态机映射 + 八态图集 + 可选提示音，在设置里一键导入；内置皮肤维护工具（八态诊断 / 修复 / 逐状态替换 / 清理未引用资源 / 导出备份） |
 | 🧩 **八态单图** | 单张 4 列 × 2 行的八态图（按行读取：`idle / happy / sleep / work / click / drag / error / talk`）导入时自动切割成 8 张状态图，逐格裁留白并统一画布底边对齐 |
 | 🕹 **Codex Pet Contract** | 直接导入 Codex 桌面端 `pets/<id>/`（`pet.json` + 1536×1872 图集，8 列 × 9 行、单格 192×208）：九行按契约帧序逐帧播放并映射到八态；维护工具可改帧时长、逐帧替换 / 追加、调整状态复用，并可反向导出为标准 Codex 宠物包 |
-| 🩺 **健康提醒** | 久坐 / 喝水定时轻提示，默认关闭、折叠在提醒高级项；剪贴板感知需显式开启，点一下才处理 |
+| 🩺 **健康提醒** | 久坐 / 喝水定时轻提示，默认关闭并折叠在「提醒 → 实验性增强」中；剪贴板感知同样默认关闭，点一下才处理 |
 | 🔊 **语音朗读** | AI 回复可自动朗读或逐条重读，支持系统语音选择与 0.5–2 倍语速；本地 TTS，零网络请求 |
-| 🌏 **中英双语** | 设置、气泡与宠物菜单即时切换中文 / English |
-| 🪶 **轻量** | 安装包约 14 MB · 前端零构建（无 npm 依赖）；工作 / 睡眠状态可开启 30fps 低帧率模式 |
+| 🌏 **中英双语** | 设置页、气泡与宠物右键菜单的界面文案即时切换中文 / English；人格名称、模型名与皮肤名等「内容数据」保持原文，不做翻译 |
+| 🪶 **轻量** | 主程序约 14 MB · 前端源码约 260 KB 且零构建（无 npm 依赖）；工作 / 睡眠状态可开启 30fps 低帧率模式 |
 
 ## 🚀 快速开始
 
@@ -152,7 +152,7 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 - [ ] 数据备份 / 一键恢复与安装器（计划 v2.2 / v2.3）
 - [ ] SQLite 存储与会话全文检索增强（当前为 JSON 原子写盘 + 备份回退）
 - [x] 自动更新（HTTPS 更新清单 + 手动下载安装，不做静默安装；签名校验待补）
-- [ ] 完整中英界面（当前仅导航与少量文案接入 i18n）
+- [x] 界面中英双语覆盖（设置页 / 气泡 / 宠物菜单的界面文案已接入 i18n；人格、模型、皮肤等内容数据保持原文）
 - [x] 语音朗读（TTS，系统语音包，零联网）
 - [ ] 语音输入（ASR，P3，需本地运行时）
 - [ ] Live2D / Spine / Lottie 运行时（P3）
@@ -171,6 +171,20 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 - **实验性能力降级**：久坐/喝水、剪贴板感知、天气/联网搜索默认关闭或折叠入口，不再作为主卖点。
 - **仓库清理**：删除重复的根目录 MVP 原型、未引用设计素材与构建残留；SRS 升级到 v1.2，并与《产品功能相关性审计》对齐。
 - **测试**：`cargo test` 全绿；前端脚本通过 `node --check`。
+
+</details>
+
+<details open>
+<summary><b>v2.1.3</b> — 继续执行功能相关性审计：P1 收敛项落地</summary>
+
+- **界面中英双语补全（FR-SYS-006）**：设置页约 155 处静态文案与 30 余条动态文案（隐私表、会话列表、空状态、计数、工具授权、皮肤说明）全部接入 `data-i18n*` 与 `t()`，词条 275 条中英对齐；`applyI18n` 改为「只替换文本节点」，避免破坏 checkbox / radio 与内联 `<code>` 结构。人格 Prompt、模型名、皮肤名等内容数据保持原文。
+- **更新检查默认关闭（FR-SYS-004）**：`updateAuto` 默认 `false`，启动不再产生隐藏出站请求；手动「检查更新」不受开关限制（新增 `manual` 参数）。同时修正默认更新地址的仓库名大小写（`DeskPet`），避免 404。
+- **实验性能力折叠（FR-REM-006/007）**：久坐/喝水提醒与剪贴板感知收进「提醒 → 实验性增强」折叠区，默认关闭，不再占据主界面。
+- **移除隐藏的开发者接口（FR-SYS-005 / NFR-SEC-003）**：删除已无 UI 的 `usage_snapshot` / `usage_reset` / `outbound_log` / `outbound_clear` 命令与内存用量表；出站记录改为写入脱敏的本地日志，保留排障能力但不提供逐请求审计界面。默认状态同时移除 `priceIn` / `priceOut` / `costIn` / `costOut`。
+- **隐私数据口径修正**：`privacy_info` 不再返回硬编码中文的密钥存储描述与已废弃的 `outboundAudit` 字段，改由前端 i18n 呈现。
+- **代理配置说明**：保留对历史 `proxy` / `proxyType` 字段的兼容读取（旧配置不丢失），但设置页不提供入口，与 SRS「仅遵循系统代理」一致。
+- **文档校准**：README 的双语与体积口径改为与实际一致（前端源码约 260 KB，主程序约 14 MB）。
+- **测试**：新增默认状态与已移除命令的回归用例，`cargo test` 44 项全绿；设置页中英切换 29 项 DOM 回归通过。
 
 </details>
 

@@ -15,7 +15,7 @@ body { background: var(--bg); display: flex; flex-direction: column; }
 <body>
 <div id="app">
   <div class="win-title" data-tauri-drag-region>
-    <span class="wt-ic">🐱</span><b>设置 — 桌面 AI 宠物</b>
+    <span class="wt-ic">🐱</span><b data-i18n="s1">设置 — 桌面 AI 宠物</b>
     <button class="ib" id="setClose" title="关闭">✕</button>
   </div>
   <div class="win-body">
@@ -33,42 +33,42 @@ body { background: var(--bg); display: flex; flex-direction: column; }
       <!-- 模型 -->
       <div class="pane on" id="tab-model">
         <div class="pane-head">
-          <div><h3>模型配置</h3><div class="p-desc">多供应商接入 · 自定义 BaseURL · 密钥存入 Windows 凭据管理器 · 连通性测试（FR-MDL）</div></div>
-          <button id="pvNew">＋ 新增供应商</button>
+          <div><h3 data-i18n="s9">模型配置</h3><div class="p-desc" data-i18n="s10">多供应商接入 · 自定义 BaseURL · 密钥存入 Windows 凭据管理器 · 连通性测试（FR-MDL）</div></div>
+          <button id="pvNew" data-i18n="s11">＋ 新增供应商</button>
         </div>
         <div class="pv-grid">
           <div class="pv-list" id="provList"></div>
           <div class="pv-editor">
             <div class="fgrid">
-              <div class="frow" style="grid-column:span 2"><label>供应商模板</label><select id="pvTemplate"></select></div>
-              <div class="frow"><label>名称</label><input id="pvName" placeholder="如：我的 DeepSeek"></div>
-              <div class="frow"><label>接口类型</label><input id="pvType" disabled></div>
+              <div class="frow" style="grid-column:span 2"><label data-i18n="s12">供应商模板</label><select id="pvTemplate"></select></div>
+              <div class="frow"><label data-i18n="s13">名称</label><input id="pvName" placeholder="如：我的 DeepSeek"></div>
+              <div class="frow"><label data-i18n="s14">接口类型</label><input id="pvType" disabled></div>
               <div class="frow" style="grid-column:span 2"><label>BaseURL</label><input id="pvBase" placeholder="https://api.deepseek.com/v1"></div>
               <div class="frow" style="grid-column:span 2">
-                <label>API Key（写入系统凭据管理器，不进入数据文件与渲染层）</label>
+                <label data-i18n="s15">API Key（写入系统凭据管理器，不进入数据文件与渲染层）</label>
                 <input id="pvKey" type="password" placeholder="sk-…" autocomplete="off">
               </div>
-              <div class="frow" style="grid-column:span 2"><label>模型名（测试连接后可下拉选择）</label><input id="pvModel" list="dlModels" placeholder="deepseek-chat"></div>
+              <div class="frow" style="grid-column:span 2"><label data-i18n="s16">模型名（测试连接后可下拉选择）</label><input id="pvModel" list="dlModels" placeholder="deepseek-chat"></div>
               <datalist id="dlModels"></datalist>
             </div>
             <div class="fgrid" style="margin-top:10px">
               <div class="frow"><label>Temperature（0–2）</label><input id="pvTemp" type="number" min="0" max="2" step="0.1"></div>
               <div class="frow"><label>Top P（0–1）</label><input id="pvTopP" type="number" min="0" max="1" step="0.05"></div>
               <div class="frow"><label>Max Tokens（64–8192）</label><input id="pvMaxTok" type="number" min="64" max="8192" step="64"></div>
-              <div class="frow"><label>上下文轮数（0=不限）</label><input id="pvRounds" type="number" min="0" max="50" step="1"></div>
-              <div class="frow"><label>上下文 Token 上限（512–128000）</label><input id="pvCtxTok" type="number" min="512" max="128000" step="512"></div>
-              <div class="frow"><label>超时（秒）</label><input id="pvTimeout" type="number" min="5" max="120" step="5"></div>
-              <div class="frow"><label>失败自动重试（主进程，0–5）</label><input id="pvRetry" type="number" min="0" max="5" step="1"></div>
-              <div class="frow"><label>流式输出</label><select id="pvStream"><option value="1">开启（推荐）</option><option value="0">关闭</option></select></div>
+              <div class="frow"><label data-i18n="s17">上下文轮数（0=不限）</label><input id="pvRounds" type="number" min="0" max="50" step="1"></div>
+              <div class="frow"><label data-i18n="s18">上下文 Token 上限（512–128000）</label><input id="pvCtxTok" type="number" min="512" max="128000" step="512"></div>
+              <div class="frow"><label data-i18n="s19">超时（秒）</label><input id="pvTimeout" type="number" min="5" max="120" step="5"></div>
+              <div class="frow"><label data-i18n="s20">失败自动重试（主进程，0–5）</label><input id="pvRetry" type="number" min="0" max="5" step="1"></div>
+              <div class="frow"><label data-i18n="s21">流式输出</label><select id="pvStream"><option value="1" data-i18n="s22">开启（推荐）</option><option value="0" data-i18n="s23">关闭</option></select></div>
             </div>
             <div class="btn-row">
-              <button id="pvTest">测试连接</button>
-              <button id="pvSave" class="primary">保存</button>
-              <button id="pvDelete" class="danger">删除</button>
-              <label class="inline-opts" style="margin-left:auto"><input type="checkbox" id="pvDefault"><span style="font-size:var(--fs-xs)">设为默认</span></label>
+              <button id="pvTest" data-i18n="s24">测试连接</button>
+              <button id="pvSave" class="primary" data-i18n="s25">保存</button>
+              <button id="pvDelete" class="danger" data-i18n="s26">删除</button>
+              <label class="inline-opts" style="margin-left:auto"><input type="checkbox" id="pvDefault"><span style="font-size:var(--fs-xs)" data-i18n="s27">设为默认</span></label>
             </div>
             <div class="test-line" id="pvTestResult"></div>
-            <div class="fnote">提示：请求由主进程发出（无浏览器 CORS 限制）；Ollama 等本地服务无需设置 OLLAMA_ORIGINS。密钥仅保存在 Windows 凭据管理器，导出与日志均不含密钥。</div>
+            <div class="fnote" data-i18n="s28">提示：请求由主进程发出（无浏览器 CORS 限制）；Ollama 等本地服务无需设置 OLLAMA_ORIGINS。密钥仅保存在 Windows 凭据管理器，导出与日志均不含密钥。</div>
           </div>
         </div>
       </div>
@@ -76,29 +76,29 @@ body { background: var(--bg); display: flex; flex-direction: column; }
       <!-- 人格 -->
       <div class="pane" id="tab-persona">
         <div class="pane-head">
-          <div><h3>人格管理</h3><div class="p-desc">System Prompt 卡片 · 开场白 · 快捷动作 · 绑定模型与皮肤（FR-PSN）</div></div>
-          <button id="peNew">＋ 新建人格</button>
+          <div><h3 data-i18n="s29">人格管理</h3><div class="p-desc" data-i18n="s30">System Prompt 卡片 · 开场白 · 快捷动作 · 绑定模型与皮肤（FR-PSN）</div></div>
+          <button id="peNew" data-i18n="s31">＋ 新建人格</button>
         </div>
         <div class="pv-grid">
           <div class="pv-list" id="psList"></div>
           <div class="pv-editor">
             <div class="fgrid">
-              <div class="frow"><label>头像（emoji）</label><input id="peAvatar" maxlength="4" placeholder="🐱"></div>
-              <div class="frow"><label>名称</label><input id="peName" placeholder="如：贴心小助手"></div>
-              <div class="frow"><label>绑定供应商</label><select id="peProv"></select></div>
-              <div class="frow"><label>绑定皮肤</label><select id="peSkin"></select></div>
+              <div class="frow"><label data-i18n="s32">头像（emoji）</label><input id="peAvatar" maxlength="4" placeholder="🐱"></div>
+              <div class="frow"><label data-i18n="s13">名称</label><input id="peName" placeholder="如：贴心小助手"></div>
+              <div class="frow"><label data-i18n="s33">绑定供应商</label><select id="peProv"></select></div>
+              <div class="frow"><label data-i18n="s34">绑定皮肤</label><select id="peSkin"></select></div>
             </div>
             <div class="frow" style="margin-top:9px"><label>System Prompt</label><textarea id="peSys" rows="4" style="font-size:var(--fs-xs);resize:vertical"></textarea></div>
-            <div class="frow" style="margin-top:9px"><label>开场白（新会话第一条消息）</label><textarea id="peGreet" rows="2" style="font-size:var(--fs-xs);resize:vertical"></textarea></div>
-            <div style="margin-top:10px"><label style="font-size:var(--fs-xs);color:var(--t2)">快捷动作（气泡内按钮，3–5 个）</label>
+            <div class="frow" style="margin-top:9px"><label data-i18n="s35">开场白（新会话第一条消息）</label><textarea id="peGreet" rows="2" style="font-size:var(--fs-xs);resize:vertical"></textarea></div>
+            <div style="margin-top:10px"><label style="font-size:var(--fs-xs);color:var(--t2)" data-i18n="s36">快捷动作（气泡内按钮，3–5 个）</label>
               <div id="qaRows" style="margin-top:6px"></div>
-              <button id="qaAdd" style="margin-top:2px">＋ 添加动作</button>
+              <button id="qaAdd" style="margin-top:2px" data-i18n="s37">＋ 添加动作</button>
             </div>
             <div class="btn-row">
-              <button id="peSave" class="primary">保存</button>
-              <button id="peDelete" class="danger">删除</button>
-              <button id="peExport">导出 JSON</button>
-              <button id="peImportBtn">导入 JSON</button>
+              <button id="peSave" class="primary" data-i18n="s25">保存</button>
+              <button id="peDelete" class="danger" data-i18n="s26">删除</button>
+              <button id="peExport" data-i18n="s38">导出 JSON</button>
+              <button id="peImportBtn" data-i18n="s39">导入 JSON</button>
               <input type="file" id="peImportFile" accept=".json,application/json" style="display:none">
             </div>
           </div>
@@ -107,259 +107,274 @@ body { background: var(--bg); display: flex; flex-direction: column; }
 
       <!-- 宠物与交互 -->
       <div class="pane" id="tab-pet">
-        <h3>宠物与交互</h3><div class="p-desc">皮肤 · 缩放 · 气泡行为 · 提醒与免打扰（FR-PET / FR-REM）</div>
+        <h3 data-i18n="s4">宠物与交互</h3><div class="p-desc" data-i18n="s40">皮肤 · 缩放 · 气泡行为 · 提醒与免打扰（FR-PET / FR-REM）</div>
         <div class="sec">
-          <h4>皮肤 <span class="tag">FR-SKN-001 内置 3 套</span></h4>
+          <h4><span data-i18n="s41">皮肤</span> <span class="tag" data-i18n="d.skinBuiltin">FR-SKN-001 内置 3 套</span></h4>
           <div class="skin-cards" id="skinSel"></div>
           <div class="inline-opts" style="margin-top:9px">
-            <button id="skinPick">导入单张图片（GIF / APNG / WebP，自动裁剪内容）</button>
-            <button id="skinSheetPick">导入八态单图（4×2 自动切割）</button>
-            <button id="skinPackPick">导入皮肤包（.zip：图集+状态机+音效，≤128 MB）</button>
-            <button id="codexPetPick">导入 Codex 宠物（pet.json + 1536×1872 图集）</button>
-            <button id="skinReset">恢复内置矢量皮肤</button>
+            <button id="skinPick" data-i18n="s43">导入单张图片（GIF / APNG / WebP，自动裁剪内容）</button>
+            <button id="skinSheetPick" data-i18n="s44">导入八态单图（4×2 自动切割）</button>
+            <button id="skinPackPick" data-i18n="s45">导入皮肤包（.zip：图集+状态机+音效，≤128 MB）</button>
+            <button id="codexPetPick" data-i18n="s46">导入 Codex 宠物（pet.json + 1536×1872 图集）</button>
+            <button id="skinReset" data-i18n="s47">恢复内置矢量皮肤</button>
             <input id="skinFile" type="file" accept="image/gif,image/png,image/webp" hidden>
             <input id="skinSheetFile" type="file" accept="image/png,image/webp" hidden>
             <input id="skinPackFile" type="file" accept=".zip,application/zip" hidden>
             <input id="codexPetFile" type="file" accept=".zip,application/zip" hidden>
           </div>
-          <div class="fnote" id="skinFileInfo">导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互。导入时会自动裁掉四周留白与导出残留的棋盘格底色（长边超 4096 先缩放，48 MB 上限）；动图与 8×9 图集整幅保留，不抠图；4×2 八态单图请使用「导入八态单图」按格切割。</div>
-          <div class="fnote">八态单图规则：单张图按 <b>4 列 × 2 行</b>排列，按行读取 8 个状态，顺序固定为 <code>idle / happy / sleep / work / click / drag / error / talk</code>。导入时逐格切割、裁掉格内留白，并统一画布和底边对齐，切换状态时角色不会跳动；背景需为透明或浅色棋盘格。</div>
-          <div class="fnote">Codex 宠物遵循 OpenAI Codex Pet Contract：<code>pet.json</code>（id / displayName / description / spritesheetPath）+ 8 列 × 9 行、单格 192×208、总尺寸 1536×1872 的透明图集；九行依次为 idle / running-right / running-left / waving / jumping / failed / waiting / running / review，未使用的格子必须完全透明。可直接导入 <code>~/.codex/pets/&lt;id&gt;/</code> 目录打包成的 zip，也可把当前皮肤导出为 Codex 宠物包。</div>
+          <div class="fnote" id="skinFileInfo" data-i18n="s48">导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互。导入时会自动裁掉四周留白与导出残留的棋盘格底色（长边超 4096 先缩放，48 MB 上限）；动图与 8×9 图集整幅保留，不抠图；4×2 八态单图请使用「导入八态单图」按格切割。</div>
+          <div class="fnote" data-i18n-html="h49">八态单图规则：单张图按 <b>4 列 × 2 行</b>排列，按行读取 8 个状态，顺序固定为 <code>idle / happy / sleep / work / click / drag / error / talk</code>。导入时逐格切割、裁掉格内留白，并统一画布和底边对齐，切换状态时角色不会跳动；背景需为透明或浅色棋盘格。</div>
+          <div class="fnote" data-i18n-html="h53">Codex 宠物遵循 OpenAI Codex Pet Contract：<code>pet.json</code>（id / displayName / description / spritesheetPath）+ 8 列 × 9 行、单格 192×208、总尺寸 1536×1872 的透明图集；九行依次为 idle / running-right / running-left / waving / jumping / failed / waiting / running / review，未使用的格子必须完全透明。可直接导入 <code>~/.codex/pets/&lt;id&gt;/</code> 目录打包成的 zip，也可把当前皮肤导出为 Codex 宠物包。</div>
         </div>
         <div class="sec">
-          <h4>皮肤维护工具 <span class="tag">检查 / 修复 / 逐状态替换 / 导出</span></h4>
+          <h4><span data-i18n="s56">皮肤维护工具</span> <span class="tag" data-i18n="s57">检查 / 修复 / 逐状态替换 / 导出</span></h4>
           <div class="fgrid">
-            <div class="frow"><label>皮肤名称</label><input id="skinNameEdit" placeholder="皮肤名称" maxlength="40"></div>
-            <div class="frow"><label>版本</label><input id="skinVersionEdit" placeholder="1.0" maxlength="24"></div>
+            <div class="frow"><label data-i18n="s58">皮肤名称</label><input id="skinNameEdit" placeholder="皮肤名称" maxlength="40"></div>
+            <div class="frow"><label data-i18n="s59">版本</label><input id="skinVersionEdit" placeholder="1.0" maxlength="24"></div>
           </div>
           <div class="btn-row" style="margin-top:8px">
-            <button id="skinAuditBtn">重新检测</button>
-            <button id="skinRepairBtn">修复状态映射</button>
-            <button id="skinPruneBtn">清理未引用资源</button>
-            <button id="skinBatchPick">批量导入八态图片</button>
-            <button id="skinMakePack">以当前图片创建皮肤包</button>
-            <button id="skinExportBtn" class="primary">导出当前皮肤（.zip）</button>
-            <button id="codexExportBtn">导出为 Codex 宠物（pet.json + spritesheet.png）</button>
+            <button id="skinAuditBtn" data-i18n="s60">重新检测</button>
+            <button id="skinRepairBtn" data-i18n="s61">修复状态映射</button>
+            <button id="skinPruneBtn" data-i18n="s62">清理未引用资源</button>
+            <button id="skinBatchPick" data-i18n="s63">批量导入八态图片</button>
+            <button id="skinMakePack" data-i18n="s64">以当前图片创建皮肤包</button>
+            <button id="skinExportBtn" class="primary" data-i18n="s65">导出当前皮肤（.zip）</button>
+            <button id="codexExportBtn" data-i18n="s66">导出为 Codex 宠物（pet.json + spritesheet.png）</button>
           </div>
           <div class="fnote" id="skinDiag" style="margin-top:8px"></div>
           <div class="skin-state-grid" id="skinStateGrid"></div>
           <input id="skinStateFile" type="file" accept="image/gif,image/png,image/webp" hidden>
           <input id="skinBatchFiles" type="file" accept="image/gif,image/png,image/webp" multiple hidden>
-          <div class="fnote">维护工具直接编辑当前皮肤包的状态映射与图片资源：可逐状态替换、批量导入八态图片（文件名匹配 idle / drag / click / talk / sleep / work / happy / error）、清理未引用文件并导出备份。导出的 .deskpet-skin.zip 可重新导入到任意 DeskPet。</div>
+          <div class="fnote" data-i18n="s67">维护工具直接编辑当前皮肤包的状态映射与图片资源：可逐状态替换、批量导入八态图片（文件名匹配 idle / drag / click / talk / sleep / work / happy / error）、清理未引用文件并导出备份。导出的 .deskpet-skin.zip 可重新导入到任意 DeskPet。</div>
         </div>
         <div class="sec">
-          <h4>体型与层级</h4>
+          <h4 data-i18n="s68">体型与层级</h4>
           <div class="fgrid">
-            <div class="frow"><label>宠物缩放（50%–200%）：<b id="petScaleVal">100%</b></label><input id="petScale" type="range" min="0.5" max="2" step="0.05"></div>
+            <div class="frow"><label data-i18n="s69">宠物缩放（50%–200%）：<b id="petScaleVal">100%</b></label><input id="petScale" type="range" min="0.5" max="2" step="0.05"></div>
           </div>
           <div class="inline-opts" style="margin-top:9px">
-            <label><input type="checkbox" id="ctThrough"> 点击穿透（开启后鼠标事件落到下层窗口，托盘菜单可恢复）</label>
+            <label data-i18n="s70"><input type="checkbox" id="ctThrough"> 点击穿透（开启后鼠标事件落到下层窗口，托盘菜单可恢复）</label>
           </div>
           <div class="inline-opts" style="margin-top:9px">
-            <label><input type="checkbox" id="topMost"> 宠物窗口置顶（FR-PET-002）</label>
-            <label><input type="checkbox" id="taskbarChk"> 在任务栏显示宠物（FR-PET-003）</label>
+            <label data-i18n="s71"><input type="checkbox" id="topMost"> 宠物窗口置顶（FR-PET-002）</label>
+            <label data-i18n="s72"><input type="checkbox" id="taskbarChk"> 在任务栏显示宠物（FR-PET-003）</label>
           </div>
           <div class="inline-opts" style="margin-top:9px">
-            <label><input type="checkbox" id="lowFpsChk"> 低帧率模式：非交互状态（工作 / 睡眠）限制为 30fps（FR-PET-010）</label>
+            <label data-i18n="s73"><input type="checkbox" id="lowFpsChk"> 低帧率模式：非交互状态（工作 / 睡眠）限制为 30fps（FR-PET-010）</label>
           </div>
-          <div class="fnote">默认置顶且不占用任务栏；关闭置顶后宠物位于普通窗口层级，可能被其他窗口遮挡。低帧率模式通过离散化动画步进降低 CPU 占用，不影响交互反馈。</div>
+          <div class="fnote" data-i18n="s74">默认置顶且不占用任务栏；关闭置顶后宠物位于普通窗口层级，可能被其他窗口遮挡。低帧率模式通过离散化动画步进降低 CPU 占用，不影响交互反馈。</div>
         </div>
         <div class="sec">
-          <h4>气泡与输入</h4>
+          <h4 data-i18n="s75">气泡与输入</h4>
           <div class="fgrid">
-            <div class="frow"><label>闲置自动关闭（秒，15–300）</label><input id="idleClose" type="number" min="15" max="300" step="5"></div>
-            <div class="frow"><label>主动搭话频率</label><select id="chatterSel"><option value="off">关闭</option><option value="low">低（约 10 分钟）</option><option value="mid">中（约 5 分钟）</option><option value="high">高（约 2.5 分钟）</option></select></div>
-            <div class="frow"><label>气泡宽度（240–480 px）：<b id="bubbleWVal">340px</b></label><input id="bubbleW" type="range" min="240" max="480" step="10"></div>
+            <div class="frow"><label data-i18n="s76">闲置自动关闭（秒，15–300）</label><input id="idleClose" type="number" min="15" max="300" step="5"></div>
+            <div class="frow"><label data-i18n="s77">主动搭话频率</label><select id="chatterSel"><option value="off" data-i18n="s23">关闭</option><option value="low" data-i18n="s78">低（约 10 分钟）</option><option value="mid" data-i18n="s79">中（约 5 分钟）</option><option value="high" data-i18n="s80">高（约 2.5 分钟）</option></select></div>
+            <div class="frow"><label data-i18n="s81">气泡宽度（240–480 px）：<b id="bubbleWVal">340px</b></label><input id="bubbleW" type="range" min="240" max="480" step="10"></div>
           </div>
           <div class="inline-opts" style="margin-top:9px">
-            <label><input type="radio" name="enterMode" value="1" checked> Enter 发送 / Shift+Enter 换行</label>
-            <label><input type="radio" name="enterMode" value="0"> Enter 换行 / Ctrl+Enter 发送</label>
-            <label><input type="checkbox" id="newPerClick"> 每次点击宠物新开会话</label>
+            <label data-i18n="s82"><input type="radio" name="enterMode" value="1" checked> Enter 发送 / Shift+Enter 换行</label>
+            <label data-i18n="s83"><input type="radio" name="enterMode" value="0"> Enter 换行 / Ctrl+Enter 发送</label>
+            <label data-i18n="s84"><input type="checkbox" id="newPerClick"> 每次点击宠物新开会话</label>
           </div>
         </div>
         <div class="sec">
-          <h4>语音朗读 <span class="tag">FR-VOI-001 · TTS</span></h4>
+          <h4><span data-i18n="s85">语音朗读</span> <span class="tag">FR-VOI-001 · TTS</span></h4>
           <div class="inline-opts">
-            <label><input type="checkbox" id="voiceChk"> 自动朗读 AI 回复（系统语音，不联网）</label>
+            <label data-i18n="s86"><input type="checkbox" id="voiceChk"> 自动朗读 AI 回复（系统语音，不联网）</label>
           </div>
           <div class="fgrid" style="margin-top:8px">
-            <div class="frow"><label>语音</label><select id="voiceSel"></select></div>
-            <div class="frow"><label>语速（0.5–2）：<b id="voiceRateVal">1.0</b></label><input id="voiceRate" type="range" min="0.5" max="2" step="0.1"></div>
+            <div class="frow"><label data-i18n="s87">语音</label><select id="voiceSel"></select></div>
+            <div class="frow"><label data-i18n="s88">语速（0.5–2）：<b id="voiceRateVal">1.0</b></label><input id="voiceRate" type="range" min="0.5" max="2" step="0.1"></div>
           </div>
-          <div class="btn-row" style="margin-top:8px"><button id="voiceTest">试听当前语音</button></div>
-          <div class="fnote" id="voiceNote">使用 WebView2 内置 SpeechSynthesis 与系统语音包，不产生网络请求；每条 AI 回复也可单独点击 🔊 朗读。语音输入（ASR）尚未实现，将在后续版本接入本地运行时。</div>
+          <div class="btn-row" style="margin-top:8px"><button id="voiceTest" data-i18n="s89">试听当前语音</button></div>
+          <div class="fnote" id="voiceNote" data-i18n="s90">使用 WebView2 内置 SpeechSynthesis 与系统语音包，不产生网络请求；每条 AI 回复也可单独点击 🔊 朗读。语音输入（ASR）尚未实现，将在后续版本接入本地运行时。</div>
         </div>
         <div class="sec">
-          <h4>提醒与免打扰</h4>
+          <h4 data-i18n="s91">提醒与免打扰</h4>
           <div class="inline-opts" style="margin-bottom:8px">
-            <label><input type="checkbox" id="dndChk"> 免打扰模式（宠物睡眠，提醒静默排队，关闭后补发）</label>
+            <label data-i18n="s92"><input type="checkbox" id="dndChk"> 免打扰模式（宠物睡眠，提醒静默排队，关闭后补发）</label>
           </div>
           <div class="fgrid">
-            <div class="frow"><label>免打扰时段开始（留空为不启用）</label><input id="dndStart" type="time"></div>
-            <div class="frow"><label>免打扰时段结束</label><input id="dndEnd" type="time"></div>
+            <div class="frow"><label data-i18n="s93">免打扰时段开始（留空为不启用）</label><input id="dndStart" type="time"></div>
+            <div class="frow"><label data-i18n="s94">免打扰时段结束</label><input id="dndEnd" type="time"></div>
           </div>
-          <div class="fnote" style="margin:6px 0 8px">时段内所有主动提醒静默排队，跨零点（如 22:00–08:00）同样生效；到点结束不补发历史搭话。</div>
-          <div class="inline-opts" style="margin-bottom:8px">
-            <label><input type="checkbox" id="healthChk"> 久坐 / 喝水提醒（FR-REM-006）</label>
-          </div>
-          <div class="fgrid">
-            <div class="frow"><label>久坐提醒间隔（分钟，0=关闭）</label><input id="sitMin" type="number" min="0" max="240" step="5"></div>
-            <div class="frow"><label>喝水提醒间隔（分钟，0=关闭）</label><input id="waterMin" type="number" min="0" max="240" step="5"></div>
-          </div>
+          <div class="fnote" style="margin:6px 0 8px" data-i18n="s95">时段内所有主动提醒静默排队，跨零点（如 22:00–08:00）同样生效；到点结束不补发历史搭话。</div>
           <div class="inline-opts" style="margin-top:9px">
-            <label><input type="checkbox" id="reminderSound"> 提醒播报音（皮肤包提供音效时自动使用）</label>
-            <label><input type="checkbox" id="clipWatch"> 剪贴板感知：复制内容后在宠物旁提示「要处理吗」（本地判断，不自动上传）</label>
+            <label data-i18n="s99"><input type="checkbox" id="reminderSound"> 提醒播报音（皮肤包提供音效时自动使用）</label>
           </div>
-          <div class="fnote" style="margin:0 0 8px">对我说「25 分钟后提醒我喝水」「每天 8:30 提醒我站会」即可创建；触发时宠物会跳出来播报，支持稍后 5 分钟。提醒由主进程调度器驱动。</div>
+          <div class="fnote" style="margin:0 0 8px" data-i18n="s101">对我说「25 分钟后提醒我喝水」「每天 8:30 提醒我站会」即可创建；触发时宠物会跳出来播报，支持稍后 5 分钟。提醒由主进程调度器驱动。</div>
+          <details class="adv">
+            <summary data-i18n="adv.title">实验性增强（默认关闭，不属于宠物核心能力）</summary>
+            <div class="inline-opts" style="margin:8px 0">
+              <label data-i18n="s96"><input type="checkbox" id="healthChk"> 久坐 / 喝水提醒（FR-REM-006）</label>
+            </div>
+            <div class="fgrid">
+              <div class="frow"><label data-i18n="s97">久坐提醒间隔（分钟，0=关闭）</label><input id="sitMin" type="number" min="0" max="240" step="5"></div>
+              <div class="frow"><label data-i18n="s98">喝水提醒间隔（分钟，0=关闭）</label><input id="waterMin" type="number" min="0" max="240" step="5"></div>
+            </div>
+            <div class="inline-opts" style="margin-top:9px">
+              <label data-i18n="s100"><input type="checkbox" id="clipWatch"> 剪贴板感知：复制内容后在宠物旁提示「要处理吗」（本地判断，不自动上传）</label>
+            </div>
+            <div class="fnote" style="margin:0" data-i18n="adv.note">这两项属于通用桌面助手能力，默认关闭；开启后全部在本地运行，不产生额外网络请求。</div>
+          </details>
           <div id="remList"></div>
         </div>
       </div>
 
       <!-- 记忆 -->
       <div class="pane" id="tab-memory">
-        <h3>长期记忆</h3><div class="p-desc">对我说「记住：xxx」即可写入；每次对话按相关度自动注入最多 5 条（FR-MEM-001/002/004）</div>
+        <h3 data-i18n="s102">长期记忆</h3><div class="p-desc" data-i18n="s103">对我说「记住：xxx」即可写入；每次对话按相关度自动注入最多 5 条（FR-MEM-001/002/004）</div>
         <div class="sec">
           <div style="display:flex;gap:8px">
             <input id="memAddInput" placeholder="手动添加一条记忆，如：用户在杭州工作">
-            <button id="memAddBtn" class="primary">添加</button>
+            <button id="memAddBtn" class="primary" data-i18n="s104">添加</button>
           </div>
         </div>
         <div class="sec">
-          <h4>记忆条目（<b id="memCount">0</b> 条）</h4>
+          <h4><span id="memCountLabel">记忆条目</span>（<b id="memCount">0</b>）</h4>
           <div id="memList"></div>
         </div>
         <div class="sec">
-          <h4>上下文摘要 <span class="tag">FR-MEM-003</span></h4>
-          <div class="frow" style="max-width:360px"><label>会话超过多少轮后自动生成摘要（4–100）</label><input id="summaryThreshold" type="number" min="4" max="100" step="1"></div>
-          <div class="fnote">超过阈值时，主进程调用当前模型把较早消息压缩成摘要；最近若干轮仍以原文发送。模型请求失败或返回空摘要时自动回退到轮数 / token 截断，不会阻断对话。</div>
+          <h4><span data-i18n="s107">上下文摘要</span> <span class="tag">FR-MEM-003</span></h4>
+          <div class="frow" style="max-width:360px"><label data-i18n="s108">会话超过多少轮后自动生成摘要（4–100）</label><input id="summaryThreshold" type="number" min="4" max="100" step="1"></div>
+          <div class="fnote" data-i18n="s109">超过阈值时，主进程调用当前模型把较早消息压缩成摘要；最近若干轮仍以原文发送。模型请求失败或返回空摘要时自动回退到轮数 / token 截断，不会阻断对话。</div>
         </div>
       </div>
 
       <!-- 会话与数据 -->
       <div class="pane" id="tab-data">
-        <h3>会话与数据</h3><div class="p-desc">数据持久化于本地应用数据目录，不上传任何服务器（FR-DAT-004 / NFR-PRV）</div>
+        <h3 data-i18n="s6">会话与数据</h3><div class="p-desc" data-i18n="s110">数据持久化于本地应用数据目录，不上传任何服务器（FR-DAT-004 / NFR-PRV）</div>
         <div class="sec">
-          <h4>会话历史 <span class="tag">FR-DAT-002 检索 / 导出 Markdown</span></h4>
+          <h4><span data-i18n="s111">会话历史</span> <span class="tag" data-i18n="d.tagSearch">FR-DAT-002 检索 / 导出 Markdown</span></h4>
           <input id="sessSearch" placeholder="全文检索会话标题与消息…" style="margin-bottom:8px">
           <div id="sessList"></div>
         </div>
         <div class="sec">
-          <h4>导入 / 导出</h4>
+          <h4 data-i18n="s113">导入 / 导出</h4>
           <div class="btn-row" style="margin-top:0">
-            <button id="expAllMd">导出全部会话（Markdown）</button>
-            <button id="expConfig">导出配置（JSON，不含密钥）</button>
-            <button id="impConfigBtn">导入配置（JSON）</button>
+            <button id="expAllMd" data-i18n="s114">导出全部会话（Markdown）</button>
+            <button id="expConfig" data-i18n="s115">导出配置（JSON，不含密钥）</button>
+            <button id="impConfigBtn" data-i18n="s116">导入配置（JSON）</button>
             <input type="file" id="impConfigFile" accept=".json,application/json" style="display:none">
           </div>
-          <div class="fnote">导出文件位于应用数据目录的 exports 文件夹（见导出后的提示路径）。</div>
+          <div class="fnote" data-i18n="s117">导出文件位于应用数据目录的 exports 文件夹（见导出后的提示路径）。</div>
         </div>
         <div class="sec" style="border-color:#F0C7C7">
-          <h4 style="color:var(--err)">危险区 <span class="tag" style="color:var(--err);border-color:#F0C7C7;background:var(--err-bg)">DR-003 二次确认</span></h4>
+          <h4 style="color:var(--err)"><span data-i18n="s118">危险区</span> <span class="tag" style="color:var(--err);border-color:#F0C7C7;background:var(--err-bg)" data-i18n="d.tagConfirm">DR-003 二次确认</span></h4>
           <div class="btn-row" style="margin-top:0">
-            <button class="danger" id="clrSessions">清除全部会话</button>
-            <button class="danger" id="clrMemories">清除全部记忆</button>
-            <button class="danger" id="clrAll">重置全部数据</button>
+            <button class="danger" id="clrSessions" data-i18n="s120">清除全部会话</button>
+            <button class="danger" id="clrMemories" data-i18n="s121">清除全部记忆</button>
+            <button class="danger" id="clrAll" data-i18n="s122">重置全部数据</button>
           </div>
-          <div class="fnote">「重置全部数据」将同时清除供应商配置（含系统凭据管理器中的密钥）、人格、提醒与设置，并恢复宠物初始位置。</div>
+          <div class="fnote" data-i18n="s123">「重置全部数据」将同时清除供应商配置（含系统凭据管理器中的密钥）、人格、提醒与设置，并恢复宠物初始位置。</div>
         </div>
         <div class="fnote" id="statsLine"></div>
       </div>
 
       <!-- 隐私 -->
       <div class="pane" id="tab-privacy">
-        <h3>隐私与安全</h3><div class="p-desc">零埋点 · 数据仅存本地 · 密钥不进入渲染层 · 出站域名公开披露（FR-SYS-003 / NFR-SEC-003 / NFR-PRV）</div>
+        <h3 data-i18n="s124">隐私与安全</h3><div class="p-desc" data-i18n="s125">零埋点 · 数据仅存本地 · 密钥不进入渲染层 · 出站域名公开披露（FR-SYS-003 / NFR-SEC-003 / NFR-PRV）</div>
         <div class="sec">
-          <h4>本地数据</h4>
+          <h4 data-i18n="s126">本地数据</h4>
           <div id="privacyInfo" class="privacy-grid"></div>
         </div>
         <div class="sec">
-          <h4>出站域名披露 <span class="tag">静态说明</span></h4>
-          <div class="fnote" style="margin:0">仅在以下场景发起网络请求：① 对话 → 你配置的模型服务域名；② 天气 → <code>geocoding-api.open-meteo.com</code>、<code>api.open-meteo.com</code>；③ 联网搜索 → <code>html.duckduckgo.com</code>；④ 更新检查 → 默认 <code>api.github.com</code> 或你填写的清单地址。应用不提供逐请求审计表；本地日志已脱敏，不含密钥与对话内容。</div>
+          <h4 data-i18n="s127">出站域名披露 <span class="tag" data-i18n="d.staticNote">静态说明</span></h4>
+          <div class="fnote" style="margin:0" data-i18n-html="h129">仅在以下场景发起网络请求：① 对话 → 你配置的模型服务域名；② 天气 → <code>geocoding-api.open-meteo.com</code>、<code>api.open-meteo.com</code>；③ 联网搜索 → <code>html.duckduckgo.com</code>；④ 更新检查 → 默认 <code>api.github.com</code> 或你填写的清单地址。应用不提供逐请求审计表；本地日志已脱敏，不含密钥与对话内容。</div>
         </div>
         <div class="sec">
-          <h4>工具能力与授权 <span class="tag">FR-TOOL-001/003 / NFR-SEC-002</span></h4>
+          <h4><span data-i18n="s133">工具能力与授权</span> <span class="tag">FR-TOOL-001/003 / NFR-SEC-002</span></h4>
           <div class="inline-opts" style="margin:0 0 8px">
-            <label><input type="checkbox" id="toolEnabled"> 允许模型调用本地工具（关闭后所有工具不可用）</label>
+            <label data-i18n="s134"><input type="checkbox" id="toolEnabled"> 允许模型调用本地工具（关闭后所有工具不可用）</label>
           </div>
           <div id="toolAuthList"></div>
-          <div class="fnote" style="margin-top:8px">工具白名单在编译期固定：创建提醒、读取剪贴板、打开白名单链接、启动白名单应用、查询天气、联网搜索。天气与联网搜索默认拒绝，需在下方显式改为允许；不存在执行任意命令的通道（NFR-SEC-002）。</div>
+          <div class="fnote" style="margin-top:8px" data-i18n-html="h135">工具白名单在编译期固定：创建提醒、读取剪贴板、打开白名单链接、启动白名单应用、查询天气、联网搜索。天气与联网搜索默认拒绝，需在下方显式改为允许；不存在执行任意命令的通道（NFR-SEC-002）。</div>
           <div style="display:flex;gap:8px;margin-top:8px">
             <input id="wlAdd" placeholder="追加允许打开的域名，如 example.com">
-            <button id="wlAddBtn">添加域名</button>
+            <button id="wlAddBtn" data-i18n="s136">添加域名</button>
           </div>
           <div id="wlList" style="margin-top:6px"></div>
         </div>
         <div class="sec">
-          <h4>敏感能力</h4>
-          <div class="fnote" style="margin:0">截图能力未启用。剪贴板仅在两种情况下被读取：你在「宠物与交互」中开启感知后由主进程比对变化（不保存、不上传），或你主动点击提示 / 模型调用 read_clipboard 且经你授权（NFR-PRV-003）。</div>
+          <h4 data-i18n="s137">敏感能力</h4>
+          <div class="fnote" style="margin:0" data-i18n="s138">截图能力未启用。剪贴板仅在两种情况下被读取：你在「宠物与交互」中开启感知后由主进程比对变化（不保存、不上传），或你主动点击提示 / 模型调用 read_clipboard 且经你授权（NFR-PRV-003）。</div>
         </div>
       </div>
 
       <!-- 关于 -->
       <div class="pane about" id="tab-about">
-        <h3>桌面 AI 宠物</h3>
-        <div class="ver" id="verLine">桌面版 v2.1.2 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
+        <h3 data-i18n="s139">桌面 AI 宠物</h3>
+        <div class="ver" id="verLine" data-i18n="s140">桌面版 v2.1.3 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
         <details open>
-          <summary>v2.1.2 收敛了什么</summary>
+          <summary data-i18n="n213.title">v2.1.3 新增了什么</summary>
           <ul>
-            <li>移除「关于」页的费用估算与价格输入，仅保留产品信息、隐私说明与更新入口</li>
-            <li>移除隐私页的逐请求出站审计表，改为静态域名披露；本地结构化日志仍脱敏保留</li>
-            <li>移除供应商编辑中的自定义请求头输入，避免敏感头明文落盘</li>
-            <li>移除「关于」页内嵌的 SRS 覆盖对照表，需求追踪统一回到 docs/SRS</li>
-            <li>久坐/喝水、剪贴板感知、天气/搜索降级为默认关闭的实验性增强，不再作为主卖点</li>
+            <li data-i18n="n213.i1">界面中英双语补全：设置页、气泡与宠物菜单的界面文案全部接入 i18n；人格、模型与皮肤名等内容保持原文</li>
+            <li data-i18n="n213.i2">更新检查默认关闭，启动不再产生隐藏出站请求；手动「检查更新」仍可随时使用</li>
+            <li data-i18n="n213.i3">久坐/喝水提醒与剪贴板感知折叠进「提醒 → 实验性增强」，默认关闭</li>
+            <li data-i18n="n213.i4">移除已无界面的用量统计与出站审计后端接口，出站记录改写入脱敏本地日志</li>
           </ul>
         </details>
         <details>
-          <summary>v2.1.1 新增了什么</summary>
+          <summary data-i18n="s141">v2.1.2 收敛了什么</summary>
           <ul>
-            <li>Codex 宠物（FR-SKN-003）：导入 <code>pet.json</code> + 1536×1872 图集（8 列 × 9 行、单格 192×208），九行按契约帧序播放并映射八态；可维护帧、时长与状态复用，并导出为 Codex 宠物包</li>
-            <li>八态单图（FR-SKN-002）：单张 4 列 × 2 行图片按行读取切成 <code>idle / happy / sleep / work / click / drag / error / talk</code>，逐格裁留白、统一画布、底边对齐</li>
-            <li>皮肤维护工具：八态诊断 / 修复、逐状态替换、批量导入、清理未引用资源、导出备份；皮肤包上限调整为 128 MB / 64 MB / 256 MB / 200 条目</li>
+            <li data-i18n="s142">移除「关于」页的费用估算与价格输入，仅保留产品信息、隐私说明与更新入口</li>
+            <li data-i18n="s143">移除隐私页的逐请求出站审计表，改为静态域名披露；本地结构化日志仍脱敏保留</li>
+            <li data-i18n="s144">移除供应商编辑中的自定义请求头输入，避免敏感头明文落盘</li>
+            <li data-i18n="s145">移除「关于」页内嵌的 SRS 覆盖对照表，需求追踪统一回到 docs/SRS</li>
+            <li data-i18n="s146">久坐/喝水、剪贴板感知、天气/搜索降级为默认关闭的实验性增强，不再作为主卖点</li>
           </ul>
         </details>
         <details>
-          <summary>v2.1 新增了什么</summary>
+          <summary data-i18n="s147">v2.1.1 新增了什么</summary>
           <ul>
-            <li>会话摘要压缩（FR-MEM-003）：超过阈值后由当前模型压缩较早消息，摘要作为上下文前缀；失败自动回退截断</li>
-            <li>TTS 朗读（FR-VOI-001）：系统语音选择、语速调节、自动朗读与逐条重读，全程不联网</li>
-            <li>低帧率模式（FR-PET-010）：工作 / 睡眠状态约 30fps，降低 CPU 占用</li>
-            <li>结构化日志（NFR-MNT-001）：JSON Lines + 级别 + 密钥脱敏</li>
+            <li data-i18n-html="h148">Codex 宠物（FR-SKN-003）：导入 <code>pet.json</code> + 1536×1872 图集（8 列 × 9 行、单格 192×208），九行按契约帧序播放并映射八态；可维护帧、时长与状态复用，并导出为 Codex 宠物包</li>
+            <li data-i18n-html="h150">八态单图（FR-SKN-002）：单张 4 列 × 2 行图片按行读取切成 <code>idle / happy / sleep / work / click / drag / error / talk</code>，逐格裁留白、统一画布、底边对齐</li>
+            <li data-i18n="s152">皮肤维护工具：八态诊断 / 修复、逐状态替换、批量导入、清理未引用资源、导出备份；皮肤包上限调整为 128 MB / 64 MB / 256 MB / 200 条目</li>
           </ul>
         </details>
         <details>
-          <summary>v2.0 实现了什么</summary>
+          <summary data-i18n="s153">v2.1 新增了什么</summary>
           <ul>
-            <li>真实系统能力：透明无边框置顶宠物窗口（置顶/任务栏可见性可配置）、独立气泡窗口（智能上下翻转 + 尾巴箭头 + 跟随移动 + 边缘拖拽调宽）、系统托盘（左键唤起 / 右键菜单）、全局快捷键（Ctrl+Shift+Space 唤起、Ctrl+, 设置）、开机自启、点击穿透、失焦自动关闭并恢复原前台窗口</li>
-            <li>主进程对话：OpenAI / Anthropic / Gemini 三类流式协议适配、SSE 逐 token 推送、停止生成、非流式自动降级、超时/5xx 自动重试、429 冷却、上下文超长自动裁剪、错误分类；密钥存 Windows 凭据管理器，渲染层不可见（FR-MDL-007/009/012/013、NFR-SEC-001）</li>
-            <li>v2.0 新增：工具调用闭环（函数调用 → 逐项授权 → 执行 → 结果回传 → 多轮续答，覆盖 OpenAI / Anthropic / Gemini 三协议）、皮肤包导入（zip：图集 + 状态机 + 提示音）、久坐/喝水提醒与免打扰时段、剪贴板感知、自动更新检查与手动安装、中英文界面切换（费用估算与出站审计 UI 已于 v2.1.2 移除）</li>
-            <li>其他功能：3 套人格 + 皮肤双向联动（含供应商绑定）、八态动画、拖拽与位置记忆、缩放、快捷动作、长期记忆注入、自然语言提醒（主进程调度器，支持一次性/每日/每周/间隔）、免打扰与补发、主动搭话、会话持久化/检索/导出、配置导入导出与 ID 重映射</li>
+            <li data-i18n="s154">会话摘要压缩（FR-MEM-003）：超过阈值后由当前模型压缩较早消息，摘要作为上下文前缀；失败自动回退截断</li>
+            <li data-i18n="s155">TTS 朗读（FR-VOI-001）：系统语音选择、语速调节、自动朗读与逐条重读，全程不联网</li>
+            <li data-i18n="s156">低帧率模式（FR-PET-010）：工作 / 睡眠状态约 30fps，降低 CPU 占用</li>
+            <li data-i18n="s157">结构化日志（NFR-MNT-001）：JSON Lines + 级别 + 密钥脱敏</li>
           </ul>
         </details>
         <details>
-          <summary>隐私说明</summary>
+          <summary data-i18n="s158">v2.0 实现了什么</summary>
           <ul>
-            <li>零上报、零埋点；对话与配置仅存本机应用数据目录；API Key 仅存于 Windows 凭据管理器，不进入数据文件、日志与导出文件（DS-001）</li>
-            <li>除模型对话外，仅在用户主动使用天气、联网搜索或更新检查时访问对应服务；完整出站域名见「隐私」页</li>
+            <li data-i18n="s159">真实系统能力：透明无边框置顶宠物窗口（置顶/任务栏可见性可配置）、独立气泡窗口（智能上下翻转 + 尾巴箭头 + 跟随移动 + 边缘拖拽调宽）、系统托盘（左键唤起 / 右键菜单）、全局快捷键（Ctrl+Shift+Space 唤起、Ctrl+, 设置）、开机自启、点击穿透、失焦自动关闭并恢复原前台窗口</li>
+            <li data-i18n="s160">主进程对话：OpenAI / Anthropic / Gemini 三类流式协议适配、SSE 逐 token 推送、停止生成、非流式自动降级、超时/5xx 自动重试、429 冷却、上下文超长自动裁剪、错误分类；密钥存 Windows 凭据管理器，渲染层不可见（FR-MDL-007/009/012/013、NFR-SEC-001）</li>
+            <li data-i18n="s161">v2.0 新增：工具调用闭环（函数调用 → 逐项授权 → 执行 → 结果回传 → 多轮续答，覆盖 OpenAI / Anthropic / Gemini 三协议）、皮肤包导入（zip：图集 + 状态机 + 提示音）、久坐/喝水提醒与免打扰时段、剪贴板感知、自动更新检查与手动安装、中英文界面切换（费用估算与出站审计 UI 已于 v2.1.2 移除）</li>
+            <li data-i18n="s162">其他功能：3 套人格 + 皮肤双向联动（含供应商绑定）、八态动画、拖拽与位置记忆、缩放、快捷动作、长期记忆注入、自然语言提醒（主进程调度器，支持一次性/每日/每周/间隔）、免打扰与补发、主动搭话、会话持久化/检索/导出、配置导入导出与 ID 重映射</li>
+          </ul>
+        </details>
+        <details>
+          <summary data-i18n="s163">隐私说明</summary>
+          <ul>
+            <li data-i18n="s164">零上报、零埋点；对话与配置仅存本机应用数据目录；API Key 仅存于 Windows 凭据管理器，不进入数据文件、日志与导出文件（DS-001）</li>
+            <li data-i18n="s165">除模型对话外，仅在用户主动使用天气、联网搜索或更新检查时访问对应服务；完整出站域名见「隐私」页</li>
           </ul>
         </details>
         <details open>
           <summary data-i18n="about.lang">界面语言（FR-SYS-006）</summary>
           <div class="inline-opts" style="margin-top:6px">
-            <label><input type="radio" name="langSel" value="zh"> 中文</label>
+            <label><input type="radio" name="langSel" value="zh"> <span data-i18n="d.langZh">中文</span></label>
             <label><input type="radio" name="langSel" value="en"> English</label>
           </div>
-          <div class="fnote" style="margin:6px 0 0">语言切换即时生效；气泡、宠物菜单与设置页同步。模型回复语言由人格 System Prompt 决定，不受此开关影响。</div>
+          <div class="fnote" style="margin:6px 0 0" data-i18n="s168">语言切换即时生效；气泡、宠物菜单与设置页同步。模型回复语言由人格 System Prompt 决定，不受此开关影响。</div>
         </details>
         <details>
-          <summary>自动更新（FR-SYS-004）</summary>
-          <div class="frow"><label>更新清单地址（HTTPS JSON）</label><input id="updateUrl" placeholder="https://…/latest.json"></div>
+          <summary data-i18n="s169">自动更新（FR-SYS-004）</summary>
+          <div class="frow"><label data-i18n="s170">更新清单地址（HTTPS JSON）</label><input id="updateUrl" placeholder="https://…/latest.json"></div>
           <div class="inline-opts" style="margin-top:8px">
-            <label><input type="checkbox" id="updateAuto"> 启动时检查更新（仅提示，不自动安装）</label>
+            <label data-i18n="s171"><input type="checkbox" id="updateAuto"> 启动时自动检查更新（默认关闭；仅提示，不自动安装，不静默下载）</label>
           </div>
           <div class="btn-row">
-            <button id="updateCheck">检查更新</button>
+            <button id="updateCheck" data-i18n="s172">检查更新</button>
           </div>
-          <div class="fnote" id="updateLine">清单格式：{"version":"2.0.0","notes":"更新说明","url":"https://…/DeskPet-setup.exe"}。安装包下载后需由你手动运行，应用不会静默执行任何安装程序。</div>
+          <div class="fnote" id="updateLine" data-i18n="s173">清单格式：{"version":"2.0.0","notes":"更新说明","url":"https://…/DeskPet-setup.exe"}。安装包下载后需由你手动运行，应用不会静默执行任何安装程序。</div>
         </details>
       </div>
 
@@ -396,7 +411,7 @@ function renderProvList() {
     const c = el('div', 'pv-card' + (p.id === editProvId ? ' on' : ''));
     c.innerHTML = '<div class="pv-name">' + (p.isDefault ? '<span class="pv-star" title="默认">★</span>' : '') + esc(p.name) +
       ' <span class="type-badge">' + esc(p.type) + '</span></div>' +
-      '<div class="pv-sub">' + esc(p.type === 'mock' ? '内置 · 无需 Key' : (p.model || '未填模型') + (p.baseUrl ? ' · ' + cut(p.baseUrl, 22) : '')) + '</div>';
+      '<div class="pv-sub">' + esc(p.type === 'mock' ? t('d.builtin') : (p.model || t('d.noModel')) + (p.baseUrl ? ' · ' + cut(p.baseUrl, 22) : '')) + '</div>';
     c.onclick = () => { editProvId = p.id; renderProvList(); renderProvEditor(); };
     list.appendChild(c);
   });
@@ -685,7 +700,7 @@ function renderVoiceOptions() {
   const sel = $id('voiceSel');
   if (!sel) return;
   sel.innerHTML = '';
-  const auto = el('option', '', '自动（优先中文）');
+  const auto = el('option', '', t('d.voiceAuto'));
   auto.value = '';
   sel.appendChild(auto);
   voiceList.forEach(v => {
@@ -697,11 +712,11 @@ function renderVoiceOptions() {
   sel.value = voiceList.some(v => v.voiceURI === want) ? want : '';
   const note = $id('voiceNote');
   if (!window.speechSynthesis) {
-    note.textContent = '当前 WebView2 环境不支持 SpeechSynthesis，语音朗读不可用。';
+    note.textContent = t('d.ttsUnsupportedEnv');
   } else if (!voiceList.length) {
-    note.textContent = '未检测到系统语音包。请在 Windows 设置 → 时间和语言 → 语音中添加语音后重试。';
+    note.textContent = t('d.ttsNoVoice');
   } else {
-    note.textContent = '使用 WebView2 内置 SpeechSynthesis 与系统语音包，不产生网络请求；每条 AI 回复也可单独点击 🔊 朗读。语音输入（ASR）尚未实现，将在后续版本接入本地运行时。';
+    note.textContent = t('d.ttsNote');
   }
 }
 if (window.speechSynthesis) {
@@ -774,18 +789,22 @@ function renderCustomSkin() {
   if (pack && pack.format === 'codex') {
     const rows = pack.rows || [];
     const frames = rows.reduce((n, r) => n + (r.frames || 0), 0);
-    info.innerHTML = '当前使用 Codex 宠物：<b>' + esc(pack.name) + '</b>（id：' + esc(pack.id || '-') + '）· 图集 ' +
-      (pack.atlas ? pack.atlas.width + '×' + pack.atlas.height : '1536×1872') + ' · ' + rows.length + ' 行 / ' + frames + ' 帧 · 约 ' +
-      fmtBytes(pack.byteSize || 0) + '。已保存 ' + imported + ' 套导入皮肤，可随时在上方切换。';
+    info.innerHTML = t('d.skinCodex', {
+      name: esc(pack.name), id: esc(pack.id || '-'),
+      atlas: pack.atlas ? pack.atlas.width + '×' + pack.atlas.height : '1536×1872',
+      rows: rows.length, frames, size: fmtBytes(pack.byteSize || 0),
+    }) + (imported ? t('d.skinSaved', { n: imported }) : '');
     return;
   }
   if (pack && pack.files) {
     const kb = Math.round(Object.values(pack.files).reduce((n, v) => n + v.length, 0) * 3 / 4 / 1024);
-    info.innerHTML = '当前使用皮肤包：<b>' + esc(pack.name) + '</b> v' + esc(pack.version || '1.0') + ' · ' +
-      Object.keys(pack.states || {}).length + ' 个状态 · 约 ' + kb + ' KB' +
-      (pack.sheet ? ' · 4×2 八态单图切割' : '') +
-      (Object.keys(pack.sounds || {}).length ? ' · ' + Object.keys(pack.sounds).length + ' 个音效' : '') +
-      '。已保存 ' + imported + ' 套导入皮肤，可随时在上方切换。';
+    const nSounds = Object.keys(pack.sounds || {}).length;
+    info.innerHTML = t('d.skinPack', {
+      name: esc(pack.name), ver: esc(pack.version || '1.0'),
+      states: Object.keys(pack.states || {}).length, kb,
+      sheet: pack.sheet ? t('d.skinPackSheet') : '',
+      sounds: nSounds ? t('d.skinPackSounds', { n: nSounds }) : '',
+    }) + (imported ? t('d.skinSaved', { n: imported }) : '');
     return;
   }
   if (cs && cs.data) {
@@ -794,21 +813,20 @@ function renderCustomSkin() {
     const trimNote = trim && trim.cropped && trim.crop
       ? '已自动裁剪：' + trim.crop.w + '×' + trim.crop.h + '（原图裁掉 ' + trim.crop.x + ',' + trim.crop.y + ' 起的留白）'
       : (trim && trim.note ? trim.note : '');
-    info.innerHTML = '当前使用自定义形象：<b>' + esc(cs.name || '未命名') + '</b> · 约 ' + kb + ' KB。支持 GIF / APNG / 动态 WebP，导入后替代内置矢量形象。' +
+    info.innerHTML = t('d.skinImage', { name: esc(cs.name || t('d.untitled')), kb }) +
       (trimNote ? '<br>' + esc(trimNote) + '。' : '') +
-      '已保存 ' + imported + ' 套导入皮肤，可随时在上方切换。';
+      (imported ? t('d.skinSaved', { n: imported }) : '');
   } else if (entry) {
-    info.innerHTML = '当前皮肤：<b>' + esc(entry.label) + '</b>。';
+    info.innerHTML = t('d.skinEntry', { name: esc(entry.label) });
   } else {
-    info.innerHTML = '导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互；图片大小不限，过大的文件会占用更多内存与磁盘。' +
-      (imported ? '已保存 ' + imported + ' 套导入皮肤，可随时在上方切换。' : '');
+    info.innerHTML = t('d.skinEmpty') + (imported ? t('d.skinSaved', { n: imported }) : '');
   }
 }
 
 /* ============ 皮肤维护工具 ============ */
 const SKIN_STATE_LABELS = [
-  ['idle', '待机'], ['drag', '拖拽'], ['click', '点击'], ['talk', '说话'],
-  ['sleep', '睡眠'], ['work', '工作'], ['happy', '开心'], ['error', '错误'],
+  ['idle', 'd.stIdle'], ['drag', 'd.stDrag'], ['click', 'd.stClick'], ['talk', 'd.stTalk'],
+  ['sleep', 'd.stSleep'], ['work', 'd.stWork'], ['happy', 'd.stHappy'], ['error', 'd.stError'],
 ];
 let pendingSkinState = null;
 
@@ -853,7 +871,7 @@ function renderSkinMaintenance() {
   nameInput.disabled = !entry;
   verInput.disabled = !pack;
   $id('skinMakePack').disabled = !cs || !cs.data;
-  $id('skinExportBtn').textContent = pack && pack.format === 'codex' ? '导出 Codex 宠物包（.zip）' : (pack ? '导出当前皮肤（.zip）' : (cs && cs.data ? '导出当前形象图片' : '导出当前皮肤（.zip）'));
+  $id('skinExportBtn').textContent = pack && pack.format === 'codex' ? '导出 Codex 宠物包（.zip）' : (pack ? t('d.skinExportZip') : (cs && cs.data ? '导出当前形象图片' : t('d.skinExportZip')));
   const cxBtn = $id('codexExportBtn');
   if (cxBtn) cxBtn.disabled = !pack;
   const diag = $id('skinDiag');
@@ -873,29 +891,33 @@ function renderSkinMaintenance() {
     const total = fileNames.reduce((n, f) => n + skinDataBytes(files[f]), 0);
     const soundCount = Object.keys(pack.sounds || {}).length;
     let issues = [];
-    if (missing.length) issues.push('<span style="color:var(--err)">' + missing.length + ' 个状态缺失</span>（运行时回退待机图）');
-    if (unreferenced.length) issues.push(unreferenced.length + ' 个未引用图片');
-    if (!states.idle || !files[states.idle]) issues.push('<span style="color:var(--err)">缺少可用的待机图</span>');
-    diag.innerHTML = '当前皮肤包：<b>' + esc(pack.name || '未命名') + '</b> v' + esc(pack.version || '1.0') +
-      ' · ' + fileNames.length + ' 张图片（' + fmtBytes(total) + '）' + (soundCount ? ' · ' + soundCount + ' 个音效' : '') + '<br>' +
-      (issues.length ? '检测到：' + issues.join('；') : '<span style="color:var(--ok)">✓ 八态映射与资源引用完整</span>');
-    SKIN_STATE_LABELS.forEach(([st, label]) => {
+    if (missing.length) issues.push('<span style="color:var(--err)">' + t('d.stMissingN', { n: missing.length }) + '</span>' + t('d.stFallbackNote'));
+    if (unreferenced.length) issues.push(t('d.stUnref', { n: unreferenced.length }));
+    if (!states.idle || !files[states.idle]) issues.push('<span style="color:var(--err)">' + t('d.stNoIdle') + '</span>');
+    diag.innerHTML = t('d.packDiag', {
+      name: esc(pack.name || t('d.untitled')), ver: esc(pack.version || '1.0'),
+      files: fileNames.length, size: fmtBytes(total),
+      sounds: soundCount ? t('d.skinPackSounds', { n: soundCount }) : '',
+    }) + '<br>' +
+      (issues.length ? t('d.stIssues') + issues.join(t('d.stSep')) : '<span style="color:var(--ok)">' + t('d.stAllOk') + '</span>');
+    SKIN_STATE_LABELS.forEach(([st, labelKey]) => {
+      const label = t(labelKey);
       const file = states[st];
       const src = (file && files[file]) || '';
       const idleFile = states.idle;
       const status = !src ? 'missing' : (st !== 'idle' && file === idleFile ? 'warn' : 'ok');
-      const badge = status === 'missing' ? '缺失' : (status === 'warn' ? '回退待机' : '已映射');
+      const badge = status === 'missing' ? t('d.stMissing') : (status === 'warn' ? t('d.stWarn') : t('d.stMapped'));
       const card = el('div', 'skin-state-item ' + status);
       const head = el('div', 'skin-state-head');
       head.innerHTML = '<span class="skin-state-name">' + label + ' · ' + st + '</span><span class="skin-state-badge">' + badge + '</span>';
       const preview = el('div', 'skin-state-preview');
       preview.innerHTML = src
         ? '<img alt="' + esc(label) + '" src="' + src + '">'
-        : '<span class="ss-empty">无图片</span>';
+        : '<span class="ss-empty">' + t('d.stNoImg') + '</span>';
       const sel = el('select');
       sel.className = 'ss-select';
       sel.dataset.state = st;
-      sel.innerHTML = '<option value="">（缺失）</option>' + fileNames.map(f =>
+      sel.innerHTML = '<option value="">' + t('d.stMissingOpt') + '</option>' + fileNames.map(f =>
         '<option value="' + esc(f) + '">' + esc(cut(f, 24)) + '</option>').join('');
       sel.value = file && files[file] ? file : '';
       sel.addEventListener('change', () => {
@@ -907,9 +929,9 @@ function renderSkinMaintenance() {
         else delete pack2.states[st];
         saveState();
         renderPetTab();
-        toast('已更新「' + label + '」状态映射', 'ok');
+        toast(t('d.stUpdated', { label }), 'ok');
       });
-      const rep = el('button', 'ss-replace', '替换图片');
+      const rep = el('button', 'ss-replace', t('d.stReplace'));
       rep.addEventListener('click', () => {
         pendingSkinState = st;
         $id('skinStateFile').click();
@@ -929,7 +951,7 @@ function renderSkinMaintenance() {
     grid.appendChild(card);
     return;
   }
-  diag.innerHTML = '当前使用内置矢量皮肤，没有可维护的自定义图片资源。导入动画形象或皮肤包后，可在这里检查八态映射、逐状态替换图片并导出备份。';
+  diag.innerHTML = t('d.skinNoCustom') + '。';
 }
 /* FR-SKN-003：Codex 宠物的行 / 帧维护
    九行固定（行序不可改），每行只允许 1..契约上限帧，时长单位为 ms；未使用的列不会产生帧。 */
@@ -1916,7 +1938,7 @@ function renderRemList() {
   if (!box) return;
   box.innerHTML = '';
   if (!S.reminders.length) {
-    box.appendChild(el('div', 'empty-tip', '暂无提醒。对我说「25 分钟后提醒我喝水」即可创建。'));
+    box.appendChild(el('div', 'empty-tip', t('d.noReminder')));
     return;
   }
   S.reminders.forEach(r => {
@@ -1936,10 +1958,11 @@ function renderRemList() {
 function renderMemTab() {
   const box = $id('memList');
   box.innerHTML = '';
+  $id('memCountLabel').textContent = t('d.memTitle');
   $id('memCount').textContent = S.memories.length;
   $id('summaryThreshold').value = Math.round(clampNum(S.settings.summaryThreshold, 4, 100, 24));
   if (!S.memories.length) {
-    box.appendChild(el('div', 'empty-tip', '暂无记忆。对我说「记住：我喜欢蓝色」，或用上方输入框手动添加。'));
+    box.appendChild(el('div', 'empty-tip', t('d.noMem')));
     return;
   }
   S.memories.forEach(m => {
@@ -1979,12 +2002,12 @@ $id('summaryThreshold').addEventListener('change', e => {
 /* ============ 隐私 ============ */
 // FR-TOOL-003：工具授权可视化撤销（AC-012）。值：ask / allow / deny
 const TOOL_META = [
-  ['create_reminder', '创建提醒', '在本地写入一条定时提醒'],
-  ['read_clipboard', '读取剪贴板', '读取剪贴板中的纯文本并回传给模型'],
-  ['open_url', '打开链接', '用默认浏览器打开白名单域名'],
-  ['open_app', '打开应用', '启动白名单内的本地应用'],
-  ['get_weather', '查询天气', '向 Open-Meteo 发送城市名'],
-  ['web_search', '联网搜索', '向 DuckDuckGo 发送搜索关键词'],
+  ['create_reminder', 'd.tCreate', 'd.tCreateD'],
+  ['read_clipboard', 'd.tClip', 'd.tClipD'],
+  ['open_url', 'd.tUrl', 'd.tUrlD'],
+  ['open_app', 'd.tApp', 'd.tAppD'],
+  ['get_weather', 'd.tWeather', 'd.tWeatherD'],
+  ['web_search', 'd.tSearch', 'd.tSearchD'],
 ];
 function renderToolAuth() {
   const ts = S.settings.toolSettings || (S.settings.toolSettings = { enabled: true, auth: {}, openWhitelist: [] });
@@ -1992,13 +2015,14 @@ function renderToolAuth() {
   $id('toolEnabled').checked = ts.enabled !== false;
   const box = $id('toolAuthList');
   box.innerHTML = '';
-  TOOL_META.forEach(([name, label, desc]) => {
+  TOOL_META.forEach(([name, labelKey, descKey]) => {
+    const label = t(labelKey), desc = t(descKey);
     const cur = ts.auth[name] || 'ask';
     const row = el('div', 'row-item');
     row.innerHTML = '<div class="ri-main"><div class="ri-title">' + esc(label) + '</div><div class="ri-sub">' + esc(desc) + '</div></div>';
     const sel = el('select');
-    [['ask', '每次询问'], ['allow', '始终允许'], ['deny', '始终拒绝']].forEach(([v, t]) => {
-      const o = el('option', '', t); o.value = v; if (v === cur) o.selected = true; sel.appendChild(o);
+    [['ask', 'd.allow'], ['allow', 'd.always'], ['deny', 'd.deny']].forEach(([v, k]) => {
+      const o = el('option', '', t(k)); o.value = v; if (v === cur) o.selected = true; sel.appendChild(o);
     });
     sel.onchange = () => {
       ts.auth[name] = sel.value;
@@ -2045,15 +2069,15 @@ async function renderPrivacyTab() {
   try {
     const info = await invoke('privacy_info');
     const rows = [
-      ['数据目录', info.dataDir || '-'],
-      ['密钥存储', info.keyStore || '-'],
-      ['遥测 / 埋点', info.telemetry ? '已启用' : '未启用（零上报）'],
-      ['对话数据', info.localOnly ? '仅存本机' : '未知'],
-      ['旧版明文密钥', info.legacyPlaintextKeys ? '检测到残留，请重启应用以完成迁移' : '无'],
+      [t('d.dataDir'), info.dataDir || '-'],
+      [t('d.keyStore'), info.keyStoreName ? t('d.keyStoreVal', { name: info.keyStoreName }) : (info.keyStore || '-')],
+      [t('d.telemetry'), info.telemetry ? t('d.enabled') : t('d.disabledZero')],
+      [t('d.chatData'), info.localOnly ? t('d.localOnly') : t('d.unknown')],
+      [t('d.legacyKeys'), info.legacyPlaintextKeys ? t('d.legacyHit') : t('d.none')],
     ];
     box.innerHTML = rows.map(r => '<div class="pg-k">' + esc(r[0]) + '</div><div class="pg-v">' + esc(r[1]) + '</div>').join('');
   } catch (e) {
-    box.innerHTML = '<div class="pg-v">读取失败：' + esc(String(e)) + '</div>';
+    box.innerHTML = '<div class="pg-v">' + t('d.failed') + esc(String(e)) + '</div>';
   }
   renderToolAuth();
 }
@@ -2066,16 +2090,16 @@ function renderSessList() {
   let list = S.sessions;
   if (kw) list = list.filter(s => (s.title || '').toLowerCase().includes(kw) || s.msgs.some(m => (m.content || '').toLowerCase().includes(kw)));
   if (!list.length) {
-    box.appendChild(el('div', 'empty-tip', kw ? '没有匹配「' + esc(kw) + '」的会话' : '暂无历史会话'));
+    box.appendChild(el('div', 'empty-tip', kw ? t('d.noSessKw', { kw: esc(kw) }) : t('d.noSess')));
     return;
   }
   list.forEach(s => {
     const pers = getPers(s.personaId);
     const row = el('div', 'row-item');
-    row.innerHTML = '<div class="ri-main"><div class="ri-title">' + esc(s.title || '（未命名会话）') + (s.id === S.currentSessionId ? ' <span class="pv-star">● 当前</span>' : '') + '</div>' +
-      '<div class="ri-sub">' + (pers ? pers.avatar + ' ' + esc(pers.name) : '人格已删除') + ' · ' + s.msgs.length + ' 条消息 · ' + fmtDT(s.updatedAt) + '</div></div>';
+    row.innerHTML = '<div class="ri-main"><div class="ri-title">' + esc(s.title || t('d.untitled')) + (s.id === S.currentSessionId ? ' <span class="pv-star">' + t('d.current') + '</span>' : '') + '</div>' +
+      '<div class="ri-sub">' + (pers ? pers.avatar + ' ' + esc(pers.name) : '人格已删除') + ' · ' + (s.msgs.length === 1 ? t('d.msg1') : t('d.msgs', { n: s.msgs.length })) + ' · ' + fmtDT(s.updatedAt) + '</div></div>';
     const btns = el('div', 'ri-btns');
-    const load = el('button', '', '设为当前');
+    const load = el('button', '', t('d.setCurrent'));
     load.onclick = () => {
       S.currentSessionId = s.id;
       S.settings.lastPersonaId = s.personaId;
@@ -2084,14 +2108,14 @@ function renderSessList() {
       invoke('show_bubble_cmd');
       toast('已载入会话', 'ok');
     };
-    const exp = el('button', '', '导出');
+    const exp = el('button', '', t('d.export'));
     exp.onclick = async () => {
       try {
         const path = await invoke('export_text', { filename: '会话-' + (s.title || s.id) + '.md', content: sessionToMd(s) });
         toast('已导出：' + path, 'ok');
       } catch (e) { toast('导出失败：' + e, 'err'); }
     };
-    const del = el('button', 'danger', '删');
+    const del = el('button', 'danger', t('d.del'));
     del.onclick = () => {
       if (!confirm('删除会话「' + (s.title || '未命名') + '」（' + s.msgs.length + ' 条消息）？')) return;
       S.sessions = S.sessions.filter(x => x.id !== s.id);
@@ -2236,15 +2260,15 @@ $id('clrAll').addEventListener('click', () => {
 
 /* ============ 关于 ============ */
 async function renderAbout() {
-  try { $id('verLine').textContent = '桌面版 ' + (await invoke('get_app_version')) + ' · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2'; } catch (e) { }
+  try { $id('verLine').textContent = t('d.verLine', { v: await invoke('get_app_version') }); } catch (e) { }
   const lg = document.querySelector('input[name=langSel][value="' + (S.settings.lang === 'en' ? 'en' : 'zh') + '"]');
   if (lg) lg.checked = true;
   $id('updateUrl').value = S.settings.updateUrl || '';
-  $id('updateAuto').checked = S.settings.updateAuto !== false;
+  $id('updateAuto').checked = S.settings.updateAuto === true;
   $id('reminderSound').checked = S.settings.reminderSound !== false;
-  try { $id('statsLine').textContent = '本地数据：会话 ' + S.sessions.length + ' 个 · 记忆 ' + S.memories.length + ' 条 · 提醒 ' + S.reminders.length + ' 条'; } catch (e) { }
+  try { $id('statsLine').textContent = t('d.stats', { s: S.sessions.length, m: S.memories.length, r: S.reminders.length }); } catch (e) { }
   // FR-SYS-004：启动后首次打开「关于」时静默检查一次（可关闭），只提示不安装
-  if (S.settings.updateAuto !== false && S.settings.updateUrl && !window.__updateChecked) {
+  if (S.settings.updateAuto === true && S.settings.updateUrl && !window.__updateChecked) {
     window.__updateChecked = true;
     checkUpdate(true);
   }
@@ -2260,12 +2284,12 @@ document.querySelectorAll('input[name=langSel]').forEach(r => r.addEventListener
 }));
 $id('updateUrl').addEventListener('change', e => { S.settings.updateUrl = e.target.value.trim(); saveState(); });
 $id('updateAuto').addEventListener('change', e => { S.settings.updateAuto = e.target.checked; saveState(); });
-$id('updateCheck').addEventListener('click', () => checkUpdate(false));
-async function checkUpdate(silent) {
+$id('updateCheck').addEventListener('click', () => checkUpdate(false, true));
+async function checkUpdate(silent, manual) {
   const line = $id('updateLine');
   if (!silent) line.textContent = '正在检查更新…';
   try {
-    const r = await invoke('update_check');
+    const r = await invoke('update_check', { manual: !!manual });
     if (!r.ok) { if (!silent) line.textContent = '✗ ' + (r.message || '检查失败'); return; }
     if (!r.newer) {
       line.textContent = '✓ 已是最新版本（当前 ' + r.current + '）';
@@ -2306,6 +2330,11 @@ tListen('state-changed', async ev => {
 tListen('state-reset', async () => {
   await loadState();
   editProvId = null; editPersId = null;
+  renderAll();
+});
+// 其他窗口切换语言时（tEmit 广播），同步重绘本页动态内容（隐私表、会话列表、计数等）
+tListen('lang-changed', async () => {
+  applyI18n();
   renderAll();
 });
 tListen('settings-shown', async () => {

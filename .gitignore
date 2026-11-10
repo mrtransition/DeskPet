@@ -29,5 +29,9 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
+# 本地验证用 npm 依赖（仅前端回归脚本临时安装，不入库）
+node_modules/
+package-lock.json
+
 # 运行时数据（如有误生成）
 *.log

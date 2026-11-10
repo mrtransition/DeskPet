@@ -17,7 +17,17 @@ const clone = o => JSON.parse(JSON.stringify(o));
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const cut = (s, n) => (String(s).length > n ? String(s).slice(0, n) + '…' : String(s));
 const fmtTime = ts => { const d = new Date(ts); const p = x => String(x).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()); };
-const fmtDT = ts => { const d = new Date(ts); const p = x => String(x).padStart(2, '0'); return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + p(d.getHours()) + ':' + p(d.getMinutes()); };
+/* 日期时间：跟随界面语言。英文用 "Jan 5 14:30"，中文用 "1月5日 14:30" */
+const fmtDT = ts => {
+  const d = new Date(ts); const p = x => String(x).padStart(2, '0');
+  const time = p(d.getHours()) + ':' + p(d.getMinutes());
+  const en = typeof S !== 'undefined' && S && S.settings && S.settings.lang === 'en';
+  if (en) {
+    const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+    return mon + ' ' + d.getDate() + ' ' + time;
+  }
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + time;
+};
 const uid = p => p + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const clampNum = (v, lo, hi, dft) => { const n = parseFloat(v); if (isNaN(n)) return dft; return Math.max(lo, Math.min(hi, n)); };
 

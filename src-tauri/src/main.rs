@@ -75,13 +75,13 @@ const DEFAULT_STATE: &str = r##"{
     "dnd": false, "dndStart": "", "dndEnd": "",
     "clipboardWatch": false,
     "lang": "zh", "voice": false, "voiceURI": "", "voiceRate": 1,
-    "summaryThreshold": 24, "priceIn": 0, "priceOut": 0,
-    "updateUrl": "https://api.github.com/repos/mrtransition/deskpet/releases/latest",
-    "updateAuto": true,
+    "summaryThreshold": 24,
+    "updateUrl": "https://api.github.com/repos/mrtransition/DeskPet/releases/latest",
+    "updateAuto": false,
     "toolSettings": {"enabled": true, "auth": {"get_weather": "deny", "web_search": "deny"}, "openWhitelist": ["github.com", "www.github.com", "developer.mozilla.org", "www.bing.com", "www.baidu.com", "wikipedia.org"]},
     "lastPersonaId": "ps-1", "lastProviderId": null
   },
-  "stats": {"requests": 0, "tokensIn": 0, "tokensOut": 0, "costIn": 0, "costOut": 0}
+  "stats": {"requests": 0, "tokensIn": 0, "tokensOut": 0}
 }"##;
 
 // ================= 应用上下文 =================
@@ -99,21 +99,11 @@ struct AppCtx {
     pet_visible: Mutex<bool>,
     pending: Mutex<Vec<Value>>,
     dnd_queue: Mutex<Vec<Value>>,
-    outbound: Mutex<Vec<Value>>,
     file_lock: Mutex<()>,
     // 按授权 id 索引：并发工具调用（多窗口/连续调用）不会互相覆盖等待槽
     tool_wait: Mutex<std::collections::HashMap<String, ToolWait>>,
     clipboard_last: Mutex<String>,
-    usage: Mutex<UsageAcc>,
     http: reqwest::Client,
-}
-
-// FR-SYS-005：token 用量与估算费用（仅本地累计，不上报）
-#[derive(Default, Clone)]
-struct UsageAcc {
-    requests: i64,
-    tokens_in: i64,
-    tokens_out: i64,
 }
 
 // FR-REM-006：久坐 / 喝水计时器
@@ -1823,7 +1813,10 @@ fn join_url(base: &str, path: &str) -> String {
     format!("{}{}", b, path)
 }
 
-// FR-MDL-008：每个供应商可单独配置 HTTP / SOCKS5 代理。
+// 应用内 HTTP / SOCKS5 代理（FR-MDL-008）已于 SRS v1.2 移出产品范围：设置页不提供输入入口，
+// 普通用户请求直接复用应用级客户端，遵循操作系统与 reqwest 的环境变量代理设置。
+// 这里仅保留对历史数据中 proxy / proxyType 字段的兼容读取，避免旧配置导致请求失败或迁移丢失；
+// 不新增入口、不写入默认值（见默认状态与 state_save 白名单）。
 // 未配置时复用应用级客户端；配置后按代理类型构建独立客户端（reqwest socks feature）。
 fn client_for(app: &AppHandle, conf: &ProvConf) -> Result<reqwest::Client, String> {
     let proxy = conf.proxy.trim();
@@ -2415,7 +2408,9 @@ fn host_of(base: &str) -> String {
         .unwrap_or_else(|| "invalid-url".into())
 }
 
-// NFR-SEC-003 / 3.2.4：出站审计只记录域名与状态，绝不记录密钥、请求头或请求体
+// NFR-SEC-003 / 3.2.4：出站记录只写域名与状态，绝不写密钥、请求头或请求体。
+// v1.2 起隐私页不再提供逐请求审计表（SRS v1.2 已移出产品范围），
+// 这里改为写入脱敏的本地 JSON Lines 日志，排障时可直接查看 deskpet.log。
 fn record_outbound(
     app: &AppHandle,
     host: &str,
@@ -2426,13 +2421,7 @@ fn record_outbound(
     latency_ms: u64,
     attempt: i64,
 ) {
-    let ctx = app.state::<AppCtx>();
-    let mut log = ctx.outbound.lock().unwrap_or_else(|e| e.into_inner());
-    if log.len() >= 100 {
-        log.remove(0);
-    }
-    log.push(json!({
-        "ts": now_ms(),
+    let msg = json!({
         "host": host,
         "type": ptype,
         "model": model,
@@ -2440,15 +2429,15 @@ fn record_outbound(
         "ok": ok,
         "latency": latency_ms,
         "attempt": attempt,
-    }));
+    })
+    .to_string();
+    log_event(app, if ok { "info" } else { "warn" }, "outbound", &msg);
 }
 
-// 一次请求的流式结果：正文增量已通过事件推给气泡，这里只回传工具调用与统计。
+// 一次请求的流式结果：正文增量已通过事件推给气泡，这里只回传工具调用。
 struct TurnOutcome {
     text: String,
     calls: Vec<ToolCall>,
-    tin: i64,
-    tout: i64,
 }
 
 // FR-TOOL-001/004 与 FR-MDL-009/010/011/012：单轮请求 + 重试/裁剪 + 流式解析。
@@ -2632,7 +2621,7 @@ async fn run_turn(
                     let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
                 }
                 let calls = acc.into_calls();
-                return Ok(TurnOutcome { tin: est_tokens(&body), tout: est_tokens(&text), text, calls });
+                return Ok(TurnOutcome { text, calls });
             }
         } else if want_stream && is_sse {
             use futures_util::StreamExt;
@@ -2710,11 +2699,10 @@ async fn run_turn(
                 let _ = app.emit_to("bubble", "chat-delta", json!({"text": text}));
             }
             let calls = acc.into_calls();
-            return Ok(TurnOutcome { tin: est_tokens(&body), tout: est_tokens(&text), text, calls });
+            return Ok(TurnOutcome { text, calls });
         }
         let calls = acc.into_calls();
-        let tin = messages.iter().map(|m| est_tokens(&m.content)).sum::<i64>();
-        return Ok(TurnOutcome { tin, tout: est_tokens(&text), text, calls });
+        return Ok(TurnOutcome { text, calls });
     }
 }
 
@@ -2800,14 +2788,6 @@ async fn run_chat(app: AppHandle, args: ChatArgs) {
             }
             Err((status, msg, retry_after)) => return emit_err(status, msg, retry_after),
         };
-        // FR-SYS-005：逐轮累计 token 用量，供用量统计与费用估算
-        {
-            let ctx = app.state::<AppCtx>();
-            let mut u = ctx.usage.lock().unwrap_or_else(|e| e.into_inner());
-            u.tokens_in += outcome.tin;
-            u.tokens_out += outcome.tout;
-            u.requests += 1;
-        }
         if outcome.calls.is_empty() {
             let _ = app.emit_to("bubble", "chat-done", ());
             return;
@@ -2945,7 +2925,7 @@ fn merge_state_snapshot(st: &mut Value, state: Value, origin: &str) {
             "bubbleIdleClose", "chatter", "enterSend", "newSessionPerClick", "lowFps", "customSkin",
             "summaryThreshold", "voice", "voiceURI", "voiceRate", "reminderSound", "health",
             "clipboardWatch", "toolSettings", "updateUrl", "updateAuto", "lang", "dndStart",
-            "dndEnd", "priceIn", "priceOut", "skinPack", "skins", "activeSkin",
+            "dndEnd", "skinPack", "skins", "activeSkin",
         ]
         .iter()
         .filter(|k| !st["settings"][*k].is_null())
@@ -4947,55 +4927,13 @@ fn privacy_info(app: AppHandle, ctx: tauri::State<AppCtx>) -> Value {
     };
     json!({
         "dataDir": dir,
-        "keyStore": format!("Windows 凭据管理器（服务名 {}）", KEY_SERVICE),
+        // 仅返回中性技术标识，文案与语言由前端 i18n 决定，避免英文界面出现中文
+        "keyStoreName": KEY_SERVICE,
+        "keyStore": "Windows Credential Manager",
         "telemetry": false,
         "localOnly": true,
         "legacyPlaintextKeys": legacy_plaintext,
-        "outboundAudit": true,
     })
-}
-
-#[tauri::command]
-fn outbound_log(ctx: tauri::State<AppCtx>) -> Vec<Value> {
-    ctx.outbound
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-}
-
-#[tauri::command]
-fn outbound_clear(ctx: tauri::State<AppCtx>) {
-    ctx.outbound
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
-}
-
-// FR-SYS-005：用量统计与费用估算（单价由用户在设置页填写，元 / 百万 token）
-#[tauri::command]
-fn usage_snapshot(ctx: tauri::State<AppCtx>) -> Value {
-    let u = ctx.usage.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let (pin, pout) = {
-        let st = state_lock(&ctx);
-        (
-            st["settings"]["priceIn"].as_f64().unwrap_or(0.0),
-            st["settings"]["priceOut"].as_f64().unwrap_or(0.0),
-        )
-    };
-    let cost = (u.tokens_in as f64 * pin + u.tokens_out as f64 * pout) / 1_000_000.0;
-    json!({
-        "requests": u.requests,
-        "tokensIn": u.tokens_in,
-        "tokensOut": u.tokens_out,
-        "cost": (cost * 10000.0).round() / 10000.0,
-        "priceIn": pin,
-        "priceOut": pout,
-    })
-}
-
-#[tauri::command]
-fn usage_reset(ctx: tauri::State<AppCtx>) {
-    *ctx.usage.lock().unwrap_or_else(|e| e.into_inner()) = UsageAcc::default();
 }
 
 #[tauri::command]
@@ -5218,8 +5156,9 @@ fn quit_app(app: AppHandle) {
 
 #[tauri::command]
 fn get_app_version(app: AppHandle) -> String {
-    // 版本号唯一来源：tauri.conf.json（此前硬编码曾与实际版本脱节）
-    format!("{}（桌面版）", app.package_info().version)
+    // 版本号唯一来源：tauri.conf.json（此前硬编码曾与实际版本脱节）。
+    // 只返回纯版本号：语言与「桌面版」等措辞由前端 i18n 决定，避免英文界面出现中文。
+    app.package_info().version.to_string()
 }
 
 // FR-SYS-004：检查更新。仅在用户点击「检查更新」时发起一次 HTTPS GET，
@@ -5232,19 +5171,20 @@ fn version_tuple(v: &str) -> (u64, u64, u64) {
 }
 
 #[tauri::command]
-async fn update_check(app: AppHandle) -> Result<Value, String> {
+async fn update_check(app: AppHandle, manual: Option<bool>) -> Result<Value, String> {
     let (url, enabled) = {
         let ctx = app.state::<AppCtx>();
         let st = state_lock(&ctx);
         (
             st["settings"]["updateUrl"].as_str().unwrap_or("").to_string(),
-            st["settings"]["updateAuto"].as_bool().unwrap_or(true),
+            st["settings"]["updateAuto"].as_bool().unwrap_or(false),
         )
     };
     if url.trim().is_empty() {
         return Ok(json!({"ok": false, "message": "未配置更新源地址"}));
     }
-    if !enabled {
+    // 自动检查（manual=false）需用户开启；手动点击「检查更新」不受开关限制
+    if !enabled && !manual.unwrap_or(false) {
         return Ok(json!({"ok": false, "message": "已关闭更新检查"}));
     }
     let u = reqwest::Url::parse(url.trim()).map_err(|_| "更新地址格式无效".to_string())?;
@@ -5387,11 +5327,9 @@ fn main() {
                 pet_visible: Mutex::new(true),
                 pending: Mutex::new(vec![]),
                 dnd_queue: Mutex::new(vec![]),
-                outbound: Mutex::new(vec![]),
                 file_lock: Mutex::new(()),
                 tool_wait: Mutex::new(std::collections::HashMap::new()),
                 clipboard_last: Mutex::new(String::new()),
-                usage: Mutex::new(UsageAcc::default()),
                 http,
             });
 
@@ -5575,9 +5513,9 @@ fn main() {
             bubble_reposition, bubble_set_width,
             open_settings_cmd, set_dnd,
             set_pet_taskbar, set_pet_always_on_top,
-            privacy_info, outbound_log, outbound_clear,
+            privacy_info,
             reminder_add, reminder_snooze, reminder_delete,
-            take_pending_notices, usage_snapshot, usage_reset,
+            take_pending_notices,
             export_text, quit_app, get_app_version, update_check, update_download, reveal_file
         ])
         .run(tauri::generate_context!())
@@ -5731,11 +5669,9 @@ mod tests {
                 pet_visible: Mutex::new(true),
                 pending: Mutex::new(vec![]),
                 dnd_queue: Mutex::new(vec![]),
-                outbound: Mutex::new(vec![]),
                 file_lock: Mutex::new(()),
                 tool_wait: Mutex::new(std::collections::HashMap::new()),
                 clipboard_last: Mutex::new(String::new()),
-                usage: Mutex::new(UsageAcc::default()),
                 http: reqwest::Client::new(),
             };
             {
@@ -5907,11 +5843,9 @@ mod tests {
                 pet_visible: Mutex::new(true),
                 pending: Mutex::new(vec![]),
                 dnd_queue: Mutex::new(vec![]),
-                outbound: Mutex::new(vec![]),
                 file_lock: Mutex::new(()),
                 tool_wait: Mutex::new(std::collections::HashMap::new()),
                 clipboard_last: Mutex::new(String::new()),
-                usage: Mutex::new(UsageAcc::default()),
                 http: reqwest::Client::new(),
             };
             write_state_file(&ctx, "{\"v\":1}");
@@ -6252,6 +6186,38 @@ mod codex_contract_tests {
             }
             assert!(base64_decode("a$b").is_err());
             assert_eq!(base64_decode("aGVs\nbG8=").unwrap(), b"hello".to_vec());
+        }
+
+        // 产品相关性收敛（SRS v1.2 / 审计 D1~D5）：默认状态不得再带开发者面板字段
+        #[test]
+        fn default_state_has_no_developer_panel_fields() {
+            let v = default_state();
+            for k in ["priceIn", "priceOut"] {
+                assert!(v["settings"].get(k).is_none(), "默认状态不应包含 {}", k);
+            }
+            // 自动更新默认关闭（减少隐藏出站），手动检查仍可用
+            assert_eq!(v["settings"]["updateAuto"], false);
+            // 更新仓库名大小写必须与 GitHub 实际仓库一致，否则 404
+            let url = v["settings"]["updateUrl"].as_str().unwrap();
+            assert!(url.contains("/repos/mrtransition/DeskPet/"), "{}", url);
+            // 实验性工具默认拒绝出站
+            assert_eq!(v["settings"]["toolSettings"]["auth"]["get_weather"], "deny");
+            assert_eq!(v["settings"]["toolSettings"]["auth"]["web_search"], "deny");
+            // 健康提醒与剪贴板感知默认关闭
+            assert_eq!(v["settings"]["health"]["enabled"], false);
+            assert_eq!(v["settings"]["clipboardWatch"], false);
+        }
+
+        // 费用估算与出站审计 UI 已移出用户界面：对应命令不得再注册（否则等于保留隐藏入口）
+        #[test]
+        fn removed_commands_are_not_registered() {
+            let src = include_str!("main.rs");
+            for cmd in ["usage_snapshot", "usage_reset", "outbound_log", "outbound_clear"] {
+                assert!(
+                    !src.contains(&format!("fn {}(", cmd)),
+                    "{} 应已移除", cmd
+                );
+            }
         }
 
         #[test]
