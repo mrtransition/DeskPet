@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.1.3-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.1.4-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -36,7 +36,7 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | 🎭 **八态动画** | idle / drag / click / talk / sleep / work / happy / error 全矢量状态机，50%–200% 无级缩放 |
 | 🖥 **系统集成** | 托盘菜单（左键唤起气泡）、全局快捷键、开机自启、会话检索与 Markdown 导出 |
 | 🛠 **工具调用** | 模型可调用本地工具：创建提醒、读剪贴板、打开白名单链接 / 应用；天气与联网搜索为默认关闭的实验性工具。首次调用弹卡片授权，可逐项设「每次询问 / 始终允许 / 始终拒绝」，执行结果回传模型续答（最多 4 轮） |
-| 🎨 **皮肤包** | `.deskpet-skin.zip`：`skin.json` 状态机映射 + 八态图集 + 可选提示音，在设置里一键导入；内置皮肤维护工具（八态诊断 / 修复 / 逐状态替换 / 清理未引用资源 / 导出备份） |
+| 🎨 **皮肤包** | `.deskpet-skin.zip`：`skin.json` 状态机映射 + 八态图集 + 可选提示音，在设置里一键导入；皮肤管理可查看 / 切换 / 删除导入皮肤；皮肤维护工具支持八态诊断 / 修复 / 逐状态替换 / 清理未引用资源 / 导出备份 |
 | 🧩 **八态单图** | 单张 4 列 × 2 行的八态图（按行读取：`idle / happy / sleep / work / click / drag / error / talk`）导入时自动切割成 8 张状态图，逐格裁留白并统一画布底边对齐 |
 | 🕹 **Codex Pet Contract** | 直接导入 Codex 桌面端 `pets/<id>/`（`pet.json` + 1536×1872 图集，8 列 × 9 行、单格 192×208）：九行按契约帧序逐帧播放并映射到八态；维护工具可改帧时长、逐帧替换 / 追加、调整状态复用，并可反向导出为标准 Codex 宠物包 |
 | 🩺 **健康提醒** | 久坐 / 喝水定时轻提示，默认关闭并折叠在「提醒 → 实验性增强」中；剪贴板感知同样默认关闭，点一下才处理 |

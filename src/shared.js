@@ -176,6 +176,26 @@ function useBuiltinSkin(name) {
   syncActiveSkin();
   return switchSkin(name);
 }
+// 删除一个导入皮肤（内置皮肤不可删）。当前正在使用该皮肤时回退到内置皮肤，
+// 并清掉 skinPack / customSkin 快照，避免 pet.html 继续引用已删除的数据。
+// 返回 { ok, fellBack, name }，由调用方决定 toast / 重绘时机。
+function deleteCustomSkin(id) {
+  if (!id) return { ok: false };
+  S.settings.skins = S.settings.skins || [];
+  const idx = S.settings.skins.findIndex(s => s.id === id);
+  if (idx < 0) return { ok: false };
+  const name = S.settings.skins[idx].name || S.settings.skins[idx].label || id;
+  const wasActive = S.settings.activeSkin === id;
+  S.settings.skins.splice(idx, 1);
+  if (wasActive) {
+    S.settings.activeSkin = null;
+    S.settings.skinPack = null;
+    S.settings.customSkin = null;
+    if (!SKINS[S.settings.skin]) S.settings.skin = 'blue';
+  }
+  return { ok: true, fellBack: wasActive, name };
+}
+
 // 由单图条目临时生成一个皮肤包结构（不改动条目本身，供命名 / 导出预览使用）
 function draftPackOf(entry) {
   if (!entry) return null;
@@ -236,26 +256,117 @@ function toast(msg, type) {
   setTimeout(() => { t.style.transition = 'opacity .3s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 320); }, 2600);
 }
 
-/* ---- HTML 上下文菜单 ---- */
-function hideMenu() { const r = $id('menuRoot'); if (!r) return; r.classList.remove('show'); r.innerHTML = ''; document.removeEventListener('mousedown', menuOutside); }
+/* ---- HTML 上下文菜单（支持二级子菜单与滚动） ----
+   items: [{ icon, label, check, danger, onClick, sub: [...] }, '-', ...]
+   opts:  { bounds: DOMRect } —— 窗口内可用的矩形（宠物窗口很小，需要额外约束） */
+function hideMenu() {
+  const r = $id('menuRoot');
+  // 兜底：清掉任何游离在 root 之外的子菜单，避免反复开关累积残留
+  document.querySelectorAll('.ctxmenu.sub').forEach(n => { if (!r || !r.contains(n)) n.remove(); });
+  if (!r) return;
+  r.classList.remove('show');
+  r.innerHTML = '';
+  document.removeEventListener('mousedown', menuOutside);
+}
 function menuOutside(e) { if (!e.target.closest('.ctxmenu')) hideMenu(); }
-function showMenu(items, x, y) {
+
+// 在 bounds 内放置菜单：优先右下，越界则向左/向上翻转；高度超出时交给滚动容器
+function menuPlace(box, scroll, x, y, bounds) {
+  const b = bounds || { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
+  const pad = 6;
+  const maxW = Math.max(120, b.right - b.left - pad * 2);
+  const maxH = Math.max(80, b.bottom - b.top - pad * 2);
+  box.style.maxWidth = maxW + 'px';
+  if (scroll) scroll.style.maxHeight = maxH + 'px';
+  let w = box.offsetWidth;
+  let left = x + w > b.right - pad ? x - w : x;
+  left = Math.max(b.left + pad, Math.min(left, b.right - pad - w));
+  let h = box.offsetHeight;
+  let top = y + h > b.bottom - pad ? b.bottom - pad - h : y;
+  top = Math.max(b.top + pad, Math.min(top, b.bottom - pad - h));
+  box.style.left = left + 'px';
+  box.style.top = top + 'px';
+  return { left, top, width: box.offsetWidth, height: box.offsetHeight };
+}
+
+function showMenu(items, x, y, opts) {
   hideMenu();
+  const b = (opts && opts.bounds) || { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
   let root = $id('menuRoot');
   if (!root) { root = el('div'); root.id = 'menuRoot'; document.body.appendChild(root); }
   const box = el('div', 'ctxmenu');
-  items.forEach(it => {
-    if (it === '-') { box.appendChild(el('div', 'cm-div')); return; }
-    const b = el('button', 'cm-item' + (it.danger ? ' danger' : ''));
-    b.innerHTML = (it.icon ? '<span class="cm-ic">' + it.icon + '</span>' : '') + '<span>' + esc(it.label) + '</span>' + (it.check ? '<span class="cm-check">✓</span>' : '');
-    b.onclick = () => { hideMenu(); it.onClick && it.onClick(); };
-    box.appendChild(b);
-  });
+  const scroll = el('div', 'cm-scroll');
+  box.appendChild(scroll);
+
+  const row = (it, parent) => {
+    if (it === '-') { scroll.appendChild(el('div', 'cm-div')); return; }
+    const btn = el('button', 'cm-item' + (it.danger ? ' danger' : '') + (it.sub ? ' has-sub' : ''));
+    btn.innerHTML = (it.icon ? '<span class="cm-ic">' + it.icon + '</span>' : '') +
+      '<span>' + esc(it.label) + '</span>' +
+      (it.sub ? '<span class="cm-arrow">▸</span>' : (it.check ? '<span class="cm-check">✓</span>' : ''));
+    if (it.sub) {
+      // hover 展开；点击也展开（触屏 / 不移动鼠标时可用）
+      const open = () => openSub(it, btn, box);
+      btn.addEventListener('mouseenter', open);
+      btn.addEventListener('click', e => { e.stopPropagation(); open(); });
+    } else {
+      btn.addEventListener('mouseenter', () => closeSub());
+      btn.onclick = () => { hideMenu(); it.onClick && it.onClick(); };
+    }
+    scroll.appendChild(btn);
+  };
+  items.forEach(it => row(it, scroll));
+
   root.appendChild(box);
   root.classList.add('show');
-  const r = box.getBoundingClientRect();
-  box.style.left = Math.max(6, Math.min(x, innerWidth - r.width - 8)) + 'px';
-  box.style.top = Math.max(6, Math.min(y, innerHeight - r.height - 8)) + 'px';
+  const placed = menuPlace(box, scroll, x, y, b);
+
+  // ---- 子菜单 ----
+  let subBox = null;
+  let subOwner = null;
+  function closeSub() {
+    if (subBox) { subBox.remove(); subBox = null; }
+    if (subOwner) { subOwner.classList.remove('open'); subOwner = null; }
+  }
+  function openSub(it, btn, parentBox) {
+    if (subOwner === btn) return;
+    closeSub();
+    subBox = el('div', 'ctxmenu sub');
+    const sc = el('div', 'cm-scroll');
+    subBox.appendChild(sc);
+    if (!it.sub.length) {
+      sc.appendChild(el('div', 'cm-empty', it.emptyText || '—'));
+    } else {
+      it.sub.forEach(sub => {
+        if (sub === '-') { sc.appendChild(el('div', 'cm-div')); return; }
+        const b2 = el('button', 'cm-item' + (sub.danger ? ' danger' : ''));
+        b2.innerHTML = (sub.icon ? '<span class="cm-ic">' + sub.icon + '</span>' : '') +
+          '<span>' + esc(sub.label) + '</span>' + (sub.check ? '<span class="cm-check">✓</span>' : '');
+        b2.onclick = () => { hideMenu(); sub.onClick && sub.onClick(); };
+        sc.appendChild(b2);
+      });
+    }
+    root.appendChild(subBox);
+    subOwner = btn;
+    btn.classList.add('open');
+
+    // 计算位置：默认贴父项右缘；右边界不够则翻到左侧；再不行则整块左移
+    const pb = parentBox.getBoundingClientRect();
+    const rb = btn.getBoundingClientRect();
+    const pad = 6;
+    subBox.style.maxHeight = Math.max(80, b.bottom - b.top - pad * 2) + 'px';
+    const sw = subBox.offsetWidth, sh = subBox.offsetHeight;
+    let left = pb.right - 2;
+    if (left + sw > b.right - pad) left = pb.left - sw + 2;
+    left = Math.max(b.left + pad, Math.min(left, b.right - pad - sw));
+    let top = rb.top - 4;
+    if (top + sh > b.bottom - pad) top = b.bottom - pad - sh;
+    top = Math.max(b.top + pad, Math.min(top, rb.top));
+    subBox.style.left = left + 'px';
+    subBox.style.top = top + 'px';
+    void placed;
+  }
+
   setTimeout(() => document.addEventListener('mousedown', menuOutside), 0);
 }
 

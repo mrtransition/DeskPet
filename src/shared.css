@@ -48,6 +48,20 @@ label{color:var(--t2);cursor:pointer}
 .cm-ic{width:16px;text-align:center;flex:none}
 .cm-check{margin-left:auto;color:var(--primary);font-weight:700}
 .cm-div{height:1px;background:var(--line);margin:4px 8px}
+/* 菜单项过多时滚动，避免超出窗口后被裁切（宠物窗口尺寸有限） */
+.cm-scroll{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.cm-scroll::-webkit-scrollbar{width:6px}
+.cm-scroll::-webkit-scrollbar-thumb{background:rgba(31,39,51,.18);border-radius:3px}
+.cm-scroll::-webkit-scrollbar-thumb:hover{background:rgba(31,39,51,.32)}
+/* 带子菜单的菜单项 */
+.cm-item.has-sub{padding-right:4px}
+.cm-arrow{margin-left:auto;color:var(--t3);font-size:10px;line-height:1}
+.cm-item.open{background:var(--primary-bg);color:var(--primary)}
+/* 子菜单：与父项右缘对齐展开，超出窗口时由排布逻辑整体左移 */
+/* #menuRoot 是 pointer-events:none 的遮罩层，子菜单必须显式恢复点击 */
+.ctxmenu.sub{position:fixed;min-width:190px;z-index:1;max-height:calc(100vh - 16px);display:flex;flex-direction:column;pointer-events:auto}
+.ctxmenu.sub>.cm-scroll{min-height:0}
+.cm-empty{padding:8px 10px;font-size:var(--fs-xs);color:var(--t3)}
 
 /* ============ 聊天消息（气泡页） ============ */
 .msg{max-width:88%;padding:8px 11px;border-radius:var(--r-lg);font-size:var(--fs);line-height:1.6;word-break:break-word;position:relative}
@@ -150,6 +164,11 @@ details.adv[open]>summary{margin-bottom:4px}
 .row-item .ri-main{flex:1;min-width:0}
 .row-item .ri-title{font-size:var(--fs);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row-item .ri-sub{font-size:10px;color:var(--t3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 皮肤管理行：缩略图 + 名称与类型/体积 */
+.smgr-main{display:flex;align-items:center;gap:8px}
+.smgr-text{min-width:0;flex:1}
+.smgr-thumb{width:32px;height:32px;flex:none;border-radius:var(--r);border:1px solid var(--line);object-fit:contain;background:#F7FAFE;display:inline-block}
+.smgr-thumb-empty{display:inline-block}
 .row-item input.ri-edit{font-size:var(--fs-xs);padding:4px 7px}
 .row-item .ri-btns{display:flex;gap:4px;flex:none}
 .row-item .ri-btns button{padding:3px 8px;font-size:var(--fs-xs)}
@@ -162,6 +181,9 @@ details.adv[open]>summary{margin-bottom:4px}
 /* 导入皮肤的缩略图与类型角标 */
 .skin-thumb{width:26px;height:26px;flex:none;border-radius:var(--r);overflow:hidden;background:#F3F7FB;display:flex;align-items:center;justify-content:center}
 .skin-thumb img{max-width:100%;max-height:100%;object-fit:contain}
+/* 皮肤卡片上的删除按钮：默认低调，hover 变红，避免误点 */
+.skin-del{flex:none;width:18px;height:18px;padding:0;line-height:1;border-radius:50%;border:1px solid transparent;background:transparent;color:var(--t3);font-size:13px}
+.skin-del:hover{background:var(--err-bg);color:var(--err);border-color:#F0C7C7}
 .skin-badge{font-size:9px;border-radius:999px;padding:0 5px;line-height:15px;background:#EEF3FA;color:var(--t2);white-space:nowrap;flex:none}
 /* 皮肤维护工具：八态预览、映射选择与资源状态 */
 .skin-state-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:8px;margin-top:9px;max-height:330px;overflow-y:auto;padding-right:2px}

@@ -127,6 +127,11 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           <div class="fnote" data-i18n-html="h53">Codex 宠物遵循 OpenAI Codex Pet Contract：<code>pet.json</code>（id / displayName / description / spritesheetPath）+ 8 列 × 9 行、单格 192×208、总尺寸 1536×1872 的透明图集；九行依次为 idle / running-right / running-left / waving / jumping / failed / waiting / running / review，未使用的格子必须完全透明。可直接导入 <code>~/.codex/pets/&lt;id&gt;/</code> 目录打包成的 zip，也可把当前皮肤导出为 Codex 宠物包。</div>
         </div>
         <div class="sec">
+          <h4><span data-i18n="mgr.title">皮肤管理</span> <span class="tag" data-i18n="mgr.tag">查看 / 删除导入皮肤</span></h4>
+          <div class="fnote" style="margin:0 0 8px" data-i18n="mgr.note">内置皮肤不可删除。删除正在使用的导入皮肤时，会自动切回内置矢量皮肤；导入图片的体积会计入本地数据文件。</div>
+          <div id="skinMgrList"></div>
+        </div>
+        <div class="sec">
           <h4><span data-i18n="s56">皮肤维护工具</span> <span class="tag" data-i18n="s57">检查 / 修复 / 逐状态替换 / 导出</span></h4>
           <div class="fgrid">
             <div class="frow"><label data-i18n="s58">皮肤名称</label><input id="skinNameEdit" placeholder="皮肤名称" maxlength="40"></div>
@@ -304,8 +309,15 @@ body { background: var(--bg); display: flex; flex-direction: column; }
       <!-- 关于 -->
       <div class="pane about" id="tab-about">
         <h3 data-i18n="s139">桌面 AI 宠物</h3>
-        <div class="ver" id="verLine" data-i18n="s140">桌面版 v2.1.3 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
+        <div class="ver" id="verLine" data-i18n="s140">桌面版 v2.1.4 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
         <details open>
+          <summary data-i18n="n214.title">v2.1.4 新增了什么</summary>
+          <ul>
+            <li data-i18n="n214.i1">宠物右键菜单的皮肤改为二级菜单，皮肤多时自动滚动，不再被窗口裁切</li>
+            <li data-i18n="n214.i2">新增「皮肤管理」：查看全部导入皮肤的名称、类型与体积，可切换或删除；删除正在使用的皮肤会自动切回内置皮肤</li>
+          </ul>
+        </details>
+        <details>
           <summary data-i18n="n213.title">v2.1.3 新增了什么</summary>
           <ul>
             <li data-i18n="n213.i1">界面中英双语补全：设置页、气泡与宠物菜单的界面文案全部接入 i18n；人格、模型与皮肤名等内容保持原文</li>
@@ -722,6 +734,61 @@ function renderVoiceOptions() {
 if (window.speechSynthesis) {
   speechSynthesis.onvoiceschanged = () => { if (S) renderVoiceOptions(); };
 }
+/* 皮肤管理：列出全部导入皮肤，提供切换与删除（内置皮肤不可删） */
+function skinEntryBytes(item) {
+  try {
+    if (item.type === 'pack' && item.pack) {
+      const files = item.pack.files || {};
+      const raw = Object.values(files).reduce((n, v) => n + (v || '').length, 0) * 3 / 4;
+      return Math.round(raw + (item.pack.byteSize || 0));
+    }
+    if (item.data) return Math.round(item.data.length * 3 / 4);
+  } catch (e) { }
+  return 0;
+}
+function renderSkinManager() {
+  const box = $id('skinMgrList');
+  if (!box) return;
+  box.innerHTML = '';
+  S.settings.skins = S.settings.skins || [];
+  if (!S.settings.skins.length) {
+    box.appendChild(el('div', 'empty-tip', t('mgr.empty')));
+    return;
+  }
+  skinLib().filter(item => item.type !== 'builtin').forEach(item => {
+    const active = S.settings.activeSkin === item.id;
+    const row = el('div', 'row-item');
+    const pv = skinEntryPreview(item);
+    const thumb = pv ? '<img class="smgr-thumb" alt="" src="' + pv + '">' : '<span class="smgr-thumb smgr-thumb-empty"></span>';
+    row.innerHTML = '<div class="ri-main smgr-main">' + thumb +
+      '<div class="smgr-text"><div class="ri-title">' + esc(item.label) +
+      (active ? ' <span class="pv-star">' + t('mgr.current') + '</span>' : '') + '</div>' +
+      '<div class="ri-sub">' + esc(item.type === 'pack' ? (item.pack && item.pack.format === 'codex' ? t('mgr.kindCodex') : t('mgr.kindPack')) : t('mgr.kindImage')) +
+      ' · ' + fmtBytes(skinEntryBytes(item)) + '</div></div></div>';
+    const use = el('button', '', active ? t('mgr.inUse') : t('mgr.use'));
+    use.disabled = active;
+    use.onclick = () => {
+      useCustomSkin(item.id);
+      saveState(); renderAll();
+      toast('已切换皮肤：' + item.label, 'ok');
+    };
+    const del = el('button', 'danger', t('mgr.del'));
+    del.onclick = () => removeImportedSkin(item);
+    row.appendChild(use);
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+}
+
+/* 删除导入皮肤：正在使用时回退到内置皮肤，并同步当前皮肤快照 */
+function removeImportedSkin(item) {
+  if (!confirm(t('mgr.delConfirm', { name: item.label || item.name }))) return;
+  const r = deleteCustomSkin(item.id);
+  if (!r.ok) { toast(t('mgr.delFail'), 'err'); return; }
+  saveState();
+  renderAll();
+  toast(r.fellBack ? t('mgr.delFallback', { name: r.name }) : t('mgr.delOk', { name: r.name }), 'ok');
+}
 function renderPetTab() {
   const box = $id('skinSel');
   box.innerHTML = '';
@@ -735,7 +802,14 @@ function renderPetTab() {
       : (() => { const pv = skinEntryPreview(item); return pv ? '<span class="skin-thumb"><img alt="" src="' + pv + '"></span>' : '<span class="skin-dot"></span>'; })();
     c.innerHTML = dot + '<span>' + esc(item.label) + '</span>' +
       (item.type === 'pack' ? '<span class="skin-badge">' + (item.pack && item.pack.format === 'codex' ? 'Codex' : '皮肤包') + '</span>' : (item.type === 'image' ? '<span class="skin-badge">单图</span>' : '')) +
-      (active ? '<span class="pv-star">✓</span>' : '');
+      (active ? '<span class="pv-star">✓</span>' : '') +
+      (item.type !== 'builtin' ? '<button class="skin-del" title="删除皮肤">×</button>' : '');
+    if (item.type !== 'builtin') {
+      c.querySelector('.skin-del').onclick = ev => {
+        ev.stopPropagation(); // 避免点删除时触发切换
+        removeImportedSkin(item);
+      };
+    }
     c.onclick = () => {
       if (item.type === 'builtin') {
         // FR-PSN-005：若该皮肤绑定了人格，则同步切换人格与其供应商
@@ -752,6 +826,7 @@ function renderPetTab() {
   });
   renderCustomSkin();
   renderSkinMaintenance();
+  renderSkinManager();
   $id('petScale').value = S.settings.petScale || 1;
   $id('petScaleVal').textContent = Math.round((S.settings.petScale || 1) * 100) + '%';
   $id('ctThrough').checked = !!S.settings.clickThrough;

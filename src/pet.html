@@ -211,19 +211,22 @@ function updateTransform() {
   if (!grown) offY = curH / 2 - 164;
   else if (menuOpen) offY = curH - 164 - 56 * petSc;
   else offY = curH - 164 - 110 * petSc;
-  stage.style.transform = `translate(${curW / 2 - 130}px, ${offY}px) scale(${petSc})`;
+  // 右键菜单态窗口变宽，宠物固定贴在左侧，右侧留给主菜单与子菜单
+  const pivotX = menuOpen ? 130 : curW / 2;
+  stage.style.transform = `translate(${pivotX - 130}px, ${offY}px) scale(${petSc})`;
 }
 async function setWindowSize(w, h) {
   curW = w; curH = h;
   updateTransform();
   try { await invoke('pet_set_size', { w, h }); } catch (e) { /* 忽略 */ }
 }
-async function grow(h) {
+async function grow(h, w) {
   const target = h || 220;
+  const targetW = w || 260;
   grown = true;
   growH = target;
-  if (Math.abs(curH - target * petSc) < 1 && Math.abs(curW - 260 * petSc) < 1) return;
-  await setWindowSize(260 * petSc, target * petSc);
+  if (Math.abs(curH - target * petSc) < 1 && Math.abs(curW - targetW * petSc) < 1) return;
+  await setWindowSize(targetW * petSc, target * petSc);
 }
 async function shrink() {
   if (!grown) return;
@@ -418,30 +421,70 @@ async function onPetUp() {
     try { await invoke('pet_clicked'); } catch (e) { }
   }
 }
+/* 皮肤二级菜单：内置皮肤始终可切换；导入皮肤额外提供删除 */
+const SKIN_MENU_MAX_H = 320; // 菜单可用高度上限，超出由滚动容器接管
+const MENU_WIN_W = 500;      // 主菜单 + 子菜单并排所需的窗口宽度
+function growHForMenu() { return SKIN_MENU_MAX_H + 120; }
+// 宠物贴左侧时，头部右缘的屏幕坐标（菜单从这里向右展开）
+function petHeadX() { return 130 + 62 * petSc; }
+function skinTypeTag(item) {
+  if (item.type === 'builtin') return '';
+  if (item.type === 'pack') return item.pack && item.pack.format === 'codex' ? '（Codex）' : '（皮肤包）';
+  return '（单图）';
+}
+function skinChecked(item) {
+  return S.settings.activeSkin ? S.settings.activeSkin === item.id : (item.type === 'builtin' && S.settings.skin === item.key);
+}
+async function pickSkin(item) {
+  if (item.type === 'builtin') {
+    const ps = useBuiltinSkin(item.key);
+    if (ps) toast(t('pet.skinPersona', { name: ps.name }), 'ok');
+  } else {
+    useCustomSkin(item.id);
+  }
+  applySkin(S.settings.skin);
+  saveState();
+  await shrink();
+}
 pet.addEventListener('contextmenu', async e => {
   e.preventDefault();
+  if (menuOpen) return;
   menuOpen = true;
   // 加高窗口以容纳完整菜单（原 220px 高度会导致菜单被裁切/挤压）
-  await grow(440);
+  await grow(growHForMenu(), MENU_WIN_W);
+  const lib = skinLib();
+  const builtin = lib.filter(x => x.type === 'builtin');
+  const imported = lib.filter(x => x.type !== 'builtin');
+  const skinSub = [
+    ...builtin.map(it => ({
+      icon: it.id === 'blue' ? '🔵' : (it.id === 'orange' ? '🟠' : '🟢'),
+      label: it.label, check: skinChecked(it), onClick: () => pickSkin(it),
+    })),
+    '-',
+    ...imported.map(it => ({
+      icon: skinChecked(it) ? '✅' : '🎨',
+      label: it.label + skinTypeTag(it), check: skinChecked(it), onClick: () => pickSkin(it),
+    })),
+  ];
+  // 导入与管理统一在设置页完成（皮肤管理中有删除入口）
+  skinSub.push('-', { icon: '＋', label: t('pet.skinImport'), onClick: async () => { await shrink(); invoke('open_settings_cmd'); } });
+  const cur = lib.find(skinChecked);
   showMenu([
     { icon: '💬', label: t('pet.chat'), onClick: async () => { await shrink(); invoke('show_bubble_cmd'); } },
     { icon: '✨', label: t('pet.newSession'), onClick: async () => { await shrink(); await invoke('show_bubble_cmd'); tEmitTo('bubble', 'new-session-req'); } },
     '-',
-    ...skinLib().map(item => ({
-      icon: '🎨',
-      label: '皮肤：' + (item.type === 'builtin' ? SKINS[item.key].label : item.label + (item.type === 'pack' ? '（皮肤包）' : '（单图）')),
-      check: S.settings.activeSkin ? S.settings.activeSkin === item.id : (item.type === 'builtin' && S.settings.skin === item.key),
-      onClick: async () => {
-        if (item.type === 'builtin') useBuiltinSkin(item.key);
-        else useCustomSkin(item.id);
-        applySkin(S.settings.skin); saveState(); await shrink();
-      },
-    })),
+    {
+      icon: '🎨', label: t('pet.skinMenu', { name: cur ? t('pet.skinLabel', { name: cur.label }) : '—' }),
+      sub: skinSub, emptyText: t('pet.skinNone'),
+    },
     '-',
     { icon: '⚙', label: t('pet.settings'), onClick: async () => { await shrink(); invoke('open_settings_cmd'); } },
     { icon: '🌙', label: t('pet.dnd'), check: S.settings.dnd, onClick: async () => { await shrink(); invoke('set_dnd', { on: !S.settings.dnd }); } },
     { icon: '📍', label: t('pet.resetPos'), onClick: async () => { await shrink(); invoke('reset_pet_pos'); } },
-  ], e.clientX + 40, e.clientY - 200);
+  ], e.clientX + 20, e.clientY - 200, {
+    // 宠物固定在窗口左侧，菜单向右展开；限制在窗口内避免被 WebView 裁切
+    bounds: { left: Math.round(petHeadX() + 10), top: 6, right: curW - 6, bottom: curH - 6 },
+  });
 });
 document.addEventListener('mousedown', e => {
   if (!menuOpen || e.button !== 0) return;
