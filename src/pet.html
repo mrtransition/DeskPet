@@ -31,6 +31,8 @@ body { cursor: default; }
 .pet-img { position: absolute; left: 0; top: 0; width: 120px; height: 112px; object-fit: contain; display: none; pointer-events: none; filter: drop-shadow(0 5px 8px rgba(31,39,51,.14)); transform-origin: 50% 100%; }
 .pet.has-img #petSvg { display: none; }
 .pet.has-img .pet-img { display: block; }
+/* 自动裁剪后的单图：贴底对齐（裁切后已无留白，靠 object-fit: contain 保持比例） */
+.pet.has-img.trimmed .pet-img { object-position: 50% 100%; }
 /* PNG/WebP 自带透明通道时，矩形 drop-shadow 会得到一块方形阴影；改用柔和的下沉投影 */
 .pet.has-img.no-alpha .pet-img { filter: drop-shadow(0 5px 8px rgba(31,39,51,.14)); }
 .pet.has-img:not(.no-alpha) .pet-img { filter: drop-shadow(0 6px 5px rgba(31,39,51,.18)); }
@@ -241,15 +243,84 @@ function applyLowFps() {
   const on = !!(S && S.settings && S.settings.lowFps !== false);
   pet.classList.toggle('low-fps', on);
 }
+// FR-SKN-003：Codex 宠物按「行」播放，行内在帧列之间轮转；帧时长来自行定义
+let cxTimer = null, cxKey = '', cxCol = 0;
+function stopCodexAnim() {
+  clearTimeout(cxTimer);
+  cxTimer = null;
+  cxKey = '';
+  cxCol = 0;
+  pet.classList.remove('cx');
+}
+function codexRowOf(pack) {
+  const states = (pack && pack.states) || {};
+  const want = states[petState] || states.idle || 'idle';
+  const rows = (pack && pack.rows) || [];
+  return rows.find(r => r && r.name === want) || rows.find(r => r && r.name === 'idle') || null;
+}
+// 单帧 / 整行帧条都按「列」缩放：SVG 行分组在 img 内始终铺满 192×208，缩放后位移正好一格
+function codexFrameSrc(pack, row, col) {
+  const frame = ((pack.frames || []).find(f => f.row === row.row && f.col === col) || {}).src;
+  if (frame) return frame;
+  const rowFrames = (pack.frames || []).filter(f => f.row === row.row);
+  const named = rowFrames.find(f => f.col === col);
+  if (named && named.src) return named.src;
+  // 行内维护过但序号不全时，按现有帧取模，保证播放不中断
+  if (rowFrames.length) return rowFrames[Math.min(col, rowFrames.length - 1)].src || '';
+  return (pack.files || {})[row.sheet] || '';
+}
+function showCodexFrame(pack, row, col) {
+  const src = codexFrameSrc(pack, row, col);
+  if (!src) return;
+  if (petImg.getAttribute('src') !== src) petImg.setAttribute('src', src);
+  // 帧条宽度 = 帧数 × 192；按「当前列 / 帧数」左移一格
+  petImg.style.objectPosition = row.frames > 1 ? (-100 * col / (row.frames - 1)) + '% 50%' : '50% 50%';
+}
+function playCodexRow(pack, row) {
+  clearTimeout(cxTimer);
+  const key = row.name + '|' + row.frames;
+  if (cxKey !== key) { cxKey = key; cxCol = 0; }
+  showCodexFrame(pack, row, cxCol);
+  if (row.frames <= 1) { cxTimer = null; return; }
+  const durs = row.durations || [];
+  // 停留在当前帧 durations[col] 毫秒后进入下一列，末帧回到第 0 帧
+  const wait = Math.max(40, Number(durs[cxCol]) || Number(row.delay) || 120);
+  const at = cxCol;
+  cxTimer = setTimeout(() => {
+    if (cxCol !== at) return;
+    cxCol = (cxCol + 1) % row.frames;
+    playCodexRow(pack, row);
+  }, wait);
+}
 function applyCustomSkin() {
   // FR-SKN-002：皮肤包优先于单图形象；按状态机取帧，缺帧回退 idle
   const pack = S && S.settings ? S.settings.skinPack : null;
+  if (pack && pack.format === 'codex' && (pack.rows || []).length) {
+    const row = codexRowOf(pack);
+    if (row) {
+      pet.classList.remove('no-alpha');
+      pet.classList.add('has-img', 'cx');
+      playCodexRow(pack, row);
+      return;
+    }
+  }
   if (pack && pack.files) {
+    stopCodexAnim();
+    petImg.style.objectPosition = '';
     const states = pack.states || {};
     const file = states[petState] || states.idle;
     const src = (file && pack.files[file]) || '';
     if (src) {
       if (petImg.getAttribute('src') !== src) petImg.setAttribute('src', src);
+      // 已裁掉留白的图片按原比例缩放：小图不硬拉到 120×112，避免虚化
+      const cw = (pack.canvas && pack.canvas.width) || 192;
+      const chh = (pack.canvas && pack.canvas.height) || 208;
+      // 整幅图集（WebP / 动图等单行播放）按「单格」比例摆放，不整张塞进宠物框
+      petImg.style.objectFit = 'contain';
+      petImg.style.width = '120px';
+      petImg.style.height = '112px';
+      petImg.style.left = '0';
+      petImg.style.top = '0';
       pet.classList.remove('no-alpha');
       pet.classList.add('has-img');
       return;
@@ -257,6 +328,14 @@ function applyCustomSkin() {
   }
   const cs = S && S.settings ? S.settings.customSkin : null;
   if (cs && cs.data) {
+    stopCodexAnim();
+    petImg.style.objectPosition = '';
+    petImg.style.objectFit = '';
+    petImg.style.width = '';
+    petImg.style.height = '';
+    petImg.style.left = '';
+    petImg.style.top = '';
+    pet.classList.toggle('trimmed', !!(cs.trim && cs.trim.cropped));
     if (petImg.getAttribute('src') !== cs.data) {
       petImg.setAttribute('src', cs.data);
       // FR-PET-009：GIF 必定带透明；PNG/WebP 需要检测 alpha，否则会加出一圈方形阴影
@@ -284,7 +363,13 @@ function applyCustomSkin() {
     }
     pet.classList.add('has-img');
   } else {
-    pet.classList.remove('has-img', 'no-alpha');
+    stopCodexAnim();
+    petImg.style.objectPosition = '';
+    petImg.style.width = '';
+    petImg.style.height = '';
+    petImg.style.left = '';
+    petImg.style.top = '';
+    pet.classList.remove('has-img', 'no-alpha', 'trimmed');
     petImg.removeAttribute('src');
   }
 }
@@ -293,6 +378,7 @@ function setPetState(s) {
   const skinChanged = s !== petState;
   petState = s;
   pet.className = pet.className.replace(/state-\w+/g, '').trim() + ' state-' + s;
+  // 皮肤包按状态取帧；单图 / 内置皮肤不需要在每次状态切换时重算
   if (skinChanged && S && S.settings && S.settings.skinPack) applyCustomSkin();
   if (s === 'click') stateTimer = setTimeout(() => { if (petState === 'click') setPetState('idle'); }, 430);
   if (s === 'happy') stateTimer = setTimeout(() => { if (petState === 'happy') setPetState('idle'); }, 1900);
@@ -341,10 +427,15 @@ pet.addEventListener('contextmenu', async e => {
     { icon: '💬', label: t('pet.chat'), onClick: async () => { await shrink(); invoke('show_bubble_cmd'); } },
     { icon: '✨', label: t('pet.newSession'), onClick: async () => { await shrink(); await invoke('show_bubble_cmd'); tEmitTo('bubble', 'new-session-req'); } },
     '-',
-    ...Object.keys(SKINS).map(k => ({
-      icon: '🎨', label: '皮肤：' + SKINS[k].label,
-      check: S.settings.skin === k,
-      onClick: async () => { switchSkin(k); applySkin(S.settings.skin); saveState(); await shrink(); },
+    ...skinLib().map(item => ({
+      icon: '🎨',
+      label: '皮肤：' + (item.type === 'builtin' ? SKINS[item.key].label : item.label + (item.type === 'pack' ? '（皮肤包）' : '（单图）')),
+      check: S.settings.activeSkin ? S.settings.activeSkin === item.id : (item.type === 'builtin' && S.settings.skin === item.key),
+      onClick: async () => {
+        if (item.type === 'builtin') useBuiltinSkin(item.key);
+        else useCustomSkin(item.id);
+        applySkin(S.settings.skin); saveState(); await shrink();
+      },
     })),
     '-',
     { icon: '⚙', label: t('pet.settings'), onClick: async () => { await shrink(); invoke('open_settings_cmd'); } },

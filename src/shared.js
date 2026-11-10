@@ -106,6 +106,115 @@ function switchSkin(name) {
   return null;
 }
 
+/* ---- 皮肤库（FR-SKN-003） ----
+   内置 3 套矢量皮肤 + 已导入皮肤（单图形象 / 皮肤包）统一成列表。
+   同一时间只有一个「当前皮肤」：内置皮肤靠 settings.skin，导入皮肤靠
+   settings.activeSkin（指向 skins[].id，决定运行时用 customSkin 还是 skinPack）。
+   旧数据没有 activeSkin 字段，此时按「skinPack > customSkin > 内置」推断。 */
+const CUSTOM_SKIN_KEY = 'custom';
+function skinLib() {
+  const list = Object.keys(SKINS).map(k => ({ key: k, type: 'builtin', label: SKINS[k].label, fur: SKINS[k].fur, id: k }));
+  (S.settings.skins || []).forEach(s => list.push({ ...s, key: s.type === 'pack' ? 'pack:' + s.id : 'custom', type: s.type }));
+  return list;
+}
+function findCustomSkin(id) {
+  return (S.settings.skins || []).find(s => s.id === id) || null;
+}
+// 当前生效的导入皮肤 entry；返回 null 表示当前用内置皮肤
+function activeCustomSkin() {
+  const id = S.settings.activeSkin;
+  if (!id) {
+    if (S.settings.skinPack || (S.settings.customSkin && S.settings.customSkin.data)) {
+      S.settings.skins = S.settings.skins || [];
+      let entry = S.settings.skins.find(s => s.type === (S.settings.skinPack ? 'pack' : 'image'));
+      if (!entry) {
+        const name = S.settings.skinPack ? (S.settings.skinPack.name || '导入皮肤') : (S.settings.customSkin.name || '自定义形象');
+        entry = S.settings.skinPack
+          ? { id: uid('sk'), type: 'pack', name, label: name, pack: S.settings.skinPack, ts: Date.now() }
+          : { id: uid('sk'), type: 'image', name, label: name.replace(/\.[^.]+$/, ''), data: S.settings.customSkin.data, ts: Date.now() };
+        S.settings.skins.push(entry);
+      }
+      S.settings.activeSkin = entry.id;
+      return entry;
+    }
+    return null;
+  }
+  return findCustomSkin(id);
+}
+// settings.skinPack / settings.customSkin 是运行时的「当前皮肤」快照，供 pet.html 直接使用
+function syncActiveSkin() {
+  const entry = S.settings.activeSkin ? findCustomSkin(S.settings.activeSkin) : null;
+  if (!entry) { S.settings.activeSkin = null; S.settings.skinPack = null; S.settings.customSkin = null; return null; }
+  if (entry.type === 'pack') {
+    S.settings.skinPack = entry.pack || null;
+    S.settings.customSkin = null;
+  } else {
+    S.settings.skinPack = null;
+    S.settings.customSkin = entry.data ? { name: entry.name, data: entry.data, ts: entry.ts, alpha: entry.alpha } : null;
+  }
+  return entry;
+}
+function useCustomSkin(id) {
+  const entry = findCustomSkin(id);
+  if (!entry) return null;
+  S.settings.activeSkin = entry.id;
+  return syncActiveSkin();
+}
+function useBuiltinSkin(name) {
+  if (!SKINS[name]) name = 'blue';
+  S.settings.activeSkin = null;
+  syncActiveSkin();
+  return switchSkin(name);
+}
+// 由单图条目临时生成一个皮肤包结构（不改动条目本身，供命名 / 导出预览使用）
+function draftPackOf(entry) {
+  if (!entry) return null;
+  if (entry.type === 'pack') return entry.pack || null;
+  if (!entry.pack && entry.data) {
+    const m = /^data:image\/(gif|webp|png|apng)/i.exec(entry.data);
+    const ext = m ? (m[1].toLowerCase() === 'apng' ? 'png' : m[1].toLowerCase()) : 'png';
+    const stem = String(entry.name || 'custom-skin').replace(/\.[^.]+$/, '').replace(/[\/:*?"<>|]/g, '') || 'custom-skin';
+    const fileName = stem + '.' + ext;
+    const states = {};
+    ['idle', 'drag', 'click', 'talk', 'sleep', 'work', 'happy', 'error'].forEach(st => { states[st] = fileName; });
+    return { name: entry.name || '我的皮肤', version: '1.0', states, group: {}, files: { [fileName]: entry.data }, sounds: {}, ts: entry.ts || Date.now(), trim: entry.trim || null };
+  }
+  return entry.pack || null;
+}
+// 把当前「单图形象」就地升级为可维护的皮肤包条目；已有皮肤包则原样返回
+function packOfEntry(entry) {
+  if (!entry) return null;
+  if (entry.type === 'pack') return entry.pack || null;
+  // Codex 宠物不做「八态 → 单包」升级，直接返回空（维护工具走 Codex 分支）
+  if (!entry.pack && entry.data) {
+    const m = /^data:image\/(gif|webp|png|apng)/i.exec(entry.data);
+    const ext = m ? (m[1].toLowerCase() === 'apng' ? 'png' : m[1].toLowerCase()) : 'png';
+    const stem = String(entry.name || 'custom-skin').replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]/g, '') || 'custom-skin';
+    const fileName = stem + '.' + ext;
+    const states = {};
+    ['idle', 'drag', 'click', 'talk', 'sleep', 'work', 'happy', 'error'].forEach(st => { states[st] = fileName; });
+    entry.pack = { name: entry.name || '我的皮肤', version: '1.0', states, group: {}, files: { [fileName]: entry.data }, sounds: {}, ts: entry.ts || Date.now(), trim: entry.trim || null };
+    // 单图条目升级为皮肤包条目：运行时快照才能取到 contextSkin / 逐状态图
+    entry.type = 'pack';
+  }
+  return entry.pack || null;
+}
+// 皮肤条目预览图：皮肤包取待机帧，单图取原图，内置为空（走矢量样式块）
+function skinEntryPreview(entry) {
+  if (entry.type === 'pack') {
+    const p = entry.pack || {};
+    if (p.format === 'codex' && (p.rows || []).length) {
+      const idle = p.rows.find(r => r && r.name === 'idle') || p.rows[0];
+      const frame = ((p.frames || []).find(f => f.row === idle.row && f.col === 0) || {}).src;
+      return frame || (idle && p.files && p.files[idle.sheet]) || '';
+    }
+    const st = p.states || {};
+    const f = st.idle || Object.values(st)[0];
+    return (f && (p.files || {})[f]) || '';
+  }
+  return entry.data || '';
+}
+
 /* ---- Toast ---- */
 function ensureToasts() { if (!$id('toasts')) { const d = el('div'); d.id = 'toasts'; document.body.appendChild(d); } }
 function toast(msg, type) {

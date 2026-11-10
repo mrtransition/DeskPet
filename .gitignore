@@ -8,6 +8,22 @@ src-tauri/gen/schemas/
 # 临时与工具链（体积过大，不入库）
 .temp/
 
+# 本地代理 / 调试脚本与测试数据
+.box-agent-scratch/
+.box-agent/
+
+# 备份产物与临时截图
+*.bak
+*.bak-*
+dist/*.bak-*
+proto-*.png
+
+# 旧代码片段与本地实验目录
+src-tauri/_*
+src-tauri/_codex/
+src-tauri/_chat_old.txt
+src-tauri/_run_chat_new.rs
+
 # 系统文件
 Thumbs.db
 Desktop.ini

@@ -1,6 +1,6 @@
 [package]
 name = "deskpet"
-version = "2.1.0"
+version = "2.1.1"
 description = "DeskPet - 桌面 AI 宠物：透明置顶小猫，点击即聊任意大模型（Tauri v2）"
 license = "MIT"
 edition = "2021"
@@ -26,6 +26,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Memory",
 ] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
 
 [profile.release]
 strip = true

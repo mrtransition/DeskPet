@@ -4,11 +4,11 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.1.0-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.1.1-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
-[![Size](https://img.shields.io/badge/安装包-14.0_MB-93A3B5?style=flat-square)](#快速开始)
+[![Size](https://img.shields.io/badge/安装包-14.3_MB-93A3B5?style=flat-square)](#快速开始)
 
 透明置顶 · 托盘常驻 · 多模型接入 · 密钥零泄露 · 数据全程本地
 
@@ -32,11 +32,13 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | 🔐 **密钥零泄露** | API Key 存 **Windows 凭据管理器**，不进入数据文件、日志与导出内容；本地服务（Ollama 等）免 Key 直连 |
 | 🧠 **长期记忆** | 对它说「记住：我喜欢蓝色」即写入记忆库，之后每轮对话按相关度自动注入（≤5 条）；超长会话自动生成摘要压缩上下文，失败时回退截断 |
 | ⏰ **自然语言提醒** | 「25 分钟后提醒我喝水」「每天 8:30 提醒我站会」「每周一 9:00」「每隔 2 小时」→ 主进程调度器准点触发，支持稍后 5 分钟与免打扰排队补发 |
-| 😼 **人格与皮肤** | 3 套内置人格（贴心小助手 / 毒舌吐槽役 / 专注工作搭子）+ 3 套皮肤联动切换；支持 GIF / APNG / 动态 WebP 自定义动画形象与人格导入导出 |
+| 😼 **人格与皮肤** | 3 套内置人格（贴心小助手 / 毒舌吐槽役 / 专注工作搭子）+ 3 套皮肤联动切换；支持 GIF / APNG / 动态 WebP 自定义动画形象，导入时自动裁掉四周留白与棋盘格底色（规范见 [docs/自动裁剪规范.md](docs/自动裁剪规范.md)）与人格导入导出；完整皮肤格式与映射见 [docs/皮肤与图集规范.md](docs/皮肤与图集规范.md) |
 | 🎭 **八态动画** | idle / drag / click / talk / sleep / work / happy / error 全矢量状态机，50%–200% 无级缩放 |
 | 🖥 **系统集成** | 托盘菜单（左键唤起气泡）、全局快捷键、开机自启、会话检索与 Markdown 导出 |
 | 🛠 **工具调用** | 模型可调用本地工具：创建提醒、读剪贴板、打开白名单链接 / 应用、查天气、联网搜索。首次调用弹卡片授权，可逐项设「每次询问 / 始终允许 / 始终拒绝」，执行结果回传模型续答（最多 4 轮） |
-| 🎨 **皮肤包** | `.deskpet-skin.zip`：`skin.json` 状态机映射 + 八态图集 + 可选提示音，在设置里一键导入 |
+| 🎨 **皮肤包** | `.deskpet-skin.zip`：`skin.json` 状态机映射 + 八态图集 + 可选提示音，在设置里一键导入；内置皮肤维护工具（八态诊断 / 修复 / 逐状态替换 / 清理未引用资源 / 导出备份） |
+| 🧩 **八态单图** | 单张 4 列 × 2 行的八态图（按行读取：`idle / happy / sleep / work / click / drag / error / talk`）导入时自动切割成 8 张状态图，逐格裁留白并统一画布底边对齐 |
+| 🕹 **Codex Pet Contract** | 直接导入 Codex 桌面端 `pets/<id>/`（`pet.json` + 1536×1872 图集，8 列 × 9 行、单格 192×208）：九行按契约帧序逐帧播放并映射到八态；维护工具可改帧时长、逐帧替换 / 追加、调整状态复用，并可反向导出为标准 Codex 宠物包 |
 | 🩺 **健康提醒** | 久坐 / 喝水定时轻提示，与免打扰时段、主动搭话互不叠加；剪贴板感知点一下才处理 |
 | 🔊 **语音朗读** | AI 回复可自动朗读或逐条重读，支持系统语音选择与 0.5–2 倍语速；本地 TTS，零网络请求 |
 | 🌏 **中英双语** | 设置、气泡与宠物菜单即时切换中文 / English |
@@ -48,7 +50,7 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 无需构建，下载即用：
 
 1. 打开本仓库 [`dist/`](dist) 目录，下载两个文件：
-   - `DeskPet.exe`（14.0 MB，主程序）
+   - `DeskPet.exe`（14.3 MB，主程序）
    - `WebView2Loader.dll`（0.15 MB，引导库）
 2. 将两个文件放入**同一文件夹**，双击 `DeskPet.exe`
 
@@ -142,6 +144,8 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 > 详细排期、验收标准与风险应对见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 - [x] 完整动画皮肤包（`.deskpet-skin.zip`：图集 / 状态机 / 音效）
+- [x] 八态单图（4×2 自动切割）与皮肤维护工具
+- [x] Codex Pet Contract 皮肤（`pet.json` + 8×9 图集导入 / 导出，九行动画）
 - [ ] 单实例运行与首次启动引导（P0，计划 v2.2）
 - [ ] CSP、自定义请求头脱敏与更新签名（计划 v2.2）
 - [ ] 数据备份 / 一键恢复与安装器（计划 v2.2 / v2.3）
@@ -157,6 +161,18 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.1.1</b> — Codex 宠物契约、八态单图切割与皮肤维护工具</summary>
+
+- **Codex Pet Contract（FR-SKN-003）**：支持导入 Codex 桌面端 `pets/<id>/` 宠物包（`pet.json` + 1536×1872 透明图集，8 列 × 9 行、单格 192×208）。九行按契约帧序逐帧播放并映射到 DeskPet 八态；导出时把当前皮肤还原为契约图集与 `pet.json`。PNG / WebP / GIF / SVG 图集均可解析，SVG 导入前清洗脚本与外链。
+- **八态单图（4×2）**：新增专用导入入口，将单张 4 列 × 2 行图片按行读取切成八态（`idle / happy / sleep / work / click / drag / error / talk`），逐格裁掉留白，统一画布并底边对齐，避免切换状态时角色跳动；动图与 8×9 Codex 图集会被拒绝并提示使用正确入口。
+- **皮肤维护工具**：设置页可直接检查八态映射与资源引用、修复缺失状态、逐状态替换图片、批量导入八态图片、清理未引用资源；Codex 皮肤支持帧替换 / 追加 / 删除、逐行修改帧时长、调整八态复用行，并可导出备份。
+- **皮肤包限制调整**：压缩包上限放宽到 128 MB、单文件 64 MB、解压总计 256 MB、条目 200，同时保留路径穿越、压缩炸弹与非法文件名校验。
+- **文档与素材**：新增 [`docs/皮肤与图集规范.md`](docs/皮肤与图集规范.md) 与 [`docs/自动裁剪规范.md`](docs/自动裁剪规范.md)；补充 Codex 圆头小猫示例皮肤（[`assets/skin-packs/codex-round-cat`](assets/skin-packs/codex-round-cat)）与 4×2 八态单图示例素材（[`assets/examples/eight-state-4x2.webp`](assets/examples/eight-state-4x2.webp)）。
+- **测试**：新增 Codex 契约解析 / 导出 / SVG 清洗、皮肤包往返导出与示例素材回归用例；`cargo test` 全绿。
+
+</details>
+
+<details>
 <summary><b>v2.1.0</b> — 会话摘要压缩、TTS 朗读、低帧率模式与结构化日志</summary>
 
 - **会话摘要（FR-MEM-003）**：会话超过可配置阈值后，气泡在发送前调用当前模型把较早消息压缩成摘要（三协议 + Ollama 通用），摘要写入会话并作为上下文前缀；最近若干轮仍以原文发送。模型失败 / 空摘要自动回退到轮数 / token 截断，不阻断对话；导出 Markdown 会附带摘要。
@@ -212,7 +228,7 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 - **数据安全**：状态文件改为临时文件 + 备份 + 原子替换；主文件损坏时自动回退 `.json.bak` 并保留 `.corrupt-*`；启动时迁移旧版明文密钥至 Windows 凭据管理器；导出文件名加固，拒绝路径穿越与 Windows 保留名。
 - **多窗口一致性**：非设置窗口保存时保留后端权威字段（缩放、穿透、位置、提醒等），避免宠物/气泡窗口用旧快照覆盖设置；导入配置重新映射供应商 / 人格 ID，提醒经主进程命令写入。
 - **窗口与气泡**：气泡支持左右边缘拖拽调宽（240–480 px）、智能翻转与工作区夹紧；提醒弹出不抢焦点；关闭气泡仅在确实可见时恢复前台；右键菜单与缩放后的气泡跟随位置修正。
-- **自定义形象**：设置页可导入 GIF / APNG / 动态 WebP 作为宠物形象（≤ 1.5 MB），保留拖拽、点击、睡眠与提醒动画；内置矢量皮肤仍可随时恢复。
+- **自定义形象**：设置页可导入 GIF / APNG / 动态 WebP 作为宠物形象（v0.2.5 曾限制 ≤ 1.5 MB，现已取消大小限制），保留拖拽、点击、睡眠与提醒动画；内置矢量皮肤仍可随时恢复。
 - **隐私与可访问性**：设置页新增隐私分组与出站请求审计（域名 / 状态 / 延迟，可清空）；新增置顶与任务栏开关；支持 `prefers-reduced-motion` 与高对比度。
 - 新增 15 个 Rust 单元测试，覆盖提醒触发 / 顺延、上下文裁剪、token 预算、Azure URL、原子写盘与状态合并。
 </details>
@@ -257,7 +273,7 @@ Tauri v2 桌面壳：透明置顶宠物窗口、气泡对话、托盘、全局�
 单文件零依赖 HTML 原型，验证全部交互与数据链路，保留于 [`docs/MVP-浏览器模拟版.html`](docs/MVP-浏览器模拟版.html)。
 </details>
 
-完整需求规格（[SRS-DESKPET-AI-001 v1.1](桌面%20AI%20宠物软件需求规格说明书（SRS）.md)，含 P0/P1/P2/P3 分层与需求追溯矩阵）；后续排期见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
+完整需求规格（[SRS-DESKPET-AI-001 v1.1](桌面%20AI%20宠物软件需求规格说明书（SRS）.md)，含 P0/P1/P2/P3 分层与需求追溯矩阵）；皮肤包格式、八态映射与 Codex 契约见 [`docs/皮肤与图集规范.md`](docs/皮肤与图集规范.md)，自动裁剪阈值见 [`docs/自动裁剪规范.md`](docs/自动裁剪规范.md)；后续排期见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
 
 ## 🤝 贡献
 

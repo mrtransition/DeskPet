@@ -791,7 +791,9 @@ tListen('state-reset', async () => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !streaming) { stopSpeak(); invoke('hide_bubble_cmd'); }
 });
-curWin.onBlur(() => {
+// Tauri v2 窗口 API 使用 onFocusChanged（onBlur 不存在，调用会抛 TypeError）
+curWin.onFocusChanged(ev => {
+  if (ev.payload) return; // 获得焦点时无需处理
   if (!streaming) { stopSpeak(); invoke('hide_bubble_cmd'); }
   else touchBubbleAct();
 });

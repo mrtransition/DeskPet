@@ -2945,7 +2945,7 @@ fn merge_state_snapshot(st: &mut Value, state: Value, origin: &str) {
             "bubbleIdleClose", "chatter", "enterSend", "newSessionPerClick", "lowFps", "customSkin",
             "summaryThreshold", "voice", "voiceURI", "voiceRate", "reminderSound", "health",
             "clipboardWatch", "toolSettings", "updateUrl", "updateAuto", "lang", "dndStart",
-            "dndEnd", "priceIn", "priceOut", "skinPack",
+            "dndEnd", "priceIn", "priceOut", "skinPack", "skins", "activeSkin",
         ]
         .iter()
         .filter(|k| !st["settings"][*k].is_null())
@@ -3341,10 +3341,11 @@ fn mock_summary(messages: &[ChatMsg]) -> String {
 // FR-SKN-002：皮肤包格式（.deskpet-skin，实为 zip）
 //   skin.json  {"name":"…","version":"1.0","states":{"idle":"idle.png", …},"sound":{"reminder":"ding.ogg"}}
 //   *.png / *.gif / *.webp  图集或各状态帧；sound/*.ogg|*.mp3|*.wav 可选
-// 校验点：压缩包 ≤ 8 MB、单文件 ≤ 2 MB、总解压 ≤ 24 MB、条目数 ≤ 200；拒绝路径穿越。
-const SKIN_MAX_ZIP: usize = 8 * 1024 * 1024;
-const SKIN_MAX_FILE: u64 = 2 * 1024 * 1024;
-const SKIN_MAX_TOTAL: u64 = 24 * 1024 * 1024;
+// 校验点：压缩包 ≤ 128 MB、单文件 ≤ 64 MB、总解压 ≤ 256 MB、条目数 ≤ 200；拒绝路径穿越。
+// 图片文件大小不再设置 1.5 MB 级别的小上限，仅保留防止压缩炸弹的保护性上限。
+const SKIN_MAX_ZIP: usize = 128 * 1024 * 1024;
+const SKIN_MAX_FILE: u64 = 64 * 1024 * 1024;
+const SKIN_MAX_TOTAL: u64 = 256 * 1024 * 1024;
 const SKIN_MAX_ENTRIES: usize = 200;
 const SKIN_STATES: [&str; 8] = ["idle", "drag", "click", "talk", "sleep", "work", "happy", "error"];
 
@@ -3385,7 +3386,11 @@ fn read_skin_zip(raw: &[u8]) -> Result<Value, String> {
             continue;
         }
         if f.size() > SKIN_MAX_FILE {
-            return Err(format!("{} 超过 2 MB 单文件上限", name));
+            return Err(format!(
+                "{} 超过 {} MB 单文件上限",
+                name,
+                SKIN_MAX_FILE / 1024 / 1024
+            ));
         }
         total += f.size();
         if total > SKIN_MAX_TOTAL {
@@ -3461,6 +3466,1097 @@ fn read_skin_zip(raw: &[u8]) -> Result<Value, String> {
     }))
 }
 
+// FR-SKN-003：Codex Pet Contract（OpenAI Codex 桌面端「Pets」自定义宠物包）
+//   目录结构  ${CODEX_HOME:-~/.codex}/pets/<pet-id>/{pet.json, spritesheet.webp}
+//   pet.json  {"id":"…","displayName":"…","description":"…","spritesheetPath":"spritesheet.webp"}
+//   图集      1536×1872 px = 8 列 × 9 行，单格 192×208，透明背景，未用格子必须完全透明。
+//   行序固定：0 idle(6) / 1 running-right(8) / 2 running-left(8) / 3 waving(4) /
+//             4 jumping(5) / 5 failed(8) / 6 waiting(6) / 7 running(6) / 8 review(6)
+//   导入时按行拆帧（SVG 图集用 viewBox 裁切，等价于无损切片），渲染层按该行的
+//   帧时长逐帧播放；导出时把 DeskPet 八态重新拼回 8×9 契约图集。
+const CODEX_CELL_W: u32 = 192;
+const CODEX_CELL_H: u32 = 208;
+const CODEX_COLS: u32 = 8;
+const CODEX_ROWS: usize = 9;
+const CODEX_ATLAS_W: u32 = CODEX_CELL_W * CODEX_COLS; // 1536
+const CODEX_ATLAS_H: u32 = CODEX_CELL_H * CODEX_ROWS as u32; // 1872
+const CODEX_SHEET_MAX: usize = 64 * 1024 * 1024;
+// Codex 行名（行序即数组下标），与契约的 row 0..8 一一对应
+const CODEX_ROW_NAMES: [&str; CODEX_ROWS] = [
+    "idle",
+    "running-right",
+    "running-left",
+    "waving",
+    "jumping",
+    "failed",
+    "waiting",
+    "running",
+    "review",
+];
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum CodexKind {
+    Png,
+    Gif,
+    Webp,
+    Svg,
+}
+
+impl CodexKind {
+    fn mime(self) -> &'static str {
+        match self {
+            CodexKind::Png => "image/png",
+            CodexKind::Gif => "image/gif",
+            CodexKind::Webp => "image/webp",
+            CodexKind::Svg => "image/svg+xml",
+        }
+    }
+}
+
+fn codex_kind_of(name: &str) -> Option<CodexKind> {
+    let n = name.to_lowercase();
+    if n.ends_with(".png") {
+        Some(CodexKind::Png)
+    } else if n.ends_with(".webp") {
+        Some(CodexKind::Webp)
+    } else if n.ends_with(".gif") {
+        Some(CodexKind::Gif)
+    } else if n.ends_with(".svg") {
+        Some(CodexKind::Svg)
+    } else {
+        None
+    }
+}
+
+fn u16_be(b: &[u8], i: usize) -> u16 {
+    ((b[i] as u16) << 8) | b[i + 1] as u16
+}
+
+fn u24_be(b: &[u8], i: usize) -> u32 {
+    ((b[i] as u32) << 16) | ((b[i + 1] as u32) << 8) | b[i + 2] as u32
+}
+
+// 只读文件头取尺寸：PNG / WebP / GIF / SVG
+fn codex_image_size(raw: &[u8], kind: CodexKind) -> Option<(u32, u32)> {
+    match kind {
+        CodexKind::Png => {
+            if raw.len() < 26 || &raw[..8] != b"\x89PNG\r\n\x1a\n" || &raw[12..16] != b"IHDR" {
+                return None;
+            }
+            Some((
+                u32::from_be_bytes([raw[16], raw[17], raw[18], raw[19]]),
+                u32::from_be_bytes([raw[20], raw[21], raw[22], raw[23]]),
+            ))
+        }
+        CodexKind::Gif => {
+            if raw.len() < 10 || (!raw.starts_with(b"GIF87a") && !raw.starts_with(b"GIF89a")) {
+                return None;
+            }
+            Some((
+                raw[6] as u32 | ((raw[7] as u32) << 8),
+                raw[8] as u32 | ((raw[9] as u32) << 8),
+            ))
+        }
+        CodexKind::Webp => {
+            if raw.len() < 30 || !raw.starts_with(b"RIFF") || &raw[8..12] != b"WEBP" {
+                return None;
+            }
+            Some(if &raw[12..16] == b"VP8X" {
+                (u24_be(raw, 24) + 1, u24_be(raw, 27) + 1)
+            } else if &raw[12..16] == b"VP8L" {
+                let bits = u32::from_le_bytes([raw[21], raw[22], raw[23], raw[24]]);
+                ((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
+            } else if &raw[12..16] == b"VP8 " {
+                (u16_be(raw, 26) as u32 & 0x3FFF, u16_be(raw, 28) as u32 & 0x3FFF)
+            } else {
+                return None;
+            })
+        }
+        CodexKind::Svg => {
+            let head = String::from_utf8_lossy(&raw[..raw.len().min(4096)]);
+            let start = head.find("<svg")?;
+            let tag = &head[start..];
+            let tag = &tag[..tag.find('>').unwrap_or(tag.len())];
+            let num_attr = |key: &str| -> Option<f64> {
+                let at = tag.find(key)?;
+                let after = tag[at + key.len()..].trim_start();
+                let after = after.strip_prefix('=')?.trim_start();
+                let quote = after.chars().next()?;
+                let rest = &after[1..];
+                let end = rest.find(quote)?;
+                rest[..end]
+                    .trim()
+                    .trim_end_matches("px")
+                    .parse::<f64>()
+                    .ok()
+            };
+            let vb = tag.find("viewBox").and_then(|i| {
+                let rest = &tag[i + 7..];
+                let rest = rest.split(['"', '\'']).find(|s| s.trim().len() > 3)?;
+                let nums: Vec<f64> = rest
+                    .split(|c: char| c.is_whitespace() || c == ',')
+                    .filter_map(|s| s.trim().parse::<f64>().ok())
+                    .collect();
+                if nums.len() >= 4 {
+                    Some((nums[2], nums[3]))
+                } else {
+                    None
+                }
+            });
+            let (w, h) = match vb {
+                Some(v) => v,
+                None => (num_attr("width")?, num_attr("height")?),
+            };
+            if w <= 0.0 || h <= 0.0 {
+                return None;
+            }
+            Some((w.round() as u32, h.round() as u32))
+        }
+    }
+}
+
+// GIF 首帧时长（1/100 s）与 NETSCAPE 循环次数：Codex 允许精灵图本身是动图
+fn codex_gif_timing(raw: &[u8]) -> (Option<u16>, Option<u16>) {
+    if raw.len() < 13 {
+        return (None, None);
+    }
+    let mut i = 13 + if raw[10] & 0x80 != 0 {
+        3 * (1 << ((raw[10] & 0x07) as usize + 1))
+    } else {
+        0
+    };
+    let (mut delay, mut loops) = (None, None);
+    while i + 1 < raw.len() {
+        match raw[i] {
+            0x21 => {
+                let label = raw[i + 1];
+                if label == 0xF9 && i + 5 < raw.len() {
+                    delay = delay.or(Some(u16::from_le_bytes([raw[i + 4], raw[i + 5]])));
+                } else if label == 0xFF && i + 14 <= raw.len() && &raw[i + 3..i + 14] == b"NETSCAPE2.0" && i + 17 < raw.len() {
+                    loops = Some(u16::from_le_bytes([raw[i + 16], raw[i + 17]]));
+                }
+                let mut p = i + 2;
+                while p < raw.len() {
+                    let n = raw[p] as usize;
+                    p += 1 + n;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                i = p;
+            }
+            // 首个图像描述符：之后的字节是像素数据，不再解析
+            0x2C => break,
+            _ => break,
+        }
+    }
+    (delay, loops)
+}
+
+fn codex_slug(s: &str) -> String {
+    let mut out = String::new();
+    let mut dash = false;
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            dash = false;
+        } else if !dash && !out.is_empty() {
+            out.push('-');
+            dash = true;
+        }
+    }
+    out.trim_matches('-').chars().take(40).collect::<String>()
+}
+
+// 只接受「一张矩形图 + 若干基础图形」的极简 SVG：元素 / 属性白名单，
+// 禁止脚本、外链、外部样式与动画；属性值一律要求数字序列 + 单位，
+// 防止通过 id / url(#…) 注入任何可执行的引用。
+fn codex_svg_sanitize(svg: &str) -> Result<String, String> {
+    let lower = svg.to_lowercase();
+    for bad in [
+        "<script", "<foreignobject", "<iframe", "<image", "<use", "<style", "<animate", "<set",
+        "<handler", "<a ", "xlink:", "href", "<!entity", "<!doctype", "onload", "onerror",
+        "onclick", "javascript:", "url(", "@import", "<！",
+    ] {
+        if lower.contains(bad) {
+            return Err("SVG 图集含有不被允许的元素或属性（脚本 / 外链 / 样式 / 动画）".into());
+        }
+    }
+    let start = lower.find("<svg").ok_or("SVG 图集缺少 <svg> 根元素")?;
+    let end = lower.rfind("</svg>").ok_or("SVG 图集缺少 </svg>")?;
+    if end <= start {
+        return Err("SVG 图集结构无效".into());
+    }
+    // 根元素开标签结束位置
+    let open_end = svg[start..].find('>').ok_or("SVG 根元素未闭合")? + start;
+    let body = &svg[open_end + 1..end];
+    // 只保留根 svg 的 viewBox，其余根属性全部丢弃（宽高由渲染层决定）
+    let root = &svg[start..open_end];
+    let view_box = {
+        let l = root.to_lowercase();
+        let at = l.find("viewbox").ok_or("SVG 根元素缺少 viewBox")?;
+        let rest = &root[at..];
+        let q = rest.find(|c| c == '"' || c == '\'');
+        match q {
+            Some(i) => {
+                let quote = rest.as_bytes()[i] as char;
+                let after = &rest[i + 1..];
+                let close = after.find(quote).ok_or("viewBox 引号未闭合")?;
+                after[..close].trim().to_string()
+            }
+            None => return Err("SVG viewBox 格式无效".into()),
+        }
+    };
+    let mut clean = String::with_capacity(body.len() + 128);
+    let mut rest = body;
+    let mut depth = 0usize;
+    while let Some(lt) = rest.find('<') {
+        let text = &rest[..lt];
+        if !text.trim().is_empty() && depth == 0 {
+            rest = &rest[lt..];
+            continue;
+        }
+        if text.contains(|c: char| c.is_ascii_alphabetic()) {
+            return Err("SVG 图集不支持自由文本".into());
+        }
+        let gt = rest[lt..].find('>').ok_or("SVG 元素未闭合")? + lt;
+        let tag = rest[lt..=gt].trim().to_string();
+        let ltag = tag.to_lowercase();
+        if ltag.starts_with("</") {
+            let name: String = ltag[2..].chars().filter(|c| c.is_ascii_alphabetic()).collect();
+            if depth == 0 {
+                return Err("SVG 图集标签不匹配".into());
+            }
+            depth -= 1;
+            clean.push_str(&format!("</{}>", name));
+        } else {
+            let self_close = ltag.ends_with("/>");
+            let name: String = ltag[1..].chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+            if !["g", "rect", "circle", "ellipse", "line", "polyline", "polygon", "path"].contains(&name.as_str()) {
+                return Err(format!("SVG 图集包含不被支持的标签 <{}>", name));
+            }
+            let attrs = codex_svg_attrs(&tag, &name)?;
+            if attrs.is_empty() && name != "g" {
+                return Err(format!("SVG <{}> 缺少属性", name));
+            }
+            clean.push('<');
+            clean.push_str(&name);
+            clean.push(' ');
+            clean.push_str(&attrs);
+            if self_close {
+                clean.push_str("/>");
+            } else {
+                clean.push('>');
+                depth += 1;
+            }
+        }
+        rest = &rest[gt + 1..];
+    }
+    if depth != 0 {
+        return Err("SVG 图集存在未闭合元素".into());
+    }
+    Ok(format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{}" style="overflow:hidden">{}</svg>"#,
+        view_box, clean
+    ))
+}
+
+fn codex_svg_attrs(tag: &str, name: &str) -> Result<String, String> {
+    let inner = tag
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim_end_matches('/');
+    let mut rest = &inner[inner.len().min(name.len())..];
+    let mut out = Vec::new();
+    while let Some(eq) = rest.find('=') {
+        let key: String = rest[..eq].trim().to_string();
+        if key.is_empty() {
+            rest = &rest[eq + 1..];
+            continue;
+        }
+        let after = rest[eq + 1..].trim_start();
+        let quote = after.chars().next().ok_or("SVG 属性值缺失")?;
+        if quote != '"' && quote != '\'' {
+            return Err(format!("SVG 属性 {} 未加引号", key));
+        }
+        let tail = &after[1..];
+        let close = tail.find(quote).ok_or("SVG 属性引号未闭合")?;
+        let value = &tail[..close];
+        if !codex_svg_value_ok(&key, value) {
+            return Err(format!("SVG 属性 {} 的取值不被允许：{}", key, cut_chars(value, 30)));
+        }
+        out.push(format!("{}=\"{}\"", key, value));
+        rest = &tail[close + 1..];
+    }
+    // 标签名之后不应有裸文本
+    if rest.chars().any(|c| c.is_ascii_alphabetic()) {
+        return Err("SVG 标签格式无效".into());
+    }
+    Ok(out.join(" "))
+}
+
+fn codex_svg_value_ok(key: &str, value: &str) -> bool {
+    match key {
+        "fill" | "stroke" => {
+            let v = value.trim();
+            (v.starts_with('#') && v[1..].chars().all(|c| c.is_ascii_hexdigit()) && matches!(v.len(), 4 | 7 | 9))
+                || v.eq_ignore_ascii_case("none")
+        }
+        "fill-opacity" | "stroke-opacity" | "opacity" => {
+            value.trim().parse::<f64>().map(|n| (0.0..=1.0).contains(&n)).unwrap_or(false)
+        }
+        "stroke-width" => value.trim().parse::<f64>().map(|n| n >= 0.0 && n < 4096.0).unwrap_or(false),
+        "stroke-linecap" => matches!(value, "butt" | "round" | "square"),
+        "stroke-linejoin" => matches!(value, "miter" | "round" | "bevel"),
+        "transform" => {
+            let v = value.trim();
+            v.starts_with("translate(") || v.starts_with("scale(") || v.starts_with("rotate(")
+        }
+        _ => {
+            // 几何属性：数字列表（允许单位后缀与逗号 / 空白分隔）
+            if value.is_empty() {
+                return false;
+            }
+            let mut ok = key_is_geom(key);
+            for tok in value.split(|c: char| c.is_whitespace() || c == ',') {
+                if tok.is_empty() {
+                    continue;
+                }
+                let t = tok.trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%');
+                if t.parse::<f64>().is_err() {
+                    ok = false;
+                    break;
+                }
+            }
+            ok
+        }
+    }
+}
+
+fn key_is_geom(key: &str) -> bool {
+    matches!(
+        key,
+        "x" | "y" | "x1" | "y1" | "x2" | "y2" | "width" | "height" | "cx" | "cy" | "r" | "rx"
+            | "ry" | "d" | "points"
+    )
+}
+
+// 把整张 Codex 图集在 SVG 内逐行裁切：每行一条 <g>，内含 N 个 <svg viewBox=格子> 的帧。
+// 相对图集渲染时按 cellW / cellH 缩放，整行宽度正好铺满 192px，天然没有取整误差；
+// 单独渲染某一帧时，内部位移再按帧序左移 cellW，得到该帧的稳定画面。
+fn codex_row_groups(svg_body: &str) -> String {
+    let mut out = String::new();
+    for (idx, max) in (0..CODEX_ROWS).zip([6u32, 8, 8, 4, 5, 8, 6, 6, 6]) {
+        out.push_str(&format!(
+            r#"<g id="codex-row-{}" data-codex-row="{}" style="display:none">"#,
+            idx, idx
+        ));
+        for col in 0..max {
+            out.push_str(&format!(
+                r#"<svg x="{}" y="{}" width="{}" height="{}" viewBox="{} {} {} {}" overflow="hidden"><g transform="translate({} 0)">{}</g></svg>"#,
+                col * CODEX_CELL_W,
+                idx as u32 * CODEX_CELL_H,
+                CODEX_CELL_W,
+                CODEX_CELL_H,
+                col * CODEX_CELL_W,
+                idx as u32 * CODEX_CELL_H,
+                CODEX_CELL_W,
+                CODEX_CELL_H,
+                (col * CODEX_CELL_W).wrapping_neg(),
+                svg_body
+            ));
+        }
+        out.push_str("</g>");
+    }
+    out
+}
+
+// 渲染层只认「图集 + 行分组」：anim 由前端按行帧时长驱动 display 切换
+fn codex_svg_atlas(svg_body: &str) -> String {
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {} {}" style="overflow:hidden">{}</svg>"#,
+        CODEX_ATLAS_W,
+        CODEX_ATLAS_H,
+        codex_row_groups(svg_body)
+    )
+}
+
+fn codex_row_max(row: usize) -> usize {
+    [6usize, 8, 8, 4, 5, 8, 6, 6, 6][row.min(CODEX_ROWS - 1)]
+}
+
+// PNG 图集：按 192×208 网格逐格编码成独立 PNG；整格全透明的列视为「未使用列」跳过
+fn codex_slice_png(
+    raw: &[u8],
+    files: &mut std::collections::BTreeMap<String, String>,
+    rows: &mut Vec<(usize, usize, Vec<u16>)>,
+) -> Result<(), String> {
+    let img = png_decode(raw)?;
+    let cell = vec![0u8; (CODEX_CELL_W * CODEX_CELL_H * 4) as usize];
+    for row in 0..CODEX_ROWS {
+        let mut frames = 0usize;
+        for col in 0..codex_row_max(row) {
+            let mut buf = cell.clone();
+            let mut visible = false;
+            for y in 0..CODEX_CELL_H {
+                for x in 0..CODEX_CELL_W {
+                    let p = img.pixel(
+                        col as u32 * CODEX_CELL_W + x,
+                        row as u32 * CODEX_CELL_H + y,
+                    );
+                    let o = ((y * CODEX_CELL_W + x) * 4) as usize;
+                    buf[o..o + 4].copy_from_slice(&p);
+                    if p[3] > 8 {
+                        visible = true;
+                    }
+                }
+            }
+            if !visible {
+                break;
+            }
+            frames += 1;
+            // 每行同时保留「整行帧条」（渲染层按行播放）与「单帧」（逐格替换 / 导出）
+            let mut strip = Vec::with_capacity(CODEX_CELL_W as usize * 4 * frames);
+            // 帧条按真实帧数拼，前面已切好的格子直接复用
+            let strip_w = CODEX_CELL_W as usize * frames;
+            strip.resize(strip_w * CODEX_CELL_H as usize * 4, 0);
+            for y in 0..CODEX_CELL_H as usize {
+                for x in 0..CODEX_CELL_W as usize {
+                    let src = (y * CODEX_CELL_W as usize + x) * 4;
+                    let dst = (y * strip_w + (frames - 1) * CODEX_CELL_W as usize + x) * 4;
+                    strip[dst..dst + 4].copy_from_slice(&buf[src..src + 4]);
+                }
+            }
+            let frame_png = png_encode_rgba(CODEX_CELL_W, CODEX_CELL_H, &buf)?;
+            files.insert(
+                format!("codex-frame-{}-{}.png", row, col),
+                format!("data:image/png;base64,{}", base64_encode(&frame_png)),
+            );
+            files.insert(
+                format!("codex-row-{}-{}.png", row, CODEX_ROW_NAMES[row]),
+                format!("data:image/png;base64,{}", base64_encode(&png_encode_rgba(CODEX_CELL_W * frames as u32, CODEX_CELL_H, &strip)?)),
+            );
+        }
+        if frames > 0 {
+            // 图集本身没有时序，按契约默认节奏播放；可由前端在「逐状态替换」里改
+            let delay = 120u16;
+            rows.push((row, frames, vec![delay; frames]));
+        }
+    }
+    Ok(())
+}
+
+// 最小 PNG 编码 + 解码：只处理「8 位、非隔行、无调色板」的 PNG，
+// 覆盖 Codex 图集的实际形态；遇到更复杂的 PNG 直接拒绝并提示用户换 WebP / SVG。
+const CODEX_PNG_SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
+fn png_crc32(bytes: &[u8]) -> u32 {
+    let mut table = [0u32; 256];
+    for (i, slot) in table.iter_mut().enumerate() {
+        let mut c = i as u32;
+        for _ in 0..8 {
+            c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+        }
+        *slot = c;
+    }
+    let mut crc = 0xFFFF_FFFFu32;
+    for b in bytes {
+        crc = table[((crc ^ *b as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    crc ^ 0xFFFF_FFFF
+}
+
+fn png_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    let mut body = Vec::with_capacity(data.len() + 4);
+    body.extend_from_slice(kind);
+    body.extend_from_slice(data);
+    out.extend_from_slice(&body);
+    out.extend_from_slice(&png_crc32(&body).to_be_bytes());
+}
+
+// rgba: 每行 width*4 字节，不加 filter 字节之外的冗余数据
+fn png_encode_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    if rgba.len() != width as usize * height as usize * 4 {
+        return Err("PNG 像素数据长度不匹配".into());
+    }
+    let mut raw = Vec::with_capacity(rgba.len() + height as usize);
+    for y in 0..height as usize {
+        raw.push(0u8); // filter: None
+        raw.extend_from_slice(&rgba[y * width as usize * 4..(y + 1) * width as usize * 4]);
+    }
+    let mut out = Vec::with_capacity(raw.len() / 2 + 1024);
+    out.extend_from_slice(&CODEX_PNG_SIG);
+    let mut ihdr = Vec::with_capacity(13);
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    png_chunk(&mut out, b"IHDR", &ihdr);
+    png_chunk(&mut out, b"IDAT", &zlib_deflate(&raw)?);
+    png_chunk(&mut out, b"IEND", &[]);
+    Ok(out)
+}
+
+// zlib 包装（最小体积，依赖已在依赖树中的 flate2 / miniz_oxide）
+fn zlib_deflate(raw: &[u8]) -> Result<Vec<u8>, String> {
+    use std::io::Write;
+    let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    enc.write_all(raw).map_err(|e| e.to_string())?;
+    enc.finish().map_err(|e| e.to_string())
+}
+
+struct PngImage {
+    width: u32,
+    height: u32,
+    bpp: usize,
+    pixels: Vec<u8>,
+}
+
+fn png_decode(raw: &[u8]) -> Result<PngImage, String> {
+    const UNSUPPORTED: &str = "PNG 图集格式较为特殊（调色板 / 隔行 / 16 位），请另存为 WebP 或 SVG 后重试";
+    if raw.len() < 33 || raw[..8] != CODEX_PNG_SIG {
+        return Err("不是有效的 PNG".into());
+    }
+    let be32 = |i: usize| u32::from_be_bytes([raw[i], raw[i + 1], raw[i + 2], raw[i + 3]]);
+    let (width, height) = (be32(16), be32(20));
+    let (depth, color, interlace) = (raw[24], raw[25], raw[28]);
+    if width == 0 || height == 0 {
+        return Err("PNG 尺寸无效".into());
+    }
+    if depth != 8 || interlace != 0 || !matches!(color, 0 | 2 | 4 | 6) {
+        return Err(UNSUPPORTED.into());
+    }
+    let bpp = match color {
+        0 => 1,
+        2 => 3,
+        4 => 2,
+        _ => 4,
+    };
+    let mut idat = Vec::new();
+    let mut i = 8;
+    while i + 8 <= raw.len() {
+        let len = be32(i) as usize;
+        let kind = &raw[i + 4..i + 8];
+        let data_start = i + 8;
+        if data_start + len + 4 > raw.len() {
+            break;
+        }
+        if kind == b"IDAT" {
+            idat.extend_from_slice(&raw[data_start..data_start + len]);
+        } else if kind == b"IEND" {
+            break;
+        }
+        i = data_start + len + 4;
+    }
+    let row_bytes = width as usize * bpp;
+    let expect = (row_bytes + 1) * height as usize;
+    let raw_px = zlib_inflate(&idat, expect)?;
+    if raw_px.len() < expect {
+        return Err("PNG 数据不完整".into());
+    }
+    let mut pixels = vec![0u8; row_bytes * height as usize];
+    let mut prev = vec![0u8; row_bytes];
+    for y in 0..height as usize {
+        let ft = raw_px[y * (row_bytes + 1)];
+        let line = &raw_px[y * (row_bytes + 1) + 1..(y + 1) * (row_bytes + 1)];
+        let mut cur = line.to_vec();
+        for x in 0..row_bytes {
+            let a = if x >= bpp { cur[x - bpp] } else { 0 };
+            let b = prev[x];
+            let c = if x >= bpp { prev[x - bpp] } else { 0 };
+            let v = match ft {
+                0 => 0,
+                1 => a as i32,
+                2 => b as i32,
+                3 => ((a as i32) + (b as i32)) / 2,
+                4 => {
+                    let p = a as i32 + b as i32 - c as i32;
+                    let (pa, pb, pc) = ((p - a as i32).abs(), (p - b as i32).abs(), (p - c as i32).abs());
+                    if pa <= pb && pa <= pc { a as i32 } else if pb <= pc { b as i32 } else { c as i32 }
+                }
+                _ => return Err("PNG 行过滤类型无效".into()),
+            };
+            cur[x] = cur[x].wrapping_add(v as u8);
+        }
+        pixels[y * row_bytes..(y + 1) * row_bytes].copy_from_slice(&cur);
+        prev = cur;
+    }
+    Ok(PngImage { width, height, bpp, pixels })
+}
+
+impl PngImage {
+    fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        let i = (y as usize * self.width as usize + x as usize) * self.bpp;
+        let p = &self.pixels[i..i + self.bpp];
+        match self.bpp {
+            1 => [p[0], p[0], p[0], 255],
+            2 => [p[0], p[0], p[0], p[1]],
+            3 => [p[0], p[1], p[2], 255],
+            _ => [p[0], p[1], p[2], p[3]],
+        }
+    }
+}
+
+// zlib 容器 + inflate。输出长度上界由 IHDR 推得，超出即视为非法压缩流
+fn zlib_inflate(data: &[u8], max_out: usize) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let dec = flate2::read::ZlibDecoder::new(data);
+    let mut out = Vec::with_capacity(max_out.min(8 * 1024 * 1024));
+    dec.take(max_out as u64 + 1)
+        .read_to_end(&mut out)
+        .map_err(|e| format!("PNG 压缩流解析失败：{}", e))?;
+    if out.len() > max_out {
+        return Err("PNG 压缩流长度异常".into());
+    }
+    Ok(out)
+}
+
+// 图集读取：PNG 做逐格确定性切片；SVG 用 viewBox 虚拟裁切（无损、任意缩放）；
+// 其它格式（WebP / 动图 GIF）整幅交给渲染层，作为待机帧等比铺满。
+fn codex_read_atlas(
+    raw: &[u8],
+    kind: CodexKind,
+    name: &str,
+    files: &mut std::collections::BTreeMap<String, String>,
+    rows: &mut Vec<(usize, usize, Vec<u16>)>,
+) -> Result<(), String> {
+    let (w, h) = codex_image_size(raw, kind).ok_or("无法读取图集尺寸，文件可能已损坏")?;
+    if w != CODEX_ATLAS_W || h != CODEX_ATLAS_H {
+        return Err(format!(
+            "图集尺寸 {}×{} 不符合 Codex Pet Contract：必须 {}×{}（{} 列 × {} 行，单格 {}×{}）",
+            w, h, CODEX_ATLAS_W, CODEX_ATLAS_H, CODEX_COLS, CODEX_ROWS, CODEX_CELL_W, CODEX_CELL_H
+        ));
+    }
+    if raw.len() > CODEX_SHEET_MAX {
+        return Err("图集超过 64 MB".into());
+    }
+    match kind {
+        CodexKind::Svg => {
+            let body = codex_svg_sanitize(&String::from_utf8_lossy(raw))?;
+            let atlas = codex_svg_atlas(&body);
+            let data = format!("data:image/svg+xml;base64,{}", base64_encode(atlas.as_bytes()));
+            // SVG 图集是矢量切片：每行按契约最大帧数全部可用
+            for row in 0..CODEX_ROWS {
+                let frames = codex_row_max(row);
+                files.insert(
+                    format!("codex-row-{}-{}", row, CODEX_ROW_NAMES[row]),
+                    data.clone(),
+                );
+                rows.push((row, frames, vec![120; frames]));
+            }
+            files.insert("spritesheet.svg".into(), data);
+        }
+        CodexKind::Png => codex_slice_png(raw, files, rows)?,
+        _ => {
+            // WebP / 动图：整幅按单帧播放，等比缩放进 192×208 格子
+            files.insert(
+                "spritesheet.webp".into(),
+                format!("data:{};base64,{}", kind.mime(), base64_encode(raw)),
+            );
+            let delay = codex_gif_timing(raw).0.map(|d| (d.max(2) as u16) * 10).unwrap_or(120);
+            rows.push((0, 1, vec![delay]));
+        }
+    }
+    let _ = name;
+    Ok(())
+}
+
+// Codex 行 -> DeskPet 八态：同义动作合并，缺失状态由前端回退 idle
+fn codex_state_map(available: &[usize]) -> serde_json::Map<String, Value> {
+    let mut map = serde_json::Map::new();
+    let has = |row: usize| available.contains(&row);
+    let put = |map: &mut serde_json::Map<String, Value>, st: &str, row: usize| {
+        if !map.contains_key(st) && has(row) {
+            map.insert(st.into(), Value::String(CODEX_ROW_NAMES[row].into()));
+        }
+    };
+    put(&mut map, "idle", 0);
+    let single = available.len() == 1; // WebP / 动图整幅只有一行，所有状态都用它
+    put(&mut map, "work", if single { 0 } else { 7 }); // running：无方向性的「在干活」
+    put(&mut map, "talk", if single { 0 } else { 6 }); // waiting：等待用户输入
+    put(&mut map, "happy", if single { 0 } else { 3 }); // waving
+    put(&mut map, "error", if single { 0 } else { 5 }); // failed
+    put(&mut map, "click", if single { 0 } else { 4 }); // jumping
+    put(&mut map, "drag", if single { 0 } else { 1 }); // running-right
+    put(&mut map, "sleep", 0); // 契约没有睡眠行，回退待机
+    if !map.contains_key("idle") {
+        map.insert("idle".into(), Value::String("idle".into()));
+    }
+    map
+}
+
+// Codex 宠物包（zip）解析：只认 pet.json + spritesheet，严格校验契约
+fn read_codex_zip(raw: &[u8]) -> Result<Value, String> {
+    use std::io::Read;
+    if raw.len() > SKIN_MAX_ZIP {
+        return Err(format!("宠物包超过 {} MB 上限", SKIN_MAX_ZIP / 1024 / 1024));
+    }
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(raw))
+        .map_err(|e| format!("不是有效的 zip：{}", e))?;
+    if zip.len() > SKIN_MAX_ENTRIES {
+        return Err("宠物包条目过多".into());
+    }
+    let mut total: u64 = 0;
+    let mut entries: std::collections::BTreeMap<String, Vec<u8>> = std::collections::BTreeMap::new();
+    let mut manifest: Option<Value> = None;
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).map_err(|e| e.to_string())?;
+        if f.is_dir() {
+            continue;
+        }
+        let name = f
+            .mangled_name()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("宠物包内文件名编码异常")?
+            .to_string();
+        // 只取 basename：即便条目写了 ../ 也无法逃出包外
+        if name.starts_with('.') || name.contains('/') || name.contains('\\') {
+            continue;
+        }
+        if f.size() > SKIN_MAX_FILE {
+            return Err(format!("{} 超过 {} MB 单文件上限", name, SKIN_MAX_FILE / 1024 / 1024));
+        }
+        total += f.size();
+        if total > SKIN_MAX_TOTAL {
+            return Err("宠物包解压后总大小超限".into());
+        }
+        let mut buf = Vec::with_capacity(f.size() as usize);
+        f.read_to_end(&mut buf).map_err(|e| format!("读取 {} 失败：{}", name, e))?;
+        if name.eq_ignore_ascii_case("pet.json") {
+            let txt = String::from_utf8(buf).map_err(|_| "pet.json 不是 UTF-8 文本")?;
+            manifest = Some(serde_json::from_str(&txt).map_err(|e| format!("pet.json 解析失败：{}", e))?);
+            continue;
+        }
+        if codex_kind_of(&name).is_none() {
+            continue;
+        }
+        entries.insert(name, buf);
+    }
+    let manifest = manifest.ok_or(
+        "这不是 Codex 宠物包：缺少 pet.json（DeskPet 皮肤包请使用 .deskpet-skin.zip）",
+    )?;
+    if !manifest.is_object() {
+        return Err("pet.json 必须是 JSON 对象".into());
+    }
+    let display = manifest["displayName"]
+        .as_str()
+        .or_else(|| manifest["name"].as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let fallback_id = manifest["id"].as_str().unwrap_or("").trim().to_string();
+    if display.is_empty() && fallback_id.is_empty() {
+        return Err("pet.json 缺少 id / displayName".into());
+    }
+    let display = if display.is_empty() {
+        fallback_id.clone()
+    } else {
+        display
+    };
+    let mut id = codex_slug(&fallback_id);
+    if id.is_empty() {
+        id = codex_slug(&display);
+    }
+    if id.is_empty() {
+        id = "codex-pet".into();
+    }
+
+    let declared = manifest["spritesheetPath"]
+        .as_str()
+        .unwrap_or("spritesheet.webp")
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("spritesheet.webp")
+        .to_string();
+    let sheet_kind = codex_kind_of(&declared).ok_or("spritesheetPath 必须是 .png / .webp / .gif / .svg")?;
+    let (sheet_name, sheet_raw) = match entries.get(&declared) {
+        Some(raw) => (declared.clone(), raw.clone()),
+        None => entries
+            .iter()
+            .find(|(k, v)| {
+                codex_kind_of(k) == Some(sheet_kind)
+                    && codex_image_size(v, sheet_kind) == Some((CODEX_ATLAS_W, CODEX_ATLAS_H))
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .ok_or_else(|| format!("pet.json 声明的 spritesheetPath（{}）在包内不存在", declared))?,
+    };
+
+    let mut files: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut rows: Vec<(usize, usize, Vec<u16>)> = Vec::new();
+    codex_read_atlas(&sheet_raw, sheet_kind, &sheet_name, &mut files, &mut rows)?;
+    let available: Vec<usize> = rows.iter().map(|(r, _, _)| *r).collect();
+    let row_meta: Vec<Value> = rows
+        .iter()
+        .map(|(r, n, d)| {
+            // 在行尾把 durations 延长到 8 个，前端按列改时长时不必处理变长数组
+            let mut all = [0u16; 8];
+            for (i, v) in d.iter().enumerate().take(8) {
+                all[i] = *v;
+            }
+            json!({
+                "name": CODEX_ROW_NAMES[*r],
+                "row": r,
+                "frames": n,
+                "delay": 120,
+                "durations": all,
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "format": "codex",
+        "schema": "codex-pet-contract-1",
+        "name": cut_chars(&display, 40),
+        "id": cut_chars(&id, 40),
+        "description": cut_chars(manifest["description"].as_str().unwrap_or(""), 240),
+        "version": manifest["version"].as_str().unwrap_or("codex"),
+        "license": manifest["license"].as_str().unwrap_or(""),
+        "spritesheetPath": sheet_name,
+        "atlas": {
+            "width": CODEX_ATLAS_W, "height": CODEX_ATLAS_H,
+            "cellW": CODEX_CELL_W, "cellH": CODEX_CELL_H,
+            "cols": CODEX_COLS, "rows": CODEX_ROWS,
+            "transparent": true,
+            "spec": "codex-pet-contract",
+        },
+        "rows": row_meta,
+        "states": codex_state_map(&available),
+        "files": files,
+        "sounds": {},
+        "byteSize": total,
+        "ts": now_ms(),
+    }))
+}
+
+// DeskPet -> Codex 导出：Codex 来源按原帧还原，其余来源按八态映射回填契约行
+fn codex_export_pack(pack: &Value) -> Result<(String, String, Vec<u8>), String> {
+    let files = pack["files"].as_object().ok_or("皮肤包没有图片资源")?;
+    let raw_frames: std::collections::BTreeMap<(usize, usize), String> = pack["frames"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| {
+                    Some((
+                        (f["row"].as_u64()? as usize, f["col"].as_u64()? as usize),
+                        f["src"].as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let break_on_missing = pack["format"].as_str() == Some("codex");
+    let mut rows: Vec<(usize, Vec<Vec<u8>>)> = Vec::new();
+    for row in 0..CODEX_ROWS {
+        let name = CODEX_ROW_NAMES[row];
+        let mut cells: Vec<Vec<u8>> = Vec::new();
+        for col in 0..codex_row_max(row) {
+            // 非 Codex 来源不经过逐帧记录，直接整行回填
+            if break_on_missing && !codex_row_has_frame(pack, files, row, col) {
+                break;
+            }
+            // 1) 行内在渲染层维护过的帧：优先使用逐帧记录
+            let frame_src = raw_frames
+                .get(&(row, col))
+                .map(|s| s.as_str())
+                .or_else(|| {
+                    files
+                        .get(&format!("codex-frame-{}-{}.png", row, col))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                });
+            let cell = frame_src
+                .and_then(codex_cell_from_url)
+                .or_else(|| {
+                    // 2) 兼容旧缓存：整行帧条被替换成了同一张 PNG
+                    let row_src = files
+                        .get(&format!("codex-row-{}-{}.png", row, name))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| s.starts_with("data:image/png"))?;
+                    let (_, payload) = row_src.split_once(',')?;
+                    let img = png_decode(&base64_decode(payload).ok()?).ok()?;
+                    if img.width == CODEX_CELL_W * codex_row_max(row) as u32 && img.height == CODEX_CELL_H {
+                        Some(codex_cell_at(&img, col as u32))
+                    } else {
+                        codex_cell_from_url(row_src)
+                    }
+                });
+            match cell {
+                Some(c) => cells.push(c),
+                None => break,
+            }
+        }
+        // 3) 非 Codex 来源：从 DeskPet 八态映射回契约行（等比缩放 + 贴底）。
+        //    DeskPet 皮肤包是「一状态一图」，整行复制同一张，保证每行帧数符合契约。
+        if pack["format"].as_str() != Some("codex") {
+            if let Some(cell) = codex_cell_from_state(pack, name) {
+                cells.push(cell);
+            }
+        }
+        if !cells.is_empty() {
+            rows.push((row, cells));
+        }
+    }
+    if rows.is_empty() {
+        return Err("没有可导出的 Codex 行（需要至少一张待机图）".into());
+    }
+    let missing: Vec<&str> = (0..CODEX_ROWS)
+        .filter(|r| !rows.iter().any(|(i, _)| i == r))
+        .map(|r| CODEX_ROW_NAMES[r])
+        .collect();
+
+    // 4) 拼 8×9 图集：未使用的格子保持完全透明
+    let mut canvas = vec![0u8; (CODEX_ATLAS_W * CODEX_ATLAS_H * 4) as usize];
+    for (row, cells) in &rows {
+        for (col, cell) in cells.iter().enumerate() {
+            for y in 0..CODEX_CELL_H {
+                let dst = ((row * CODEX_CELL_H as usize + y as usize) * CODEX_ATLAS_W as usize
+                    + col * CODEX_CELL_W as usize)
+                    * 4;
+                let src = (y * CODEX_CELL_W) as usize * 4;
+                canvas[dst..dst + CODEX_CELL_W as usize * 4]
+                    .copy_from_slice(&cell[src..src + CODEX_CELL_W as usize * 4]);
+            }
+        }
+    }
+    let png = png_encode_rgba(CODEX_ATLAS_W, CODEX_ATLAS_H, &canvas)?;
+    let display = pack["name"].as_str().unwrap_or("DeskPet 皮肤").trim();
+    let display = if display.is_empty() { "DeskPet 皮肤" } else { display };
+    let raw_id = pack["id"].as_str().unwrap_or("");
+    let mut id = codex_slug(raw_id);
+    if id.is_empty() {
+        id = codex_slug(display);
+    }
+    if id.is_empty() {
+        id = "deskpet-skin".into();
+    }
+    let mut manifest = json!({
+        "id": id,
+        "displayName": display,
+        "description": pack["description"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("由 DeskPet 导出的 Codex 宠物：{}", cut_chars(display, 32))),
+        "spritesheetPath": "spritesheet.png",
+    });
+    if !missing.is_empty() {
+        manifest["deskpetNotes"] = json!({
+            "missingRows": missing,
+            "source": "deskpet",
+        });
+    }
+    Ok((id, serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?, png))
+}
+
+// 帧是否存在由 rows[].frames 决定（Codex 来源），否则看逐帧记录里是否出现过
+fn codex_row_has_frame(pack: &Value, files: &serde_json::Map<String, Value>, row: usize, col: usize) -> bool {
+    let codex_frames = pack["rows"]
+        .as_array()
+        .and_then(|a| a.iter().find(|r| r["row"].as_u64() == Some(row as u64)))
+        .and_then(|r| r["frames"].as_u64())
+        .map(|n| (col as u64) < n);
+    match codex_frames {
+        Some(has) => has,
+        None => files
+            .get(&format!("codex-frame-{}-{}.png", row, col))
+            .map(|v| v.as_str().map(|s| !s.is_empty()).unwrap_or(true))
+            .unwrap_or(false),
+    }
+}
+
+fn codex_cell_at(img: &PngImage, col: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity((CODEX_CELL_W * CODEX_CELL_H * 4) as usize);
+    for y in 0..CODEX_CELL_H {
+        for x in 0..CODEX_CELL_W {
+            out.extend_from_slice(&img.pixel(col * CODEX_CELL_W + x, y));
+        }
+    }
+    out
+}
+
+fn codex_cell_from_url(url: &str) -> Option<Vec<u8>> {
+    let (_, payload) = url.split_once(',')?;
+    let raw = base64_decode(payload).ok()?;
+    let img = png_decode(&raw).ok()?;
+    if img.width == CODEX_CELL_W && img.height == CODEX_CELL_H {
+        Some(codex_cell_rgba(&img))
+    } else {
+        None
+    }
+}
+
+fn codex_cell_rgba(img: &PngImage) -> Vec<u8> {
+    let mut out = Vec::with_capacity((CODEX_CELL_W * CODEX_CELL_H * 4) as usize);
+    for y in 0..CODEX_CELL_H {
+        for x in 0..CODEX_CELL_W {
+            out.extend_from_slice(&img.pixel(x, y));
+        }
+    }
+    out
+}
+
+// 八态 -> 行：talk 优先取 waiting 语义（同一动作），其余按行名直取
+fn codex_cell_from_state(pack: &Value, row_name: &str) -> Option<Vec<u8>> {
+    let files = pack["files"].as_object()?;
+    let state = match row_name {
+        "idle" => "idle",
+        "running" => "work",
+        "waiting" => "talk",
+        "waving" => "happy",
+        "failed" => "error",
+        "jumping" => "click",
+        "running-right" => "drag",
+        "running-left" => "drag",
+        _ => return None,
+    };
+    // 依次尝试：显式映射的帧 -> 该状态的映射文件 -> 同名 PNG 资源
+    let states = pack["states"].as_object();
+    let mut urls: Vec<String> = Vec::new();
+    if let Some(file) = states.and_then(|m| m.get(state)).and_then(|v| v.as_str()) {
+        if let Some(u) = files.get(file).and_then(|v| v.as_str()) {
+            urls.push(u.to_string());
+        }
+    }
+    for (k, v) in files.iter() {
+        if k.to_lowercase().ends_with(".png") {
+            if let Some(u) = v.as_str().filter(|u| u.starts_with("data:image/png")) {
+                urls.push(u.to_string());
+                break;
+            }
+        }
+    }
+    let mut decoded = None;
+    for url in urls.iter().filter(|u| u.starts_with("data:image/png")) {
+        if let Some((_, payload)) = url.split_once(',') {
+            if let Some(img) = base64_decode(payload).ok().and_then(|raw| png_decode(&raw).ok()) {
+                decoded = Some(img);
+                break;
+            }
+        }
+    }
+    let img = decoded?;
+    let mut out = vec![0u8; (CODEX_CELL_W * CODEX_CELL_H * 4) as usize];
+    // 等比缩放进格子并底部居中（Codex 要求同一条地面线）
+    let scale = (CODEX_CELL_W as f64 / img.width as f64)
+        .min(CODEX_CELL_H as f64 / img.height as f64);
+    let w = (img.width as f64 * scale).round().max(1.0) as u32;
+    let h = (img.height as f64 * scale).round().max(1.0) as u32;
+    let ox = (CODEX_CELL_W - w) / 2;
+    let oy = CODEX_CELL_H - h;
+    for y in 0..h {
+        for x in 0..w {
+            let sx = (x as f64 / scale).min((img.width - 1) as f64) as u32;
+            let sy = (y as f64 / scale).min((img.height - 1) as f64) as u32;
+            let p = img.pixel(sx, sy);
+            let o = (((y + oy) * CODEX_CELL_W + x + ox) * 4) as usize;
+            out[o..o + 4].copy_from_slice(&p);
+        }
+    }
+    Some(out)
+}
+
 fn base64_encode(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
@@ -3480,6 +4576,23 @@ fn base64_encode(data: &[u8]) -> String {
 fn skin_pack_import(data: String) -> Result<Value, String> {
     let raw = base64_decode(&data).map_err(|e| format!("皮肤包数据无效：{}", e))?;
     read_skin_zip(&raw)
+}
+
+// FR-SKN-003：Codex 宠物包（pet.json + 8×9 图集）导入 / 导出
+#[tauri::command]
+fn codex_pet_import(data: String) -> Result<Value, String> {
+    let raw = base64_decode(&data).map_err(|e| format!("宠物包数据无效：{}", e))?;
+    read_codex_zip(&raw)
+}
+
+#[tauri::command]
+fn codex_pet_export(app: AppHandle, pack: Value) -> Result<String, String> {
+    let (id, manifest, png) = codex_export_pack(&pack)?;
+    let dir = app_export_dir(&app)?.join("codex-pets").join(sanitize_export_filename(&id)?);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("spritesheet.png"), png).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("pet.json"), manifest).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().to_string())
 }
 
 fn base64_decode(s: &str) -> Result<Vec<u8>, &'static str> {
@@ -3503,6 +4616,188 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, &'static str> {
         }
     }
     Ok(buf)
+}
+
+// 皮肤维护：把前端维护后的皮肤包重新打包为 .deskpet-skin.zip（导出 / 备份）
+fn is_safe_skin_entry(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+        && !name.chars().any(|c| c.is_control())
+}
+
+fn data_url_bytes(data: &str) -> Result<(String, Vec<u8>), String> {
+    let (meta, payload) = data.split_once(',').ok_or("资源不是有效的 data URL")?;
+    if !meta.starts_with("data:") || !meta.contains(";base64") {
+        return Err("资源不是 base64 data URL".into());
+    }
+    let mime = meta[5..]
+        .split(';')
+        .next()
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let bytes = base64_decode(payload).map_err(|e| format!("资源 base64 解码失败：{}", e))?;
+    Ok((mime, bytes))
+}
+
+fn skin_zip_bytes(pack: &Value) -> Result<Vec<u8>, String> {
+    use std::io::Write;
+    let files = pack["files"].as_object().ok_or("皮肤包没有图片资源")?;
+    let sounds = pack["sounds"].as_object();
+    let states = pack["states"].as_object();
+
+    // 只导出标准八态中真实存在的映射，避免把损坏的引用写进新包
+    let mut state_map = serde_json::Map::new();
+    if let Some(states) = states {
+        for st in SKIN_STATES {
+            let Some(name) = states.get(st).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if files.contains_key(name) && is_safe_skin_entry(name) {
+                state_map.insert(st.to_string(), Value::String(name.to_string()));
+            }
+        }
+    }
+    if state_map.is_empty() {
+        return Err("没有可导出的状态图片".into());
+    }
+
+    let name = pack["name"].as_str().unwrap_or("我的皮肤").trim();
+    let name = if name.is_empty() { "我的皮肤" } else { name };
+    let mut manifest = json!({
+        "name": name,
+        "version": pack["version"].as_str().unwrap_or("1.0"),
+        "states": state_map,
+    });
+    if let Some(groups) = pack["group"].as_object() {
+        let mut group = serde_json::Map::new();
+        for (k, v) in groups {
+            let Some(name) = v.as_str() else { continue };
+            if files.contains_key(name) && is_safe_skin_entry(name) {
+                group.insert(k.clone(), Value::String(name.to_string()));
+            }
+        }
+        if !group.is_empty() {
+            manifest["group"] = Value::Object(group);
+        }
+    }
+    let mut sound_map = serde_json::Map::new();
+    if let Some(sounds) = sounds {
+        for (k, v) in sounds {
+            let Some(data) = v.as_str() else { continue };
+            // 前端 sounds 以「键 -> data URL」保存，导出时按 key 生成文件名
+            let mime = data.split_once(',').map(|(m, _)| m).unwrap_or("");
+            let ext = if mime.contains("mpeg") {
+                "mp3"
+            } else if mime.contains("wav") {
+                "wav"
+            } else {
+                "ogg"
+            };
+            let safe = format!("{}.{}", k, ext)
+                .chars()
+                .filter(|c| !r#"\/:*?"<>|"#.contains(*c) && !c.is_control())
+                .collect::<String>();
+            if is_safe_skin_entry(&safe) {
+                sound_map.insert(k.clone(), Value::String(safe));
+            }
+        }
+    }
+    if !sound_map.is_empty() {
+        manifest["sound"] = Value::Object(sound_map.clone());
+    }
+
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file("skin.json", opts)
+        .map_err(|e| format!("写入 skin.json 失败：{}", e))?;
+    zip.write_all(manifest.to_string().as_bytes())
+        .map_err(|e| format!("写入 skin.json 失败：{}", e))?;
+
+    // 只写入仍被状态机或 group 引用的图片；未引用资源由维护工具的「清理」显式处理
+    let mut referenced: std::collections::BTreeSet<String> = manifest["states"]
+        .as_object()
+        .map(|m| m.values().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect())
+        .unwrap_or_default();
+    if let Some(group) = manifest["group"].as_object() {
+        referenced.extend(
+            group
+                .values()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string()),
+        );
+    }
+    for file_name in referenced {
+        if !is_safe_skin_entry(&file_name) {
+            continue;
+        }
+        let Some(data) = files.get(&file_name).and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let (_, bytes) = data_url_bytes(data)?;
+        zip.start_file(file_name.as_str(), opts)
+            .map_err(|e| format!("写入 {} 失败：{}", file_name, e))?;
+        zip.write_all(&bytes)
+            .map_err(|e| format!("写入 {} 失败：{}", file_name, e))?;
+    }
+
+    // 音效按 manifest.sound 的 key 保存，重新导入时即使被按文件名索引也不影响提醒音回退
+    if let Some(sounds) = sounds {
+        for (key, data) in sounds {
+            let Some(data) = data.as_str() else { continue };
+            let Some(entry) = sound_map.get(key).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let (_, bytes) = data_url_bytes(data)?;
+            zip.start_file(entry, opts)
+                .map_err(|e| format!("写入 {} 失败：{}", entry, e))?;
+            zip.write_all(&bytes)
+                .map_err(|e| format!("写入 {} 失败：{}", entry, e))?;
+        }
+    }
+
+    let cursor = zip
+        .finish()
+        .map_err(|e| format!("生成皮肤包失败：{}", e))?;
+    Ok(cursor.into_inner())
+}
+
+#[tauri::command]
+fn skin_pack_export(app: AppHandle, pack: Value) -> Result<String, String> {
+    let bytes = skin_zip_bytes(&pack)?;
+    let dir = app_export_dir(&app)?;
+    let name = pack["name"].as_str().unwrap_or("deskpet-skin").trim();
+    let name = if name.is_empty() { "deskpet-skin" } else { name };
+    let safe = sanitize_export_filename(&format!("{}.deskpet-skin.zip", name))?;
+    let path = dir.join(&safe);
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn skin_image_export(app: AppHandle, name: String, data: String) -> Result<String, String> {
+    let (mime, bytes) = data_url_bytes(&data)?;
+    let ext = if mime.contains("gif") {
+        "gif"
+    } else if mime.contains("webp") {
+        "webp"
+    } else {
+        "png"
+    };
+    let dir = app_export_dir(&app)?;
+    let raw = name.trim();
+    let stem = std::path::Path::new(raw)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("skin-image");
+    let safe = sanitize_export_filename(&format!("{}.{}", stem, ext))?;
+    let path = dir.join(&safe);
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -3872,15 +5167,19 @@ fn take_pending_notices(ctx: tauri::State<AppCtx>) -> Vec<Value> {
     std::mem::take(&mut *p)
 }
 
-#[tauri::command]
-fn export_text(app: AppHandle, filename: String, content: String) -> Result<String, String> {
+// 导出目录统一放在应用数据目录的 exports 下
+fn app_export_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("exports");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    // 只允许纯文件名：拒绝路径分隔符、控制字符、"."/".." 与 Windows 保留设备名
+    Ok(dir)
+}
+
+// 只允许纯文件名：拒绝路径分隔符、控制字符、"."/".." 与 Windows 保留设备名
+fn sanitize_export_filename(filename: &str) -> Result<String, String> {
     let mut safe: String = filename
         .chars()
         .filter(|c| !r#"\/:*?"<>|"#.contains(*c) && !c.is_control())
@@ -3897,6 +5196,13 @@ fn export_text(app: AppHandle, filename: String, content: String) -> Result<Stri
     if RESERVED.contains(&stem.as_str()) {
         safe = format!("_{}", safe);
     }
+    Ok(safe)
+}
+
+#[tauri::command]
+fn export_text(app: AppHandle, filename: String, content: String) -> Result<String, String> {
+    let dir = app_export_dir(&app)?;
+    let safe = sanitize_export_filename(&filename)?;
     let path = dir.join(&safe);
     if path.parent() != Some(dir.as_path()) {
         return Err("文件名无效".into());
@@ -4262,6 +5568,7 @@ fn main() {
             key_set, key_delete, key_has,
             provider_test,
             chat_start, chat_stop, chat_summarize, tool_auth_reply, clipboard_read, skin_pack_import,
+            skin_pack_export, skin_image_export, codex_pet_import, codex_pet_export,
             pet_clicked, pet_save_pos, pet_set_size, set_pet_scale,
             set_click_through, set_pet_visible, reset_pet_pos,
             show_bubble_cmd, hide_bubble_cmd, bubble_resize,
@@ -4706,6 +6013,176 @@ mod tests {
             buf.into_inner()
         }
 
+#[cfg(test)]
+mod codex_contract_tests {
+    use super::*;
+
+    fn tiny_png(width: u32, height: u32, fill: [u8; 4]) -> Vec<u8> {
+        let px = fill.repeat((width * height) as usize);
+        png_encode_rgba(width, height, &px).unwrap()
+    }
+
+    fn atlas_png() -> Vec<u8> {
+        // 每行只用契约规定的前几列，其余列保持完全透明
+        let (w, h) = (CODEX_ATLAS_W, CODEX_ATLAS_H);
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        for (row, cols) in [(0usize, 6u32), (1, 8), (2, 8), (3, 4), (4, 5), (5, 8), (6, 6), (7, 6), (8, 6)] {
+            for col in 0..cols {
+                for y in 0..CODEX_CELL_H {
+                    for x in 0..CODEX_CELL_W {
+                        let o = (((row as u32 * CODEX_CELL_H + y) * w) + col * CODEX_CELL_W + x) * 4;
+                        px[o as usize..o as usize + 4]
+                            .copy_from_slice(&[30 + row as u8, 60 + col as u8, 120, 255]);
+                    }
+                }
+            }
+        }
+        png_encode_rgba(w, h, &px).unwrap()
+    }
+
+    #[test]
+    fn png_edit_roundtrip_is_lossless() {
+        let img = atlas_png();
+        let back = png_decode(&img).unwrap();
+        assert_eq!((back.width, back.height), (CODEX_ATLAS_W, CODEX_ATLAS_H));
+        assert_eq!(back.pixel(0, 0), [30, 60, 120, 255]);
+        // 第 0 行第 6 列之外：未使用列必须仍然完全透明
+        let unused = back.pixel(6 * CODEX_CELL_W + 10, 10);
+        assert_eq!(unused[3], 0);
+        // 第 4 行只要 5 帧，第 5 列必须透明
+        assert_eq!(back.pixel(5 * CODEX_CELL_W + 10, 4 * CODEX_CELL_H + 10)[3], 0);
+    }
+
+    #[test]
+    fn codex_zip_parses_contract_atlas() {
+        let zip = build_zip(&[
+            ("pet.json", r#"{"id":"round-cat-codex","displayName":"Round Cat","description":"demo","spritesheetPath":"spritesheet.png"}"#.as_bytes()),
+            ("spritesheet.png", &atlas_png()),
+            ("../../evil.png", &tiny_png(8, 8, [255, 0, 0, 255])),
+        ]);
+        let pack = read_codex_zip(&zip).unwrap();
+        assert_eq!(pack["format"], "codex");
+        assert_eq!(pack["name"], "Round Cat");
+        assert_eq!(pack["id"], "round-cat-codex");
+        assert_eq!(pack["spritesheetPath"], "spritesheet.png");
+        assert_eq!(pack["atlas"]["width"], 1536);
+        assert_eq!(pack["rows"].as_array().unwrap().len(), 9);
+        // 行名与契约行序一致
+        let names: Vec<&str> = pack["rows"].as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+        assert_eq!(names, CODEX_ROW_NAMES.to_vec());
+        // 未使用列不产生帧：idle 6 帧、waving 4 帧
+        let rows = pack["rows"].as_array().unwrap();
+        assert_eq!(rows[0]["frames"], 6);
+        assert_eq!(rows[3]["frames"], 4);
+        // 八态映射：running -> work，waiting -> talk，failed -> error
+        assert_eq!(pack["states"]["idle"], "idle");
+        assert_eq!(pack["states"]["work"], "running");
+        assert_eq!(pack["states"]["talk"], "waiting");
+        assert_eq!(pack["states"]["error"], "failed");
+        assert_eq!(pack["states"]["drag"], "running-right");
+        // 路径穿越的条目被丢弃
+        assert!(!pack["files"].as_object().unwrap().keys().any(|k| k.contains("evil")));
+    }
+
+    #[test]
+    fn codex_zip_rejects_wrong_size_and_missing_manifest() {
+        let small = tiny_png(192, 208, [1, 2, 3, 255]);
+        let bad = build_zip(&[
+            ("pet.json", br#"{"id":"a","displayName":"A","spritesheetPath":"spritesheet.png"}"#),
+            ("spritesheet.png", &small),
+        ]);
+        assert!(read_codex_zip(&bad).unwrap_err().contains("1536"));
+
+        let sheet = atlas_png();
+        let no_manifest = build_zip(&[("spritesheet.png", &sheet)]);
+        assert!(read_codex_zip(&no_manifest).unwrap_err().contains("pet.json"));
+
+        let no_sheet = build_zip(&[("pet.json", br#"{"id":"a","displayName":"A"}"#)]);
+        assert!(read_codex_zip(&no_sheet).is_err());
+    }
+
+    // 用占位符 Q 代替双引号，避免与 Rust 字符串转义互相干扰
+    fn q(t: &str) -> String {
+        t.replace('Q', "\"")
+    }
+
+    #[test]
+    fn codex_svg_atlas_is_sliceable() {
+        let svg = q("Q<svg xmlns=Qhttp://www.w3.org/2000/svgQ viewBox=Q0 0 1536 1872Q>Q<rect x=Q0Q y=Q0Q width=Q192Q height=Q208Q fill=Q#FFAA00Q/>Q</svg>Q");
+        let zip = build_zip(&[
+            ("pet.json", r#"{"id":"svg-pet","displayName":"SVG Pet","spritesheetPath":"spritesheet.svg"}"#.as_bytes()),
+            ("spritesheet.svg", svg.as_bytes()),
+        ]);
+        let pack = read_codex_zip(&zip).unwrap();
+        let sheet = pack["files"]["codex-row-0-idle"].as_str().unwrap();
+        assert!(sheet.starts_with("data:image/svg+xml;base64,"));
+        assert_eq!(pack["rows"].as_array().unwrap().len(), 9);
+    }
+
+    #[test]
+    fn codex_svg_rejects_scripts_and_links() {
+        let bad = q("Q<svg xmlns=Qhttp://www.w3.org/2000/svgQ viewBox=Q0 0 1536 1872Q>Q<scriptQalert(1)Q</scriptQ>Q<rect width=Q1Q height=Q1Q/>Q</svg>Q");
+        assert!(codex_svg_sanitize(&bad).is_err());
+        let bad_link = q("Q<svg xmlns=Qhttp://www.w3.org/2000/svgQ viewBox=Q0 0 1536 1872Q>Q<image href=Qhttps://evil/x.pngQ/>Q</svg>Q");
+        assert!(codex_svg_sanitize(&bad_link).is_err());
+        let ok = q("Q<svg xmlns=Qhttp://www.w3.org/2000/svgQ viewBox=Q0 0 1536 1872Q>Q<g fill=Q#123456Q>Q<rect x=Q1Q y=Q2Q width=Q3Q height=Q4Q/>Q</g>Q</svg>Q");
+        let out = codex_svg_sanitize(&ok).unwrap();
+        assert!(out.contains("viewBox=\"0 0 1536 1872\""));
+        assert!(out.contains("<rect x=\"1\" y=\"2\" width=\"3\" height=\"4\"/>"));
+    }
+
+    const MANIFEST: &str = "{\"id\":\"round-cat-codex\",\"displayName\":\"Round Cat\",\"spritesheetPath\":\"spritesheet.png\"}";
+
+    #[test]
+    fn codex_export_builds_contract_atlas() {
+        let pack = read_codex_zip(&build_zip(&[
+            ("pet.json", MANIFEST.as_bytes()),
+            ("spritesheet.png", &atlas_png()),
+        ]))
+        .unwrap();
+        let (id, manifest, png) = codex_export_pack(&pack).unwrap();
+        assert_eq!(id, "round-cat-codex");
+        let m: Value = serde_json::from_str(&manifest).unwrap();
+        assert_eq!(m["spritesheetPath"], "spritesheet.png");
+        assert_eq!(m["displayName"], "Round Cat");
+        let img = png_decode(&png).unwrap();
+        assert_eq!((img.width, img.height), (1536, 1872));
+        // 往返后像素保持一致（含未使用列的透明）
+        // 导出时错误地走了八态回填（第 2 列）而非原始帧
+        assert_eq!(img.pixel(0, 0), [30, 60, 120, 255]);
+        assert_eq!(img.pixel(6 * CODEX_CELL_W + 10, 10)[3], 0);
+    }
+
+    #[test]
+    fn codex_export_from_deskpet_states() {
+        let png = tiny_png(64, 64, [9, 9, 9, 255]);
+        let url = format!("data:image/png;base64,{}", base64_encode(&png));
+        let files = json!({ "idle.png": url });
+        let pack = json!({
+            "name": "八态猫", "version": "1.0",
+            "states": {"idle": "idle.png", "drag": "idle.png", "click": "idle.png", "talk": "idle.png",
+                       "sleep": "idle.png", "work": "idle.png", "happy": "idle.png", "error": "idle.png"},
+            "files": files, "sounds": {}
+        });
+        let (id, _, out) = codex_export_pack(&pack).unwrap();
+        assert_eq!(id, "deskpet-skin");
+        let img = png_decode(&out).unwrap();
+        // 单图会被等比缩放并贴底放进格子（64×64 在 192×208 格内居中，底部对齐）
+        assert_eq!(img.pixel(96, CODEX_CELL_H - 1), [9, 9, 9, 255]);
+        assert_eq!(img.pixel(96, CODEX_CELL_H - 64), [9, 9, 9, 255]);
+        // 等比缩放：64×64 图缩到 192×192 贴底，不拉伸、不裁切
+        assert_eq!(img.pixel(0, CODEX_CELL_H - 192 + 96), [9, 9, 9, 255]);
+        assert_eq!(img.pixel(96, CODEX_CELL_H - 192 - 1)[3], 0);
+        // DeskPet 来源每行只有一帧（单状态一图），契约允许短行；多帧需在维护工具里补
+        let cell_mid = |row: u32, col: u32| (col * CODEX_CELL_W + 96, row * CODEX_CELL_H + 16);
+        let (x, y) = cell_mid(0, 0);
+        assert_eq!(img.pixel(x, y)[3], 255);
+        let (x, y) = cell_mid(0, 1);
+        assert_eq!(img.pixel(x, y)[3], 0);
+
+    }
+}
+
         #[test]
         fn skin_pack_parses_manifest_and_states() {
             let png: &[u8] = b"PNGDATA";
@@ -4836,6 +6313,84 @@ mod tests {
                 );
             }
             assert_eq!(pack["files"].as_object().unwrap().len(), 8);
+        }
+
+        // 契约允许 spritesheet 为 WebP（社区宠物包默认如此）：整幅按单帧播放，仍需通过尺寸校验
+        #[test]
+        fn codex_webp_pet_summary_is_playable() {
+            let path = std::path::Path::new("../assets/skin-packs/codex-round-cat-pack.zip");
+            if !path.exists() {
+                return;
+            }
+            let pack = read_codex_zip(&std::fs::read(path).unwrap()).unwrap();
+            assert_eq!(pack["spritesheetPath"], "spritesheet.webp");
+            let rows = pack["rows"].as_array().unwrap();
+            assert_eq!(rows.len(), 1);
+            assert!(pack["files"]["spritesheet.webp"].as_str().unwrap().starts_with("data:image/webp;base64,"));
+            assert_eq!(pack["states"]["idle"], "idle");
+            // 八态齐全（缺行的状态仍由前端回退到 idle 行）
+            for st in SKIN_STATES {
+                assert!(pack["states"][st].as_str().is_some(), "状态 {} 未映射", st);
+            }
+        }
+
+        // 端到端：仓库内的 Codex 契约样例（assets/skin-packs/codex-round-cat）必须可导入并导出
+        #[test]
+        fn repo_sample_codex_pet_parses_and_exports() {
+            let path = std::path::Path::new("../assets/skin-packs/codex-round-cat-pack.zip");
+            if !path.exists() {
+                return;
+            }
+            let pack = read_codex_zip(&std::fs::read(path).unwrap()).unwrap();
+            assert_eq!(pack["name"], "Codex 圆头小猫");
+            assert_eq!(pack["id"], "codex-round-cat");
+            let rows = pack["rows"].as_array().unwrap();
+            if pack["spritesheetPath"] == "spritesheet.webp" {
+                // 仓库样例已换成 WebP（与社区 Codex 宠物一致）：整幅按单帧播放
+                assert_eq!(rows.len(), 1);
+                assert!(pack["files"]["spritesheet.webp"].as_str().unwrap().starts_with("data:image/webp;base64,"));
+                assert_eq!(pack["states"]["work"], "idle");
+                return;
+            }
+            assert_eq!(rows.len(), 9);
+            let frames: u32 = rows.iter().map(|r| r["frames"].as_u64().unwrap() as u32).sum();
+            assert_eq!(frames, 6 + 8 + 8 + 4 + 5 + 8 + 6 + 6 + 6);
+            assert_eq!(pack["states"]["work"], "running");
+            let (_, manifest, png) = codex_export_pack(&pack).unwrap();
+            let m: Value = serde_json::from_str(&manifest).unwrap();
+            assert_eq!(m["id"], "codex-round-cat");
+            let img = png_decode(&png).unwrap();
+            assert_eq!((img.width, img.height), (1536, 1872));
+            // 第 0 行第 0 帧的图案是「身体圆」，中心位于格内 y≈168 附近
+            assert_eq!(img.pixel(96, 168)[3], 255);
+        }
+
+        // 皮肤维护工具：维护后的皮肤包导出后必须仍能被导入器解析
+        #[test]
+        fn skin_pack_export_roundtrip() {
+            let path = std::path::Path::new("../assets/skin-packs/round-cat.deskpet-skin.zip");
+            if !path.exists() {
+                return;
+            }
+            let raw = std::fs::read(path).unwrap();
+            let pack = read_skin_zip(&raw).unwrap();
+            let zipped = skin_zip_bytes(&pack).unwrap();
+            let again = read_skin_zip(&zipped).unwrap();
+            assert_eq!(again["name"], "圆头小猫");
+            for st in SKIN_STATES {
+                assert!(again["states"][st].as_str().is_some(), "状态 {} 丢失", st);
+            }
+            assert_eq!(again["files"].as_object().unwrap().len(), 8);
+        }
+
+        #[test]
+        fn skin_zip_rejects_empty_states() {
+            let pack = json!({
+                "name": "空包",
+                "files": {"a.png": "data:image/png;base64,AA=="},
+                "states": {"idle": "missing.png"}
+            });
+            assert!(skin_zip_bytes(&pack).unwrap_err().contains("状态"));
         }
 
         #[test]

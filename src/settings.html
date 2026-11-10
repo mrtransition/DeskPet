@@ -113,13 +113,40 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           <h4>皮肤 <span class="tag">FR-SKN-001 内置 3 套</span></h4>
           <div class="skin-cards" id="skinSel"></div>
           <div class="inline-opts" style="margin-top:9px">
-            <button id="skinPick">导入动画形象（GIF / APNG / 动态 WebP）</button>
-            <button id="skinPackPick">导入皮肤包（.zip：图集+状态机+音效）</button>
+            <button id="skinPick">导入单张图片（GIF / APNG / WebP，自动裁剪内容）</button>
+            <button id="skinSheetPick">导入八态单图（4×2 自动切割）</button>
+            <button id="skinPackPick">导入皮肤包（.zip：图集+状态机+音效，≤128 MB）</button>
+            <button id="codexPetPick">导入 Codex 宠物（pet.json + 1536×1872 图集）</button>
             <button id="skinReset">恢复内置矢量皮肤</button>
             <input id="skinFile" type="file" accept="image/gif,image/png,image/webp" hidden>
+            <input id="skinSheetFile" type="file" accept="image/png,image/webp" hidden>
             <input id="skinPackFile" type="file" accept=".zip,application/zip" hidden>
+            <input id="codexPetFile" type="file" accept=".zip,application/zip" hidden>
           </div>
-          <div class="fnote" id="skinFileInfo">导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互；单文件建议不超过 1.5 MB。</div>
+          <div class="fnote" id="skinFileInfo">导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互。导入时会自动裁掉四周留白与导出残留的棋盘格底色（长边超 4096 先缩放，48 MB 上限）；动图与 8×9 图集整幅保留，不抠图；4×2 八态单图请使用「导入八态单图」按格切割。</div>
+          <div class="fnote">八态单图规则：单张图按 <b>4 列 × 2 行</b>排列，按行读取 8 个状态，顺序固定为 <code>idle / happy / sleep / work / click / drag / error / talk</code>。导入时逐格切割、裁掉格内留白，并统一画布和底边对齐，切换状态时角色不会跳动；背景需为透明或浅色棋盘格。</div>
+          <div class="fnote">Codex 宠物遵循 OpenAI Codex Pet Contract：<code>pet.json</code>（id / displayName / description / spritesheetPath）+ 8 列 × 9 行、单格 192×208、总尺寸 1536×1872 的透明图集；九行依次为 idle / running-right / running-left / waving / jumping / failed / waiting / running / review，未使用的格子必须完全透明。可直接导入 <code>~/.codex/pets/&lt;id&gt;/</code> 目录打包成的 zip，也可把当前皮肤导出为 Codex 宠物包。</div>
+        </div>
+        <div class="sec">
+          <h4>皮肤维护工具 <span class="tag">检查 / 修复 / 逐状态替换 / 导出</span></h4>
+          <div class="fgrid">
+            <div class="frow"><label>皮肤名称</label><input id="skinNameEdit" placeholder="皮肤名称" maxlength="40"></div>
+            <div class="frow"><label>版本</label><input id="skinVersionEdit" placeholder="1.0" maxlength="24"></div>
+          </div>
+          <div class="btn-row" style="margin-top:8px">
+            <button id="skinAuditBtn">重新检测</button>
+            <button id="skinRepairBtn">修复状态映射</button>
+            <button id="skinPruneBtn">清理未引用资源</button>
+            <button id="skinBatchPick">批量导入八态图片</button>
+            <button id="skinMakePack">以当前图片创建皮肤包</button>
+            <button id="skinExportBtn" class="primary">导出当前皮肤（.zip）</button>
+            <button id="codexExportBtn">导出为 Codex 宠物（pet.json + spritesheet.png）</button>
+          </div>
+          <div class="fnote" id="skinDiag" style="margin-top:8px"></div>
+          <div class="skin-state-grid" id="skinStateGrid"></div>
+          <input id="skinStateFile" type="file" accept="image/gif,image/png,image/webp" hidden>
+          <input id="skinBatchFiles" type="file" accept="image/gif,image/png,image/webp" multiple hidden>
+          <div class="fnote">维护工具直接编辑当前皮肤包的状态映射与图片资源：可逐状态替换、批量导入八态图片（文件名匹配 idle / drag / click / talk / sleep / work / happy / error）、清理未引用文件并导出备份。导出的 .deskpet-skin.zip 可重新导入到任意 DeskPet。</div>
         </div>
         <div class="sec">
           <h4>体型与层级</h4>
@@ -276,6 +303,14 @@ body { background: var(--bg); display: flex; flex-direction: column; }
         <h3>桌面 AI 宠物</h3>
         <div class="ver" id="verLine">桌面版 v2.1 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.1</div>
         <details open>
+          <summary>v2.1.1 新增了什么</summary>
+          <ul>
+            <li>Codex 宠物（FR-SKN-003）：导入 <code>pet.json</code> + 1536×1872 图集（8 列 × 9 行、单格 192×208），九行按契约帧序播放并映射八态；可维护帧、时长与状态复用，并导出为 Codex 宠物包</li>
+            <li>八态单图（FR-SKN-002）：单张 4 列 × 2 行图片按行读取切成 <code>idle / happy / sleep / work / click / drag / error / talk</code>，逐格裁留白、统一画布、底边对齐</li>
+            <li>皮肤维护工具：八态诊断 / 修复、逐状态替换、批量导入、清理未引用资源、导出备份；皮肤包上限调整为 128 MB / 64 MB / 256 MB / 200 条目</li>
+          </ul>
+        </details>
+        <details>
           <summary>v2.1 新增了什么</summary>
           <ul>
             <li>会话摘要压缩（FR-MEM-003）：超过阈值后由当前模型压缩较早消息，摘要作为上下文前缀；失败自动回退截断</li>
@@ -294,7 +329,7 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           </ul>
         </details>
         <details>
-          <summary>SRS 需求覆盖对照（v1.1 / DeskPet 2.1.0）</summary>
+          <summary>SRS 需求覆盖对照（v1.1 / DeskPet 2.1.1）</summary>
           <table>
             <tr><th>需求</th><th>说明</th><th>状态</th></tr>
             <tr><td>FR-PET-001~008/010</td><td>透明置顶、任务栏可见性、拖拽记忆、多屏回收、八态动画、缩放、穿透、低帧率</td><td class="st-ok">完整（置顶层级支持 TOPMOST 提升；v2.1 低帧率 30fps）</td></tr>
@@ -312,7 +347,8 @@ body { background: var(--bg); display: flex; flex-direction: column; }
             <tr><td>FR-TOOL-005</td><td>截图分析</td><td class="st-part">P3，v3 后置</td></tr>
             <tr><td>FR-REM-001~007</td><td>自然语言提醒、中央播报+稍后、重复规则、免打扰与时段、主动搭话、久坐喝水、剪贴板感知</td><td class="st-ok">完整</td></tr>
             <tr><td>FR-REM-008</td><td>睡眠 / 重启 / 时区变化后的补发策略</td><td class="st-part">错过只触发一次；DST 与时区未显式处理</td></tr>
-            <tr><td>FR-SKN-001/002</td><td>3 套内置皮肤；皮肤包（图集+状态机+音效）导入</td><td class="st-ok">完整（.deskpet-skin.zip）</td></tr>
+            <tr><td>FR-SKN-001/002</td><td>3 套内置皮肤；皮肤包（图集+状态机+音效）导入与维护；4×2 八态单图自动切割</td><td class="st-ok">完整（.deskpet-skin.zip + 维护工具 + 八态单图）</td></tr>
+            <tr><td>FR-SKN-003</td><td>Codex Pet Contract（pet.json + 8×9 / 192×208 图集）导入、九行动画、帧维护与导出</td><td class="st-ok">完整（导入 / 维护 / 导出）</td></tr>
             <tr><td>FR-VOI-001</td><td>TTS 朗读</td><td class="st-ok">完整（系统语音，零联网，P2）</td></tr>
             <tr><td>FR-VOI-002</td><td>ASR 语音输入</td><td class="st-part">P3，v3 后置</td></tr>
             <tr><td>FR-SYS-001~004</td><td>托盘、自启、设置分组、更新检查与手动安装</td><td class="st-ok">完整（更新无签名，见 NFR-SEC-004）</td></tr>
@@ -324,7 +360,7 @@ body { background: var(--bg); display: flex; flex-direction: column; }
             <tr><td>FR-DAT-005~006</td><td>迁移备份恢复、会话批量管理</td><td class="st-part">仅有默认值补齐与单条删除，v2.3 补齐</td></tr>
             <tr><td>NFR-INT/PERF/SEC/REL</td><td>不抢前台、协议适配、原子写盘、密钥隔离、出站审计</td><td class="st-part">SEC-004、REL-004 待 v2.2 / v2.3 补齐；SEC-005/006 为 v1 必须项</td></tr>
             <tr><td>NFR-MNT-001</td><td>统一日志级别与结构化日志，内容脱敏</td><td class="st-ok">完整（JSON Lines，v2.1）</td></tr>
-            <tr><td>NFR-PERF-007</td><td>安装包 ≤ 30 MB</td><td class="st-ok">v2.1.0 release 实测约 14.0 MB</td></tr>
+            <tr><td>NFR-PERF-007</td><td>安装包 ≤ 30 MB</td><td class="st-ok">v2.1.1 release 实测约 14.3 MB</td></tr>
           </table>
         </details>
         <details>
@@ -715,21 +751,33 @@ if (window.speechSynthesis) {
 function renderPetTab() {
   const box = $id('skinSel');
   box.innerHTML = '';
-  Object.keys(SKINS).forEach(k => {
-    const c = el('div', 'skin-card' + (S.settings.skin === k ? ' on' : ''));
-    c.innerHTML = '<span class="skin-dot" style="background:' + SKINS[k].fur + '"></span><span>' + SKINS[k].label + '</span>' +
-      (S.settings.skin === k ? '<span class="pv-star">✓</span>' : '');
+  // 皮肤库：内置 3 套 + 已导入皮肤，当前皮肤只可能有一个
+  const act = activeCustomSkin();
+  skinLib().forEach(item => {
+    const active = act ? (act.id === item.id) : (item.type === 'builtin' && S.settings.skin === item.key);
+    const c = el('div', 'skin-card' + (active ? ' on' : ''));
+    const dot = item.type === 'builtin'
+      ? '<span class="skin-dot" style="background:' + (item.fur || '#9CC3F7') + '"></span>'
+      : (() => { const pv = skinEntryPreview(item); return pv ? '<span class="skin-thumb"><img alt="" src="' + pv + '"></span>' : '<span class="skin-dot"></span>'; })();
+    c.innerHTML = dot + '<span>' + esc(item.label) + '</span>' +
+      (item.type === 'pack' ? '<span class="skin-badge">' + (item.pack && item.pack.format === 'codex' ? 'Codex' : '皮肤包') + '</span>' : (item.type === 'image' ? '<span class="skin-badge">单图</span>' : '')) +
+      (active ? '<span class="pv-star">✓</span>' : '');
     c.onclick = () => {
-      // 显式选择内置皮肤即退出自定义动画形象
-      S.settings.customSkin = null;
-      // FR-PSN-005：若该皮肤绑定了人格，则同步切换人格与其供应商
-      const ps = switchSkin(k);
-      saveState(); renderPetTab();
-      toast('已切换皮肤：' + SKINS[k].label + (ps ? '（人格：' + ps.name + '）' : ''), 'ok');
+      if (item.type === 'builtin') {
+        // FR-PSN-005：若该皮肤绑定了人格，则同步切换人格与其供应商
+        const ps = useBuiltinSkin(item.key);
+        saveState(); renderPetTab();
+        toast('已切换皮肤：' + SKINS[item.key].label + (ps ? '（人格：' + ps.name + '）' : ''), 'ok');
+      } else {
+        useCustomSkin(item.id);
+        saveState(); renderPetTab();
+        toast('已切换皮肤：' + item.label, 'ok');
+      }
     };
     box.appendChild(c);
   });
   renderCustomSkin();
+  renderSkinMaintenance();
   $id('petScale').value = S.settings.petScale || 1;
   $id('petScaleVal').textContent = Math.round((S.settings.petScale || 1) * 100) + '%';
   $id('ctThrough').checked = !!S.settings.clickThrough;
@@ -762,42 +810,618 @@ function renderCustomSkin() {
   const cs = S.settings.customSkin;
   const info = $id('skinFileInfo');
   const pack = S.settings.skinPack;
+  const entry = S.settings.activeSkin ? findCustomSkin(S.settings.activeSkin) : null;
+  const imported = (S.settings.skins || []).length;
+  if (pack && pack.format === 'codex') {
+    const rows = pack.rows || [];
+    const frames = rows.reduce((n, r) => n + (r.frames || 0), 0);
+    info.innerHTML = '当前使用 Codex 宠物：<b>' + esc(pack.name) + '</b>（id：' + esc(pack.id || '-') + '）· 图集 ' +
+      (pack.atlas ? pack.atlas.width + '×' + pack.atlas.height : '1536×1872') + ' · ' + rows.length + ' 行 / ' + frames + ' 帧 · 约 ' +
+      fmtBytes(pack.byteSize || 0) + '。已保存 ' + imported + ' 套导入皮肤，可随时在上方切换。';
+    return;
+  }
   if (pack && pack.files) {
     const kb = Math.round(Object.values(pack.files).reduce((n, v) => n + v.length, 0) * 3 / 4 / 1024);
     info.innerHTML = '当前使用皮肤包：<b>' + esc(pack.name) + '</b> v' + esc(pack.version || '1.0') + ' · ' +
       Object.keys(pack.states || {}).length + ' 个状态 · 约 ' + kb + ' KB' +
-      (Object.keys(pack.sounds || {}).length ? ' · ' + Object.keys(pack.sounds).length + ' 个音效' : '');
+      (pack.sheet ? ' · 4×2 八态单图切割' : '') +
+      (Object.keys(pack.sounds || {}).length ? ' · ' + Object.keys(pack.sounds).length + ' 个音效' : '') +
+      '。已保存 ' + imported + ' 套导入皮肤，可随时在上方切换。';
     return;
   }
   if (cs && cs.data) {
     const kb = Math.max(1, Math.round((cs.data.length * 3 / 4) / 1024));
-    info.innerHTML = '当前使用自定义形象：<b>' + esc(cs.name || '未命名') + '</b> · 约 ' + kb + ' KB。支持 GIF / APNG / 动态 WebP，导入后替代内置矢量形象。';
+    const trim = (entry && entry.trim) || cs.trim || null;
+    const trimNote = trim && trim.cropped && trim.crop
+      ? '已自动裁剪：' + trim.crop.w + '×' + trim.crop.h + '（原图裁掉 ' + trim.crop.x + ',' + trim.crop.y + ' 起的留白）'
+      : (trim && trim.note ? trim.note : '');
+    info.innerHTML = '当前使用自定义形象：<b>' + esc(cs.name || '未命名') + '</b> · 约 ' + kb + ' KB。支持 GIF / APNG / 动态 WebP，导入后替代内置矢量形象。' +
+      (trimNote ? '<br>' + esc(trimNote) + '。' : '') +
+      '已保存 ' + imported + ' 套导入皮肤，可随时在上方切换。';
+  } else if (entry) {
+    info.innerHTML = '当前皮肤：<b>' + esc(entry.label) + '</b>。';
   } else {
-    info.textContent = '导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互；单文件建议不超过 1.5 MB。';
+    info.innerHTML = '导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互；图片大小不限，过大的文件会占用更多内存与磁盘。' +
+      (imported ? '已保存 ' + imported + ' 套导入皮肤，可随时在上方切换。' : '');
   }
 }
+
+/* ============ 皮肤维护工具 ============ */
+const SKIN_STATE_LABELS = [
+  ['idle', '待机'], ['drag', '拖拽'], ['click', '点击'], ['talk', '说话'],
+  ['sleep', '睡眠'], ['work', '工作'], ['happy', '开心'], ['error', '错误'],
+];
+let pendingSkinState = null;
+
+function skinDataBytes(data) {
+  const s = String(data || '');
+  const comma = s.indexOf(',');
+  if (comma < 0) return 0;
+  const b64 = s.slice(comma + 1).replace(/[=\r\n]/g, '');
+  return Math.floor(b64.length * 3 / 4);
+}
+function fmtBytes(n) {
+  n = Math.max(0, Number(n) || 0);
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(2) + ' MB';
+  if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
+}
+function safeSkinFileName(name, fallback) {
+  let base = String(name || '').split(/[\\/]/).pop() || '';
+  base = base.replace(/[\\/:*?"<>|\x00-\x1f]/g, '').trim();
+  if (!base || base.startsWith('.')) base = fallback || 'image.png';
+  return base.slice(0, 80);
+}
+function skinPackRefs(pack) {
+  const refs = new Set();
+  Object.values((pack && pack.states) || {}).forEach(f => { if (typeof f === 'string') refs.add(f); });
+  Object.values((pack && pack.group) || {}).forEach(f => { if (typeof f === 'string') refs.add(f); });
+  return refs;
+}
+function renderSkinMaintenance() {
+  const entry = S.settings.activeSkin ? findCustomSkin(S.settings.activeSkin) : null;
+  const pack = draftPackOf(entry);
+  const cs = entry && entry.type === 'image' ? entry : null;
+  const nameInput = $id('skinNameEdit');
+  const verInput = $id('skinVersionEdit');
+  if (pack) {
+    nameInput.value = pack.name || '';
+    verInput.value = pack.version || '1.0';
+  } else {
+    nameInput.value = cs ? (cs.name || '') : '';
+    verInput.value = '';
+  }
+  nameInput.disabled = !entry;
+  verInput.disabled = !pack;
+  $id('skinMakePack').disabled = !cs || !cs.data;
+  $id('skinExportBtn').textContent = pack && pack.format === 'codex' ? '导出 Codex 宠物包（.zip）' : (pack ? '导出当前皮肤（.zip）' : (cs && cs.data ? '导出当前形象图片' : '导出当前皮肤（.zip）'));
+  const cxBtn = $id('codexExportBtn');
+  if (cxBtn) cxBtn.disabled = !pack;
+  const diag = $id('skinDiag');
+  const grid = $id('skinStateGrid');
+  grid.innerHTML = '';
+  if (pack && pack.format === 'codex') {
+    renderCodexMaintenance(pack);
+    return;
+  }
+  if (pack && pack.files) {
+    const files = pack.files;
+    const states = pack.states || {};
+    const fileNames = Object.keys(files);
+    const missing = SKIN_STATE_LABELS.filter(([st]) => !states[st] || !files[states[st]]);
+    const refs = skinPackRefs(pack);
+    const unreferenced = fileNames.filter(f => !refs.has(f));
+    const total = fileNames.reduce((n, f) => n + skinDataBytes(files[f]), 0);
+    const soundCount = Object.keys(pack.sounds || {}).length;
+    let issues = [];
+    if (missing.length) issues.push('<span style="color:var(--err)">' + missing.length + ' 个状态缺失</span>（运行时回退待机图）');
+    if (unreferenced.length) issues.push(unreferenced.length + ' 个未引用图片');
+    if (!states.idle || !files[states.idle]) issues.push('<span style="color:var(--err)">缺少可用的待机图</span>');
+    diag.innerHTML = '当前皮肤包：<b>' + esc(pack.name || '未命名') + '</b> v' + esc(pack.version || '1.0') +
+      ' · ' + fileNames.length + ' 张图片（' + fmtBytes(total) + '）' + (soundCount ? ' · ' + soundCount + ' 个音效' : '') + '<br>' +
+      (issues.length ? '检测到：' + issues.join('；') : '<span style="color:var(--ok)">✓ 八态映射与资源引用完整</span>');
+    SKIN_STATE_LABELS.forEach(([st, label]) => {
+      const file = states[st];
+      const src = (file && files[file]) || '';
+      const idleFile = states.idle;
+      const status = !src ? 'missing' : (st !== 'idle' && file === idleFile ? 'warn' : 'ok');
+      const badge = status === 'missing' ? '缺失' : (status === 'warn' ? '回退待机' : '已映射');
+      const card = el('div', 'skin-state-item ' + status);
+      const head = el('div', 'skin-state-head');
+      head.innerHTML = '<span class="skin-state-name">' + label + ' · ' + st + '</span><span class="skin-state-badge">' + badge + '</span>';
+      const preview = el('div', 'skin-state-preview');
+      preview.innerHTML = src
+        ? '<img alt="' + esc(label) + '" src="' + src + '">'
+        : '<span class="ss-empty">无图片</span>';
+      const sel = el('select');
+      sel.className = 'ss-select';
+      sel.dataset.state = st;
+      sel.innerHTML = '<option value="">（缺失）</option>' + fileNames.map(f =>
+        '<option value="' + esc(f) + '">' + esc(cut(f, 24)) + '</option>').join('');
+      sel.value = file && files[file] ? file : '';
+      sel.addEventListener('change', () => {
+        const cur = S.settings.activeSkin ? findCustomSkin(S.settings.activeSkin) : null;
+        const pack2 = packOfEntry(cur);
+        if (!pack2) return;
+        if (!pack2.states) pack2.states = {};
+        if (sel.value) pack2.states[st] = sel.value;
+        else delete pack2.states[st];
+        saveState();
+        renderPetTab();
+        toast('已更新「' + label + '」状态映射', 'ok');
+      });
+      const rep = el('button', 'ss-replace', '替换图片');
+      rep.addEventListener('click', () => {
+        pendingSkinState = st;
+        $id('skinStateFile').click();
+      });
+      card.append(head, preview, sel, rep);
+      grid.appendChild(card);
+    });
+    return;
+  }
+  if (cs && cs.data) {
+    const bytes = skinDataBytes(cs.data);
+    diag.innerHTML = '当前为单图形象：<b>' + esc(cs.name || '未命名') + '</b> · 约 ' + fmtBytes(bytes) +
+      '。单图会覆盖全部八态，暂不支持逐状态维护；可点击「以当前图片创建皮肤包」后逐状态替换。';
+    const card = el('div', 'skin-state-item ok');
+    card.innerHTML = '<div class="skin-state-head"><span class="skin-state-name">当前形象</span><span class="skin-state-badge">单图</span></div>' +
+      '<div class="skin-state-preview"><img alt="当前形象" src="' + cs.data + '"></div>';
+    grid.appendChild(card);
+    return;
+  }
+  diag.innerHTML = '当前使用内置矢量皮肤，没有可维护的自定义图片资源。导入动画形象或皮肤包后，可在这里检查八态映射、逐状态替换图片并导出备份。';
+}
+/* FR-SKN-003：Codex 宠物的行 / 帧维护
+   九行固定（行序不可改），每行只允许 1..契约上限帧，时长单位为 ms；未使用的列不会产生帧。 */
+const CODEX_ROW_LABELS = [
+  ['idle', '待机', 6], ['running-right', '向右跑', 8], ['running-left', '向左跑', 8],
+  ['waving', '挥手', 4], ['jumping', '跳跃', 5], ['failed', '失败', 8],
+  ['waiting', '等待输入', 6], ['running', '处理中', 6], ['review', '审查', 6],
+];
+const CODEX_STATE_LABELS = [
+  ['idle', '待机'], ['drag', '拖拽'], ['click', '点击'], ['talk', '说话'],
+  ['sleep', '睡眠'], ['work', '工作'], ['happy', '开心'], ['error', '错误'],
+];
+// 与主进程 codex_state_map 保持一致：Codex 行 -> DeskPet 八态的默认复用
+const CODEX_STATE_DEFAULTS = {
+  idle: 'idle', drag: 'running-right', click: 'jumping', talk: 'waiting',
+  sleep: 'idle', work: 'running', happy: 'waving', error: 'failed',
+};
+let pendingCodexFrame = null;
+let codexPreviewTimer = null;
+
+function codexFrameSrc(pack, row, col) {
+  const f = (pack.frames || []).find(x => x.row === row.row && x.col === col);
+  if (f && f.src) return f.src;
+  // 没有逐帧记录时退回整行帧条（行内按列裁剪）
+  return (pack.files || {})[row.sheet] || '';
+}
+function saveCodexPack(fn) {
+  const entry = S.settings.activeSkin ? findCustomSkin(S.settings.activeSkin) : null;
+  const pack = entry && entry.type === 'pack' ? entry.pack : null;
+  if (!pack || pack.format !== 'codex') { toast('当前不是 Codex 宠物', 'warn'); return; }
+  fn(pack);
+  saveState();
+  renderPetTab();
+}
+function renderCodexMaintenance(pack) {
+  const diag = $id('skinDiag');
+  const grid = $id('skinStateGrid');
+  grid.innerHTML = '';
+  const rows = pack.rows || [];
+  const atlas = pack.atlas || {};
+  const total = rows.reduce((n, r) => n + (r.frames || 0), 0);
+  const issues = [];
+  if ((atlas.width || 1536) !== 1536 || (atlas.height || 1872) !== 1872) issues.push('图集尺寸不是 1536×1872');
+  if (!/\.(png|webp|gif|svg)$/i.test(pack.spritesheetPath || '')) issues.push('spritesheetPath 扩展名无效');
+  const expectOrder = CODEX_ROW_LABELS.map(([n]) => n).filter(n => rows.some(r => r.name === n));
+  if (rows.map(r => r.name).join(',') !== expectOrder.join(',')) issues.push('行序与契约不一致');
+  rows.forEach(r => {
+    const spec = CODEX_ROW_LABELS.find(([n]) => n === r.name);
+    if (!r.frames) issues.push(r.name + ' 没有帧');
+    else if (spec && r.frames > spec[2]) issues.push(r.name + ' 超过 ' + spec[2] + ' 帧上限');
+  });
+  const missingKeys = Object.keys(CODEX_STATE_DEFAULTS).filter(k => !(pack.states || {})[k]);
+  diag.innerHTML = '当前 Codex 宠物：<b>' + esc(pack.name || '未命名') + '</b>（id：' + esc(pack.id || '-') + '）<br>' +
+    '图集：<b>' + (atlas.width || 1536) + '×' + (atlas.height || 1872) + '</b> · ' +
+    (atlas.cols || 8) + ' 列 × ' + (atlas.rows || 9) + ' 行 · 单格 ' + (atlas.cellW || 192) + '×' + (atlas.cellH || 208) +
+    ' · ' + rows.length + ' 行 / ' + total + ' 帧 · 约 ' + fmtBytes(pack.byteSize || 0) + '<br>' +
+    '源文件：<code>' + esc(pack.spritesheetPath || '-') + '</code>' + (pack.license ? ' · 许可：' + esc(pack.license) : '') +
+    (issues.length || missingKeys.length
+      ? '<br><span style="color:var(--err)">契约检查：' + issues.join('；') +
+        (issues.length && missingKeys.length ? '；' : '') +
+        (missingKeys.length ? missingKeys.length + ' 个八态映射缺失' : '') + '</span>'
+      : '<br><span style="color:var(--ok)">✓ 符合 Codex Pet Contract（8×9 / 192×208 / 行序正确）</span>');
+
+  rows.forEach(row => {
+    const spec = CODEX_ROW_LABELS.find(([n]) => n === row.name) || [row.name, row.name, 8];
+    const card = el('div', 'skin-state-item ok');
+    const head = el('div', 'skin-state-head');
+    head.innerHTML = '<span class="skin-state-name">' + spec[1] + ' · ' + row.name + '</span>' +
+      '<span class="skin-state-badge">' + row.frames + '/' + spec[2] + ' 帧</span>';
+    const preview = el('div', 'skin-state-preview');
+    const first = codexFrameSrc(pack, row, 0);
+    preview.innerHTML = first ? '<img alt="' + esc(row.name) + '" src="' + first + '">' : '<span class="ss-empty">无帧</span>';
+    // 帧序列：点击任一小格可替换该帧；行内自动轮播，方便直接核对节奏
+    const strip = el('div', 'codex-frames');
+    const btns = [];
+    for (let c = 0; c < row.frames; c++) {
+      const b = el('button');
+      const fs = codexFrameSrc(pack, row, c);
+      b.innerHTML = fs ? '<img alt="" src="' + fs + '">' : String(c + 1);
+      b.title = '第 ' + (c + 1) + ' 帧：点击替换';
+      b.onclick = () => { pendingCodexFrame = { row: row.row, col: c, preview }; $id('skinStateFile').click(); };
+      btns.push(b);
+      strip.appendChild(b);
+    }
+    if (row.frames > 1) {
+      clearTimeout(codexPreviewTimer);
+      let i = 0;
+      const tick = () => {
+        if (!preview.isConnected) return;
+        const src = codexFrameSrc(pack, row, i % row.frames);
+        if (src) preview.firstElementChild && preview.firstElementChild.tagName === 'IMG'
+          ? preview.firstElementChild.setAttribute('src', src)
+          : (preview.innerHTML = '<img alt="" src="' + src + '">');
+        btns.forEach((b, k) => b.classList.toggle('on', k === i % row.frames));
+        i += 1;
+        codexPreviewTimer = setTimeout(tick, Math.max(60, Number((row.durations || [])[i % row.frames]) || 120));
+      };
+      tick();
+    }
+    const ops = el('div', 'btn-row');
+    ops.style.marginTop = '2px';
+    const add = el('button', 'ss-replace', '＋ 追加帧');
+    add.disabled = row.frames >= spec[2];
+    add.onclick = () => {
+      const live = (pack.rows || []).find(r => r.row === row.row);
+      if (!live || live.frames >= spec[2]) { toast('该行已达契约上限 ' + spec[2] + ' 帧', 'warn'); return; }
+      pendingCodexFrame = { row: row.row, col: live.frames, append: true };
+      $id('skinStateFile').click();
+    };
+    const del = el('button', 'ss-replace', '删末帧');
+    del.disabled = row.frames <= 1;
+    del.onclick = () => {
+      saveCodexPack(p2 => {
+        const live = (p2.rows || []).find(r => r.row === row.row);
+        if (!live || live.frames <= 1) return;
+        const last = live.frames - 1;
+        delete (p2.files || {})['codex-frame-' + row.row + '-' + last + '.png'];
+        p2.frames = (p2.frames || []).filter(f => !(f.row === row.row && f.col >= last));
+        live.frames = last;
+      });
+      toast('已删除「' + spec[1] + '」末帧', 'ok');
+    };
+    ops.append(add, del);
+    const durations = el('div', 'codex-atlas', '时长（ms）：' + (row.durations || []).slice(0, row.frames).join(' / ') + ' · 点击修改');
+    durations.style.cursor = 'pointer';
+    durations.onclick = () => {
+      const cur = (row.durations || []).slice(0, row.frames).join(',');
+      const input = prompt('按列填写帧时长（毫秒，逗号分隔，共 ' + row.frames + ' 帧）', cur);
+      if (input == null) return;
+      const arr = input.split(/[,，\s]+/).filter(Boolean)
+        .map(n => Math.max(20, Math.min(5000, Math.round(Number(n)) || 120)));
+      if (arr.length !== row.frames) { toast('需要正好 ' + row.frames + ' 个时长', 'warn'); return; }
+      saveCodexPack(p2 => {
+        const live = (p2.rows || []).find(r => r.row === row.row);
+        if (!live) return;
+        const all = new Array(8).fill(0);
+        arr.forEach((v, i) => { all[i] = v; });
+        live.durations = all;
+      });
+      toast('已更新「' + spec[1] + '」帧时长', 'ok');
+    };
+    card.append(head, preview, strip, ops, durations);
+    grid.appendChild(card);
+  });
+
+  // 八态复用关系：每个 DeskPet 状态指向某一行
+  const mapCard = el('div', 'skin-state-item ok');
+  mapCard.style.gridColumn = '1 / -1';
+  const names = rows.map(r => r.name);
+  mapCard.innerHTML = '<div class="skin-state-head"><span class="skin-state-name">八态复用</span>' +
+    '<span class="skin-state-badge">状态 → 行</span></div>';
+  CODEX_STATE_LABELS.forEach(([st, label]) => {
+    const line = el('div', 'frow');
+    line.style.display = 'flex';
+    line.style.alignItems = 'center';
+    line.style.gap = '8px';
+    const lb = el('span', 'codex-atlas', label + ' · ' + st);
+    lb.style.minWidth = '86px';
+    const sel = el('select');
+    sel.className = 'ss-select';
+    sel.innerHTML = names.map(n => '<option value="' + esc(n) + '">' + esc(n) + '</option>').join('');
+    sel.value = (pack.states || {})[st] || CODEX_STATE_DEFAULTS[st] || 'idle';
+    sel.onchange = () => {
+      saveCodexPack(p2 => {
+        if (!p2.states) p2.states = {};
+        p2.states[st] = sel.value;
+      });
+      toast('「' + label + '」改为播放 ' + sel.value + ' 行', 'ok');
+    };
+    line.append(lb, sel);
+    mapCard.appendChild(line);
+  });
+  grid.appendChild(mapCard);
+}
+
+// 单帧统一转成 192×208 PNG：先自动裁剪内容，再等比缩放并贴底，保证 Codex 的「同一地面线」
+function codexNormalizeFrame(f) {
+  if (petImageFileOk(f)) return Promise.reject(new Error(petImageFileOk(f)));
+  return petImageAnalyze(f).then(info => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = 192;
+      c.height = 208;
+      const g = c.getContext('2d');
+      const scale = Math.min(192 / img.naturalWidth, 208 / img.naturalHeight);
+      const w = Math.max(1, Math.round(img.naturalWidth * scale));
+      const h = Math.max(1, Math.round(img.naturalHeight * scale));
+      g.drawImage(img, Math.round((192 - w) / 2), 208 - h, w, h);
+      c.toBlob(b => {
+        if (!b) { reject(new Error('编码失败')); return; }
+        const r2 = new FileReader();
+        r2.onload = () => resolve(String(r2.result));
+        r2.onerror = () => reject(new Error('读取失败'));
+        r2.readAsDataURL(b);
+      }, 'image/png');
+    };
+    img.onerror = () => reject(new Error('图片无法解析'));
+    img.src = info.data;
+  }));
+}
+
+$id('skinAuditBtn').addEventListener('click', () => { renderSkinMaintenance(); toast('已重新检测当前皮肤', 'ok'); });
+$id('skinNameEdit').addEventListener('change', e => {
+  const entry = S.settings.activeSkin ? findCustomSkin(S.settings.activeSkin) : null;
+  if (!entry) return;
+  const name = e.target.value.trim().slice(0, 40) || '我的皮肤';
+  entry.name = name;
+  // 皮肤包展示名去掉扩展名；单图条目保留原文件名，便于识别资源来源
+  entry.label = name.replace(/\.[^.]+$/, '') || name;
+  const pack = entry.pack;
+  if (pack) pack.name = name;
+  saveState(); renderPetTab();
+});
+$id('skinVersionEdit').addEventListener('change', e => {
+  const pack = S.settings.skinPack;
+  if (!pack) return;
+  pack.version = e.target.value.trim().slice(0, 24) || '1.0';
+  saveState(); renderPetTab();
+});
+$id('skinRepairBtn').addEventListener('click', () => {
+  const pack = S.settings.skinPack;
+  if (!pack || !pack.files || !Object.keys(pack.files).length) { toast('当前没有可维护的皮肤包', 'warn'); return; }
+  const files = pack.files;
+  const oldStates = pack.states || {};
+  const fallback = files[oldStates.idle] ? oldStates.idle :
+    (files['idle.png'] ? 'idle.png' : Object.keys(files)[0]);
+  if (!fallback) { toast('皮肤包没有可用图片', 'err'); return; }
+  const next = {};
+  const changed = [];
+  SKIN_STATE_LABELS.forEach(([st]) => {
+    const cur = oldStates[st];
+    const pick = (typeof cur === 'string' && files[cur]) ? cur : fallback;
+    if (pick !== cur) changed.push(st);
+    next[st] = pick;
+  });
+  pack.states = next;
+  const extra = Object.keys(oldStates).filter(k => !SKIN_STATE_LABELS.some(([st]) => st === k));
+  saveState(); renderPetTab();
+  toast(changed.length
+    ? '已修复 ' + changed.length + ' 个状态：' + changed.join(', ')
+    : '八态映射已完整' + (extra.length ? '（已忽略 ' + extra.length + ' 个未知状态）' : ''), 'ok');
+});
+$id('skinPruneBtn').addEventListener('click', () => {
+  const pack = S.settings.skinPack;
+  if (!pack || !pack.files) { toast('当前没有可清理的皮肤包', 'warn'); return; }
+  const refs = skinPackRefs(pack);
+  const removed = Object.keys(pack.files).filter(f => !refs.has(f));
+  if (!removed.length) { toast('没有未引用的图片资源', 'warn'); return; }
+  if (!confirm('清理 ' + removed.length + ' 个未被任何状态引用的图片资源？\n清理后仍可通过「导出当前皮肤」保留备份。')) return;
+  removed.forEach(f => { delete pack.files[f]; });
+  saveState(); renderPetTab();
+  toast('已清理 ' + removed.length + ' 个未引用图片资源', 'ok');
+});
+$id('skinMakePack').addEventListener('click', () => {
+  const entry = S.settings.activeSkin ? findCustomSkin(S.settings.activeSkin) : null;
+  const cs = entry && entry.type === 'image' ? entry : null;
+  if (!cs || !cs.data) { toast('请先导入一张 GIF / APNG / 动态 WebP 图片', 'warn'); return; }
+  // 就地升级为皮肤包条目：列表里不会多出一条重复皮肤
+  const pack2 = packOfEntry(cs);
+  if (pack2) {
+    pack2.name = cs.name || '我的皮肤';
+    cs.label = String(pack2.name).replace(/\.[^.]+$/, '') || pack2.name;
+  }
+  syncActiveSkin();
+  saveState(); renderPetTab();
+  toast('已根据当前图片创建皮肤包，可在下方逐状态替换', 'ok');
+});
+$id('skinExportBtn').addEventListener('click', async () => {
+  const pack = S.settings.skinPack;
+  try {
+    let path;
+    if (pack && pack.format === 'codex') {
+      path = await invoke('codex_pet_export', { pack });
+      toast('已导出 Codex 宠物：' + path, 'ok');
+    } else if (pack) {
+      path = await invoke('skin_pack_export', { pack });
+      toast('已导出皮肤包：' + path, 'ok');
+    } else {
+      const cs = S.settings.customSkin;
+      if (!cs || !cs.data) { toast('当前为内置矢量皮肤，暂无可导出的图片资源', 'warn'); return; }
+      path = await invoke('skin_image_export', { name: cs.name || 'custom-skin', data: cs.data });
+      toast('已导出形象图片：' + path, 'ok');
+    }
+    invoke('reveal_file', { path }).catch(() => { });
+  } catch (e) { toast('导出失败：' + e, 'err'); }
+});
+$id('skinStateFile').addEventListener('change', e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (pendingCodexFrame) {
+    const job = pendingCodexFrame;
+    pendingCodexFrame = null;
+    if (!f) return;
+    codexNormalizeFrame(f).then(data => {
+      saveCodexPack(p2 => {
+        const row = (p2.rows || []).find(r => r.row === job.row);
+        if (!row) return;
+        if (job.append) {
+          const col = row.frames;
+          row.frames = col + 1;
+          (p2.frames = p2.frames || []).push({ row: job.row, col, file: 'codex/r' + job.row + '-c' + col + '.png', src: data, delay: 120 });
+          const d = (row.durations || []).slice();
+          if (d[col] == null || d[col] === 0) d[col] = 120;
+          row.durations = d;
+        } else {
+          p2.files['codex-frame-' + job.row + '-' + job.col + '.png'] = data;
+          (p2.frames = p2.frames || []).forEach(x => {
+            if (x.row === job.row && x.col === job.col) x.src = data;
+          });
+        }
+      });
+      toast(job.append ? '已追加一帧（192×208）' : '已替换第 ' + (job.col + 1) + ' 帧（192×208）', 'ok');
+    }).catch(err => toast('帧处理失败：' + err.message, 'err'));
+    return;
+  }
+  const st = pendingSkinState;
+  pendingSkinState = null;
+  if (!f || !st) return;
+  if (!/^image\/(gif|png|webp)$/.test(f.type)) { toast('请选择 GIF / APNG（PNG）/ 动态 WebP 图片', 'warn'); return; }
+  const pack = S.settings.skinPack;
+  if (!pack || !pack.files) { toast('当前没有可维护的皮肤包', 'warn'); return; }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const dataUrl = String(rd.result);
+    const m = /^data:image\/(gif|webp|png)/i.exec(dataUrl);
+    const ext = m ? m[1].toLowerCase() : 'png';
+    const base = safeSkinFileName(f.name, st + '.' + ext).replace(/\.[^.]+$/, '') || st;
+    let name = base + '.' + ext;
+    let n = 1;
+    while (pack.files[name] && pack.files[name] !== dataUrl) name = base + '-' + (++n) + '.' + ext;
+    pack.files[name] = dataUrl;
+    if (!pack.states) pack.states = {};
+    pack.states[st] = name;
+    saveState(); renderPetTab();
+    const label = (SKIN_STATE_LABELS.find(([k]) => k === st) || [st, st])[1];
+    toast('已替换「' + label + '」状态图片：' + name, 'ok');
+  };
+  rd.onerror = () => toast('读取图片失败', 'err');
+  rd.readAsDataURL(f);
+});
+$id('skinBatchPick').addEventListener('click', () => $id('skinBatchFiles').click());
+$id('skinBatchFiles').addEventListener('change', async e => {
+  const list = Array.from(e.target.files || []);
+  e.target.value = '';
+  if (!list.length) return;
+  const loaded = [];
+  for (const f of list) {
+    if (petImageFileOk(f)) continue;
+    let info;
+    try { info = await petImageAnalyze(f); } catch (err) { continue; }
+    const raw = String(f.name || '').replace(/\.[^.]+$/, '');
+    const lower = raw.toLowerCase();
+    const hit = SKIN_STATE_LABELS.find(([st, label]) =>
+      lower === st || lower === label.toLowerCase() ||
+      lower.startsWith(st + '-') || lower.startsWith(st + '_'));
+    loaded.push({ info, raw, hit });
+  }
+  if (!loaded.length) { toast('没有可导入的 GIF / APNG / WebP 图片', 'warn'); return; }
+  let entry = S.settings.activeSkin ? findCustomSkin(S.settings.activeSkin) : null;
+  // Codex 宠物与单图形象结构不同，批量八态导入另起一个皮肤包条目
+  if (entry && entry.type === 'pack' && entry.pack && entry.pack.format === 'codex') entry = null;
+  let pack = packOfEntry(entry);
+  if (!pack) {
+    entry = { id: uid('sk'), type: 'pack', name: '我的皮肤', label: '我的皮肤', ts: Date.now(),
+      pack: { name: '我的皮肤', version: '1.0', states: {}, group: {}, files: {}, sounds: {}, ts: Date.now() } };
+    S.settings.skins = S.settings.skins || [];
+    S.settings.skins.push(entry);
+    S.settings.activeSkin = entry.id;
+    syncActiveSkin();
+    pack = entry.pack;
+  }
+  if (!pack.files) pack.files = {};
+  if (!pack.states) pack.states = {};
+  let matched = 0, cropped = 0;
+  for (const item of loaded) {
+    // 自动裁剪后统一为 PNG；文件名仍决定它落到哪个状态
+    const base = safeSkinFileName(item.raw, (item.hit ? item.hit[0] : 'image')).replace(/\.[^.]+$/, '') || 'image';
+    let name = base + '.png', n = 1;
+    while (pack.files[name] && pack.files[name] !== item.info.data) name = base + '-' + (++n) + '.png';
+    pack.files[name] = item.info.data;
+    if (item.info.cropped) cropped++;
+    if (item.hit) { pack.states[item.hit[0]] = name; matched++; }
+  }
+  saveState(); renderPetTab();
+  toast('已导入 ' + loaded.length + ' 张图片' + (cropped ? '（' + cropped + ' 张自动裁剪）' : '') + (matched
+    ? '，按文件名匹配 ' + matched + ' 个状态'
+    : '（文件名未匹配状态，可在下拉框中手动指定）'), matched ? 'ok' : 'warn');
+});
+
 $id('skinPick').addEventListener('click', () => $id('skinFile').click());
 $id('skinReset').addEventListener('click', () => {
-  if (!S.settings.customSkin && !S.settings.skinPack) { toast('当前已使用内置皮肤', 'warn'); return; }
-  S.settings.customSkin = null;
-  S.settings.skinPack = null;
+  if (!activeCustomSkin()) { toast('当前已使用内置皮肤', 'warn'); return; }
+  S.settings.activeSkin = null;
+  syncActiveSkin();
   saveState(); renderPetTab();
-  toast('已恢复内置矢量皮肤', 'ok');
+  toast('已切换回内置矢量皮肤（导入的皮肤仍保留在列表中）', 'ok');
 });
 $id('skinFile').addEventListener('change', e => {
   const f = e.target.files[0];
   e.target.value = '';
-  if (!f) return;
-  if (!/^image\/(gif|png|webp)$/.test(f.type)) { toast('请选择 GIF / APNG（PNG）/ 动态 WebP 图片', 'warn'); return; }
-  if (f.size > 1.5 * 1024 * 1024) { toast('文件过大（' + (f.size / 1024 / 1024).toFixed(1) + ' MB），请压缩到 1.5 MB 以内', 'err'); return; }
-  const rd = new FileReader();
-  rd.onload = () => {
-    S.settings.customSkin = { name: f.name, data: String(rd.result), ts: Date.now() };
+  const bad = petImageFileOk(f);
+  if (bad) { if (f) toast(bad, 'warn'); return; }
+  petImageAnalyze(f).then(info => {
+    const entry = {
+      id: uid('sk'), type: 'image', name: f.name,
+      label: f.name.replace(/\.[^.]+$/, '') || '自定义形象',
+      data: info.data, ts: Date.now(),
+      // 保留分析结果：宠物窗口据此判断透明通道与原始留白
+      alpha: info.hasAlpha, natural: { width: info.width, height: info.height },
+      trim: { cropped: info.cropped === true, crop: info.crop || null, note: info.note || '' },
+    };
+    S.settings.skins = S.settings.skins || [];
+    S.settings.skins.push(entry);
+    useCustomSkin(entry.id);
     saveState(); renderPetTab();
-    toast('已导入动画形象：' + f.name, 'ok');
-  };
-  rd.onerror = () => toast('读取图片失败', 'err');
-  rd.readAsDataURL(f);
+    const size = info.width && info.height ? '（' + info.width + '×' + info.height + '）' : '';
+    const how = info.cropped
+      ? '已自动裁剪内容' + size
+      : (info.note || '保留原始画面') + size;
+    toast('已导入形象：' + f.name + ' · ' + how, info.cropped ? 'ok' : 'warn');
+  }).catch(err => toast('导入失败：' + (err && err.message ? err.message : err), 'err'));
+});
+/* 八态单图：按 4×2 规则切割成 8 张状态图，直接生成可维护的皮肤包 */
+$id('skinSheetPick').addEventListener('click', () => $id('skinSheetFile').click());
+$id('skinSheetFile').addEventListener('change', e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  const bad = petImageFileOk(f);
+  if (bad) { if (f) toast(bad, 'warn'); return; }
+  petImageSplitEight(f).then(info => {
+    const base = safeSkinFileName(f.name, '八态皮肤').replace(/\.[^.]+$/, '') || '八态皮肤';
+    const pack = {
+      name: base, version: '1.0', states: {}, group: {}, files: {}, sounds: {}, ts: Date.now(),
+      // 保留切割来源与规则，便于后续追溯 / 重新导出
+      sheet: { layout: info.layout, order: info.order.slice(), source: f.name, common: info.common },
+    };
+    info.states.forEach(item => {
+      const file = item.state + '.png';
+      pack.files[file] = item.data;
+      pack.states[item.state] = file;
+    });
+    const entry = { id: uid('sk'), type: 'pack', name: base, label: base, pack, ts: Date.now() };
+    S.settings.skins = S.settings.skins || [];
+    const dup = S.settings.skins.findIndex(s => s.type === 'pack' && s.pack && s.pack.sheet && s.name === base);
+    if (dup >= 0) { entry.id = S.settings.skins[dup].id; S.settings.skins[dup] = entry; }
+    else S.settings.skins.push(entry);
+    useCustomSkin(entry.id);
+    saveState(); renderPetTab();
+    toast('已导入八态单图：' + base + ' · 4×2 切割为 8 张（' + info.order.join(' / ') + '）', 'ok');
+  }).catch(err => toast('八态单图切割失败：' + (err && err.message ? err.message : err), 'err'));
 });
 /* FR-SKN-002：皮肤包由主进程解压校验，渲染层只拿到已转成 data URL 的资源 */
 $id('skinPackPick').addEventListener('click', () => $id('skinPackFile').click());
@@ -805,16 +1429,21 @@ $id('skinPackFile').addEventListener('change', e => {
   const f = e.target.files[0];
   e.target.value = '';
   if (!f) return;
-  if (f.size > 8 * 1024 * 1024) { toast('皮肤包超过 8 MB', 'err'); return; }
+  if (f.size > 128 * 1024 * 1024) { toast('皮肤包超过 128 MB', 'err'); return; }
   const rd = new FileReader();
   rd.onload = async () => {
     const b64 = String(rd.result).split(',')[1] || '';
     try {
       const pack = await invoke('skin_pack_import', { data: b64 });
       const total = Object.values(pack.files || {}).reduce((n, v) => n + v.length, 0);
-      if (total > 9 * 1024 * 1024) { toast('皮肤包资源过大，请压缩后重试', 'err'); return; }
-      S.settings.customSkin = null;
-      S.settings.skinPack = pack;
+      if (total > 384 * 1024 * 1024) { toast('皮肤包资源过大，请压缩后重试', 'err'); return; }
+      // 同名皮肤包重复导入时覆盖旧条目，避免列表里堆积重复项
+      const entry = { id: uid('sk'), type: 'pack', name: pack.name || '导入皮肤', label: pack.name || '导入皮肤', pack, ts: Date.now() };
+      S.settings.skins = S.settings.skins || [];
+      const dup = S.settings.skins.findIndex(s => s.type === 'pack' && s.name === entry.name);
+      if (dup >= 0) { entry.id = S.settings.skins[dup].id; S.settings.skins[dup] = entry; }
+      else S.settings.skins.push(entry);
+      useCustomSkin(entry.id);
       saveState();
       renderPetTab();
       toast('已导入皮肤包：' + pack.name + '（' + Object.keys(pack.states || {}).length + ' 个状态）', 'ok');
@@ -823,6 +1452,396 @@ $id('skinPackFile').addEventListener('change', e => {
   rd.onerror = () => toast('读取文件失败', 'err');
   rd.readAsDataURL(f);
 });
+$id('codexPetPick').addEventListener('click', () => $id('codexPetFile').click());
+/* FR-SKN-003：Codex 宠物包（pet.json + spritesheet）由主进程校验并切片 */
+$id('codexPetFile').addEventListener('change', e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  if (f.size > 128 * 1024 * 1024) { toast('宠物包超过 128 MB', 'err'); return; }
+  const rd = new FileReader();
+  rd.onload = async () => {
+    const b64 = String(rd.result).split(',')[1] || '';
+    try {
+      const pack = await invoke('codex_pet_import', { data: b64 });
+      // 同名（同 id）皮肤覆盖旧条目，避免列表堆积
+      const entry = { id: uid('sk'), type: 'pack', name: pack.name || 'Codex 宠物', label: pack.name || 'Codex 宠物', pack, ts: Date.now() };
+      S.settings.skins = S.settings.skins || [];
+      const dup = S.settings.skins.findIndex(s => s.type === 'pack' && s.pack && s.pack.format === 'codex' && s.pack.id === pack.id);
+      if (dup >= 0) { entry.id = S.settings.skins[dup].id; S.settings.skins[dup] = entry; }
+      else S.settings.skins.push(entry);
+      useCustomSkin(entry.id);
+      saveState();
+      renderPetTab();
+      toast('已导入 Codex 宠物：' + pack.name + '（' + (pack.rows || []).length + ' 行 / ' +
+        (pack.rows || []).reduce((n, r) => n + (r.frames || 0), 0) + ' 帧）', 'ok');
+    } catch (err) { toast('导入失败：' + err, 'err'); }
+  };
+  rd.onerror = () => toast('读取文件失败', 'err');
+  rd.readAsDataURL(f);
+});
+$id('codexExportBtn').addEventListener('click', async () => {
+  const pack = S.settings.skinPack;
+  if (!pack || !pack.files) { toast('请先选择一个皮肤或 Codex 宠物', 'warn'); return; }
+  try {
+    const path = await invoke('codex_pet_export', { pack });
+    toast('已导出 Codex 宠物：' + path, 'ok');
+    invoke('reveal_file', { path }).catch(() => { });
+  } catch (e) { toast('导出失败：' + e, 'err'); }
+});
+
+/* FR-PET-009：自动裁剪规范（见 docs/自动裁剪规范.md）
+   所有阈值集中在此，规范文档与本表一一对应；改动必须同步文档与验收用例。 */
+const PET_CROP = {
+  // 输入闸门
+  maxBytes: 48 * 1024 * 1024,
+  maxSide: 4096,
+  // 透明通道判定
+  alphaSamplingBelow: 250,
+  alphaSampleHits: 40,
+  contentAlpha: 12,
+  // 背景基调
+  lightMin: 200,
+  lightSat: 30,
+  lightShare: 0.15,
+  lumaTol: 26,
+  // 行列投影
+  colShare: 0.015,
+  rowShare: 0.06,
+  minRunPx: 2,
+  // 碎屑过滤
+  debrisDivisor: 1500,
+  debrisMinPx: 64,
+  // 图集保护（1536:1872，8 列 × 9 行）
+  atlasRatio: 1536 / 1872,
+  atlasRatioTol: 0.03,
+  atlasMinSide: 1024,
+  // 裁框仍覆盖 85% 宽高即判定为图集：宁可少裁一次，也不能裁错格子
+  atlasFill: 0.85,
+  // 输出
+  fullBleedPx: 2,
+  marginPx: 4,
+};
+
+function petImageFileOk(f) {
+  if (!f) return '没有选择文件';
+  if (!/^image\/(gif|png|webp|apng)$/i.test(f.type || '')) {
+    return '请选择 GIF / APNG（PNG）/ 动态 WebP 图片';
+  }
+  if (f.size > PET_CROP.maxBytes) {
+    return '图片超过 ' + Math.round(PET_CROP.maxBytes / 1024 / 1024) + ' MB，请先压缩';
+  }
+  return '';
+}
+
+function readImageFile(f) {
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = () => resolve(String(rd.result));
+    rd.onerror = () => reject(new Error('读取图片失败'));
+    rd.readAsDataURL(f);
+  });
+}
+
+// 把一维计数投影切成连续区间（计数 > thr 视为有内容）
+function petSplitRuns(arr, thr) {
+  const out = [];
+  let start = null;
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] > thr) { if (start === null) start = i; }
+    else if (start !== null) { out.push([start, i - 1]); start = null; }
+  }
+  if (start !== null) out.push([start, arr.length - 1]);
+  return out;
+}
+
+// 动图（GIF / APNG / 动态 WebP）裁切会丢帧，规范要求整幅保留。
+// WebP 只需读前 32 字节：VP8X 标志位 bit1 即 ANIM。
+function petImageIsAnimated(dataUrl, mime, name) {
+  if (/^image\/(gif|apng)$/i.test(mime || '')) return true;
+  if (/\.apng$/i.test(name || '')) return true;
+  if (!/^data:image\/webp/i.test(dataUrl)) return false;
+  try {
+    const head = atob(dataUrl.split(',')[1].slice(0, 44));
+    if (head.slice(12, 16) !== 'VP8X') return false;
+    return (head.charCodeAt(20) & 0x02) !== 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+// P1 归一化：长边超限先等比缩小；后续坐标都在缩略图上算，输出时再按 scale 还原
+function petImageRaster(f) {
+  return readImageFile(f).then(dataUrl => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      if (!w || !h) { reject(new Error('图片尺寸无效')); return; }
+      const scale = Math.min(1, PET_CROP.maxSide / Math.max(w, h));
+      const sw = Math.max(1, Math.round(w * scale));
+      const sh = Math.max(1, Math.round(h * scale));
+      const c = document.createElement('canvas');
+      c.width = sw;
+      c.height = sh;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(img, 0, 0, sw, sh);
+      let px;
+      try { px = g.getImageData(0, 0, sw, sh).data; } catch (err) { reject(err); return; }
+      resolve({ img, dataUrl, w, h, sw, sh, scale, px, mime: (f && f.type) || '', name: (f && f.name) || '' });
+    };
+    img.onerror = () => reject(new Error('图片无法解析'));
+    img.src = dataUrl;
+  }));
+}
+
+// P2 透明度分流 + P3 背景基调：返回与底色不同的内容掩码，供裁剪与八态单图切割共用
+function petBuildContentMask(px, sw, sh) {
+  let alphaSeen = 0;
+  for (let i = 3; i < px.length; i += 4) {
+    if (px[i] < PET_CROP.alphaSamplingBelow) {
+      alphaSeen++;
+      if (alphaSeen > PET_CROP.alphaSampleHits) break;
+    }
+  }
+  const hasAlpha = alphaSeen > PET_CROP.alphaSampleHits;
+  const mask = new Uint8Array(sw * sh);
+  if (hasAlpha) {
+    // 透明图：alpha > 12 即内容（棋盘格底是导出痕迹，不是内容）
+    for (let i = 0; i < sw * sh; i++) {
+      if (px[i * 4 + 3] > PET_CROP.contentAlpha) mask[i] = 1;
+    }
+    return { hasAlpha, mask };
+  }
+  // 亮度：0.75 视亮度 + 0.25 灰度，压低纯色相差异对「内容」判定的干扰
+  const lum = (o) => (px[o] * 0.299 + px[o + 1] * 0.587 + px[o + 2] * 0.114) * 0.75
+    + 0.25 * ((px[o] + px[o + 1] + px[o + 2]) / 3);
+  // 低饱和浅色像素的亮度众数（棋盘格两色会被众数收敛到同一基调）
+  const hist = new Float32Array(256);
+  const vals = new Float32Array(sw * sh);
+  let light = 0;
+  for (let i = 0, o = 0; i < sw * sh; i++, o += 4) {
+    const v = lum(o);
+    vals[i] = v;
+    const mx = Math.max(px[o], px[o + 1], px[o + 2]);
+    const mn = Math.min(px[o], px[o + 1], px[o + 2]);
+    if (mn > PET_CROP.lightMin && mx - mn < PET_CROP.lightSat) { hist[Math.round(v)]++; light++; }
+  }
+  let bg;
+  if (light > sw * sh * PET_CROP.lightShare) {
+    let best = 0;
+    bg = 0;
+    for (let i = 0; i < 256; i++) if (hist[i] > best) { best = hist[i]; bg = i; }
+  } else {
+    // 没有大片浅底（深色 / 彩色背景）：退回全图亮度中位数
+    const sorted = Array.from(vals).sort((a, b) => a - b);
+    bg = sorted[sorted.length >> 1];
+  }
+  // 与基调亮度差 > 26 的像素计入内容
+  for (let i = 0; i < sw * sh; i++) {
+    if (Math.abs(vals[i] - bg) > PET_CROP.lumaTol) mask[i] = 1;
+  }
+  return { hasAlpha, mask };
+}
+
+/*
+  自动裁剪内容（单图形象、批量八态与 Codex 单帧共用）。流水线：
+  P1 归一化 → P2 透明度分流 → P3 背景基调 → P4 行列投影 → P5 段内定框 → P6 图集保护 → P7 输出
+  详细定义与验收数据见 docs/自动裁剪规范.md。
+*/
+function petImageAnalyze(f) {
+  return petImageRaster(f).then(({ img, dataUrl, w, h, sw, sh, scale, px, mime, name }) => new Promise((resolve, reject) => {
+    const animated = petImageIsAnimated(dataUrl, mime, name);
+    const { hasAlpha, mask } = petBuildContentMask(px, sw, sh);
+    let x0 = 0, y0 = 0, x1 = sw - 1, y1 = sh - 1, covered = 0;
+
+    if (hasAlpha) {
+      // 透明图直接取 alpha 包围盒
+      let minX = sw, minY = sh, maxX = -1, maxY = -1;
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          if (mask[y * sw + x]) {
+            covered++;
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      if (maxX < 0) { reject(new Error('图片整张透明，没有可显示的内容')); return; }
+      x0 = minX; y0 = minY; x1 = maxX; y1 = maxY;
+    } else {
+      // P4 行列投影：内容像素计入该列 / 该行
+      const colCnt = new Int32Array(sw), rowCnt = new Int32Array(sh);
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          if (mask[y * sw + x]) { colCnt[x]++; rowCnt[y]++; }
+        }
+      }
+      const cols = petSplitRuns(colCnt, Math.max(PET_CROP.minRunPx, Math.round(sh * PET_CROP.colShare)));
+      const rows = petSplitRuns(rowCnt, Math.max(PET_CROP.minRunPx, Math.round(sw * PET_CROP.rowShare)));
+      if (!cols.length || !rows.length) { reject(new Error('没能识别出画面内容，图片可能整体是同一个底色')); return; }
+      // P5 段内定框：列段 × 行段逐格统计，面积不足 1/1500 视为碎屑
+      const minArea = Math.max(PET_CROP.debrisMinPx, Math.round(sw * sh / PET_CROP.debrisDivisor));
+      let minX = sw, minY = sh, maxX = -1, maxY = -1;
+      for (const [cx0, cx1] of cols) {
+        for (const [ry0, ry1] of rows) {
+          let n = 0;
+          for (let y = ry0; y <= ry1; y++) for (let x = cx0; x <= cx1; x++) n += mask[y * sw + x];
+          if (n < minArea) continue;
+          covered += n;
+          if (cx0 < minX) minX = cx0;
+          if (cx1 > maxX) maxX = cx1;
+          if (ry0 < minY) minY = ry0;
+          if (ry1 > maxY) maxY = ry1;
+        }
+      }
+      if (maxX < 0) { reject(new Error('画面内容过少，没有可裁剪的主体')); return; }
+      x0 = minX; y0 = minY; x1 = maxX; y1 = maxY;
+    }
+
+    const cw = x1 - x0 + 1, chh = y1 - y0 + 1;
+    const coverage = covered / (sw * sh);
+    const skip = (note) => resolve({ data: dataUrl, width: w, height: h, hasAlpha, animated, cropped: false, coverage, note });
+
+    // P6 图集保护：8 列 × 9 行的 Codex 图集一旦裁边就会错格，整幅保留
+    const aspect = sw / sh;
+    if (Math.min(sw, sh) >= PET_CROP.atlasMinSide
+      && Math.abs(aspect - PET_CROP.atlasRatio) <= PET_CROP.atlasRatioTol
+      && cw >= sw * PET_CROP.atlasFill && chh >= sh * PET_CROP.atlasFill) {
+      skip('检测到 8×9 图集排版，已保留完整画面（裁格子会破坏行内动画）');
+      return;
+    }
+    if (animated) { skip('动图保留原始画面（裁切会丢失动画帧）'); return; }
+    if (cw >= sw - PET_CROP.fullBleedPx && chh >= sh - PET_CROP.fullBleedPx) { skip('画面已铺满整张图，无需裁剪'); return; }
+
+    // P7 输出：按 scale 还原到原图坐标裁切，四周统一 4px 透明内边距
+    const margin = PET_CROP.marginPx;
+    const out = document.createElement('canvas');
+    out.width = cw + margin * 2;
+    out.height = chh + margin * 2;
+    const og = out.getContext('2d');
+    og.imageSmoothingQuality = 'high';
+    og.drawImage(img, x0 / scale, y0 / scale, cw / scale, chh / scale, margin, margin, cw, chh);
+    resolve({
+      data: out.toDataURL('image/png'),
+      width: out.width,
+      height: out.height,
+      hasAlpha,
+      animated,
+      cropped: true,
+      coverage,
+      crop: { x: Math.round(x0 / scale), y: Math.round(y0 / scale), w: Math.round(cw / scale), h: Math.round(chh / scale) },
+      note: '',
+    });
+  }));
+}
+
+/* 八态单图规则：4 列 × 2 行，按行读取，状态顺序固定。
+   切割只依赖格子位置、不读取文件名，因此顺序必须唯一且写进文档。 */
+const EIGHT_STATE_SHEET = {
+  cols: 4,
+  rows: 2,
+  order: ['idle', 'happy', 'sleep', 'work', 'click', 'drag', 'error', 'talk'],
+};
+
+// 从段计数中挑出内容最多的 need 个区间，再按坐标排序（滤掉边缘噪点形成的碎段）
+function petRankRuns(runs, counts, need) {
+  if (runs.length < need) return null;
+  return runs.map(([a, b]) => {
+    let n = 0;
+    for (let i = a; i <= b; i++) n += counts[i] || 0;
+    return { a, b, n };
+  }).sort((p, q) => q.n - p.n).slice(0, need).sort((p, q) => p.a - q.a);
+}
+
+// 在指定格内取内容包围盒
+function petMaskBox(mask, sw, x0, x1, y0, y1) {
+  let minX = x1 + 1, minY = y1 + 1, maxX = -1, maxY = -1, n = 0;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (!mask[y * sw + x]) continue;
+      n++;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  return n ? { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1, n } : null;
+}
+
+/*
+  八态单图切割：复用自动裁剪的掩码与行列投影，选出 4 列 × 2 行共 8 格；
+  每格取内容包围盒后放到统一画布上（水平居中、底边对齐），避免切换状态时角色跳动。
+*/
+function petImageSplitEight(f) {
+  return petImageRaster(f).then(({ img, dataUrl, w, h, sw, sh, scale, px, mime, name }) => {
+    if (petImageIsAnimated(dataUrl, mime, name)) {
+      throw new Error('八态单图请使用静态 PNG / WebP（动图无法按格切割）');
+    }
+    // 防止把 Codex 的 8×9 图集误投到八态单图入口：两者都含多个格子，但行序契约不同
+    if (Math.min(sw, sh) >= PET_CROP.atlasMinSide
+      && Math.abs(sw / sh - PET_CROP.atlasRatio) <= PET_CROP.atlasRatioTol) {
+      throw new Error('检测到 8×9 Codex 图集，请使用「导入 Codex 宠物」');
+    }
+    const { mask } = petBuildContentMask(px, sw, sh);
+    const colCnt = new Int32Array(sw), rowCnt = new Int32Array(sh);
+    for (let y = 0; y < sh; y++) {
+      for (let x = 0; x < sw; x++) {
+        if (mask[y * sw + x]) { colCnt[x]++; rowCnt[y]++; }
+      }
+    }
+    const colRuns = petSplitRuns(colCnt, Math.max(PET_CROP.minRunPx, Math.round(sh * PET_CROP.colShare)));
+    const rowRuns = petSplitRuns(rowCnt, Math.max(PET_CROP.minRunPx, Math.round(sw * PET_CROP.rowShare)));
+    const cols = petRankRuns(colRuns, colCnt, EIGHT_STATE_SHEET.cols);
+    const rows = petRankRuns(rowRuns, rowCnt, EIGHT_STATE_SHEET.rows);
+    if (!cols || !rows) {
+      throw new Error('未识别出 4 列 × 2 行的八态排版，请确认 8 个角色彼此分开且背景为透明 / 浅色');
+    }
+
+    const minArea = Math.max(PET_CROP.debrisMinPx, Math.round(sw * sh / PET_CROP.debrisDivisor));
+    const boxes = [];
+    for (let ri = 0; ri < rows.length; ri++) {
+      for (let ci = 0; ci < cols.length; ci++) {
+        const row = rows[ri], col = cols[ci];
+        const box = petMaskBox(mask, sw, col.a, col.b, row.a, row.b);
+        if (!box || box.n < minArea) {
+          throw new Error('第 ' + (ri + 1) + ' 行第 ' + (ci + 1) + ' 格内容过少，无法按八态单图切割');
+        }
+        boxes.push(box);
+      }
+    }
+
+    // 统一画布：取 8 格中最大的内容尺寸，每格水平居中、底边对齐
+    const margin = PET_CROP.marginPx;
+    const maxW = Math.max(...boxes.map(b => b.w));
+    const maxH = Math.max(...boxes.map(b => b.h));
+    const outW = maxW + margin * 2;
+    const outH = maxH + margin * 2;
+    const states = boxes.map((box, i) => {
+      const out = document.createElement('canvas');
+      out.width = outW;
+      out.height = outH;
+      const og = out.getContext('2d');
+      og.imageSmoothingQuality = 'high';
+      const dx = margin + Math.floor((maxW - box.w) / 2);
+      const dy = margin + (maxH - box.h);
+      og.drawImage(img, box.x / scale, box.y / scale, box.w / scale, box.h / scale, dx, dy, box.w, box.h);
+      return {
+        state: EIGHT_STATE_SHEET.order[i],
+        data: out.toDataURL('image/png'),
+        width: outW,
+        height: outH,
+        box: { x: Math.round(box.x / scale), y: Math.round(box.y / scale), w: Math.round(box.w / scale), h: Math.round(box.h / scale) },
+      };
+    });
+    return { states, width: w, height: h, layout: '4x2', order: EIGHT_STATE_SHEET.order.slice(), common: { width: outW, height: outH } };
+  });
+}
+
 let scaleTimer = null, bubbleWTimer = null;
 $id('petScale').addEventListener('input', e => {
   const v = parseFloat(e.target.value);
@@ -1226,8 +2245,15 @@ $id('impConfigFile').addEventListener('change', e => {
       if (!SKINS[S.settings.skin]) S.settings.skin = 'blue';
       if (st.customSkin !== undefined) {
         const cs = st.customSkin;
-        const ok = cs && typeof cs.data === 'string' && /^data:image\/(gif|png|webp);base64,/.test(cs.data) && cs.data.length < 2200000;
+        const ok = cs && typeof cs.data === 'string' && /^data:image\/(gif|png|webp);base64,/.test(cs.data);
         S.settings.customSkin = ok ? { name: String(cs.name || '导入形象').slice(0, 120), data: cs.data, ts: Date.now() } : null;
+        // 导入的配置里带了形象图片：登记进皮肤库并设为当前皮肤
+        if (ok) {
+          const entry = { id: uid('sk'), type: 'image', name: S.settings.customSkin.name, label: S.settings.customSkin.name, data: cs.data, ts: Date.now() };
+          S.settings.skins = S.settings.skins || [];
+          S.settings.skins.push(entry);
+          S.settings.activeSkin = entry.id;
+        }
       }
       if (st.lastProviderId && provMap[st.lastProviderId]) S.settings.lastProviderId = provMap[st.lastProviderId];
       else if (!getProv(S.settings.lastProviderId)) S.settings.lastProviderId = null;

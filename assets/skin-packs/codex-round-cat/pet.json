@@ -1,0 +1,6 @@
+{
+  "id": "codex-round-cat",
+  "displayName": "Codex 圆头小猫",
+  "description": "符合 Codex Pet Contract 的 DeskPet 测试宠物。",
+  "spritesheetPath": "spritesheet.webp"
+}
