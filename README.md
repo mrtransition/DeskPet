@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.1.1-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.1.2-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -35,14 +35,13 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | 😼 **人格与皮肤** | 3 套内置人格（贴心小助手 / 毒舌吐槽役 / 专注工作搭子）+ 3 套皮肤联动切换；支持 GIF / APNG / 动态 WebP 自定义动画形象，导入时自动裁掉四周留白与棋盘格底色（规范见 [docs/自动裁剪规范.md](docs/自动裁剪规范.md)）与人格导入导出；完整皮肤格式与映射见 [docs/皮肤与图集规范.md](docs/皮肤与图集规范.md) |
 | 🎭 **八态动画** | idle / drag / click / talk / sleep / work / happy / error 全矢量状态机，50%–200% 无级缩放 |
 | 🖥 **系统集成** | 托盘菜单（左键唤起气泡）、全局快捷键、开机自启、会话检索与 Markdown 导出 |
-| 🛠 **工具调用** | 模型可调用本地工具：创建提醒、读剪贴板、打开白名单链接 / 应用、查天气、联网搜索。首次调用弹卡片授权，可逐项设「每次询问 / 始终允许 / 始终拒绝」，执行结果回传模型续答（最多 4 轮） |
+| 🛠 **工具调用** | 模型可调用本地工具：创建提醒、读剪贴板、打开白名单链接 / 应用；天气与联网搜索为默认关闭的实验性工具。首次调用弹卡片授权，可逐项设「每次询问 / 始终允许 / 始终拒绝」，执行结果回传模型续答（最多 4 轮） |
 | 🎨 **皮肤包** | `.deskpet-skin.zip`：`skin.json` 状态机映射 + 八态图集 + 可选提示音，在设置里一键导入；内置皮肤维护工具（八态诊断 / 修复 / 逐状态替换 / 清理未引用资源 / 导出备份） |
 | 🧩 **八态单图** | 单张 4 列 × 2 行的八态图（按行读取：`idle / happy / sleep / work / click / drag / error / talk`）导入时自动切割成 8 张状态图，逐格裁留白并统一画布底边对齐 |
 | 🕹 **Codex Pet Contract** | 直接导入 Codex 桌面端 `pets/<id>/`（`pet.json` + 1536×1872 图集，8 列 × 9 行、单格 192×208）：九行按契约帧序逐帧播放并映射到八态；维护工具可改帧时长、逐帧替换 / 追加、调整状态复用，并可反向导出为标准 Codex 宠物包 |
-| 🩺 **健康提醒** | 久坐 / 喝水定时轻提示，与免打扰时段、主动搭话互不叠加；剪贴板感知点一下才处理 |
+| 🩺 **健康提醒** | 久坐 / 喝水定时轻提示，默认关闭、折叠在提醒高级项；剪贴板感知需显式开启，点一下才处理 |
 | 🔊 **语音朗读** | AI 回复可自动朗读或逐条重读，支持系统语音选择与 0.5–2 倍语速；本地 TTS，零网络请求 |
 | 🌏 **中英双语** | 设置、气泡与宠物菜单即时切换中文 / English |
-| 📈 **用量与费用** | 主进程按轮累计输入 / 输出 token，按自填单价估算费用；更新检查只提示、安装包由用户手动运行 |
 | 🪶 **轻量** | 安装包约 14 MB · 前端零构建（无 npm 依赖）；工作 / 睡眠状态可开启 30fps 低帧率模式 |
 
 ## 🚀 快速开始
@@ -88,7 +87,7 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 |---|---|
 | 云端（需 Key） | OpenAI · DeepSeek · Anthropic Claude · Google Gemini · Moonshot Kimi · 智谱 GLM · 通义千问 · Azure OpenAI |
 | 本地（免 Key） | Ollama · LM Studio · vLLM |
-| 自定义 | 任意 OpenAI 兼容端点（自定义 BaseURL / 请求头） |
+| 自定义 | 任意 OpenAI 兼容端点（自定义 BaseURL，不含自定义请求头） |
 
 > 💡 模型请求由 Rust 主进程发出：不受浏览器 CORS 限制，Ollama 无需设置 `OLLAMA_ORIGINS`；密钥仅存于 Windows 凭据管理器（凭据名 `DeskPet/<供应商ID>`）。Ollama 会走原生 `/api/chat` 并显式限制 `num_ctx`，避免服务端超大上下文把内存撑爆。
 
@@ -98,8 +97,9 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 |---|---|
 | 🔑 密钥隔离 | API Key 写入系统凭据管理器，渲染层（WebView）全程不可见；导出配置与日志自动剔除 |
 | 🏠 数据本地 | 会话 / 记忆 / 配置持久化于 `%APPDATA%\com.mrtransition.deskpet\`，JSON 明文可随时审查 |
-| 🚫 零上报 | 无遥测、无埋点、无崩溃收集；唯一的网络请求是你自己配置的模型 API |
-| 🔎 可审计 | 全部源码不到 200 KB（Rust 主进程 + 3 个零构建 HTML），一屏读完所有数据流 |
+| 🚫 无遥测 | 无埋点、无崩溃收集；除你配置的模型 API 外，仅在你主动使用天气、联网搜索或更新检查时访问对应服务 |
+| 🔎 可审查 | 完整源码公开（Rust 主进程 + 3 个零构建 HTML），可逐行核对数据流 |
+| 📡 出站透明 | 隐私页静态列明全部出站域名；本地日志脱敏，不含密钥、请求头或对话内容 |
 
 ## 🏗️ 架构
 
@@ -146,8 +146,9 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 - [x] 完整动画皮肤包（`.deskpet-skin.zip`：图集 / 状态机 / 音效）
 - [x] 八态单图（4×2 自动切割）与皮肤维护工具
 - [x] Codex Pet Contract 皮肤（`pet.json` + 8×9 图集导入 / 导出，九行动画）
+- [x] 产品相关性收敛：移除费用估算、出站审计 UI、自定义请求头与关于页 SRS 表
 - [ ] 单实例运行与首次启动引导（P0，计划 v2.2）
-- [ ] CSP、自定义请求头脱敏与更新签名（计划 v2.2）
+- [ ] CSP、隐私披露与更新签名（计划 v2.2）
 - [ ] 数据备份 / 一键恢复与安装器（计划 v2.2 / v2.3）
 - [ ] SQLite 存储与会话全文检索增强（当前为 JSON 原子写盘 + 备份回退）
 - [x] 自动更新（HTTPS 更新清单 + 手动下载安装，不做静默安装；签名校验待补）
@@ -156,11 +157,24 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 - [ ] 语音输入（ASR，P3，需本地运行时）
 - [ ] Live2D / Spine / Lottie 运行时（P3）
 - [ ] macOS / Linux 支持（依赖透明窗口与托盘的跨平台适配）
-- [x] 久坐提醒、剪贴板感知、免打扰时段等 P2 特性（见 SRS）
+- [x] 久坐提醒、剪贴板感知、免打扰时段等 P2 特性（默认关闭/折叠入口，见 SRS）
 
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.1.2</b> — 产品相关性收敛：移除开发者面板，收敛实验性助手能力</summary>
+
+- **移除费用估算（FR-SYS-005）**：关于页删除价格输入、用量与费用卡片；不再以货币金额作为用户功能。
+- **移除出站审计 UI（NFR-SEC-003）**：隐私页改为静态域名披露，列明模型、天气、搜索与更新请求；本地结构化日志继续脱敏保留。
+- **移除自定义请求头（FR-MDL-002 / NFR-SEC-006）**：供应商编辑不再提供 JSON 请求头输入，避免 `Authorization` 等敏感值明文进入 `data.json` 与配置导出。
+- **关于页精简**：移除内嵌 SRS 覆盖对照表，需求追踪统一回到 `docs/`；关于页只保留版本、隐私、语言与更新入口。
+- **实验性能力降级**：久坐/喝水、剪贴板感知、天气/联网搜索默认关闭或折叠入口，不再作为主卖点。
+- **仓库清理**：删除重复的根目录 MVP 原型、未引用设计素材与构建残留；SRS 升级到 v1.2，并与《产品功能相关性审计》对齐。
+- **测试**：`cargo test` 全绿；前端脚本通过 `node --check`。
+
+</details>
+
+<details>
 <summary><b>v2.1.1</b> — Codex 宠物契约、八态单图切割与皮肤维护工具</summary>
 
 - **Codex Pet Contract（FR-SKN-003）**：支持导入 Codex 桌面端 `pets/<id>/` 宠物包（`pet.json` + 1536×1872 透明图集，8 列 × 9 行、单格 192×208）。九行按契约帧序逐帧播放并映射到 DeskPet 八态；导出时把当前皮肤还原为契约图集与 `pet.json`。PNG / WebP / GIF / SVG 图集均可解析，SVG 导入前清洗脚本与外链。
@@ -190,7 +204,7 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 - **工具调用（FR-TOOL-001~004）**：主进程实现 4 轮工具循环——模型返回 `tool_calls` → 逐项授权卡片（每次询问 / 始终允许 / 始终拒绝，可随时撤销）→ 本地执行 → 结构化结果回传 → 续答；OpenAI、Anthropic（`tool_use` / `tool_result`）、Gemini（`functionCall` / `functionResponse`）三协议各自成体
 - **皮肤包（FR-SKN-002）**：`.deskpet-skin.zip` 导入，主进程解压校验（≤8 MB、条目 ≤200、单文件 ≤2 MB、防路径穿越），按状态机取帧，支持提醒提示音
 - **健康提醒（FR-REM-006/007）**：久坐 / 喝水计时、免打扰时段（支持跨零点）、剪贴板感知提示（点击后才读取）
-- **系统（FR-SYS-004~006）**：HTTPS 更新清单检查 + 手动下载安装包；token 用量与费用估算；中英双语界面
+- **系统（FR-SYS-004~006）**：HTTPS 更新清单检查 + 手动下载安装包；中英双语界面（费用估算与出站审计 UI 已于 v2.1.2 移除）
 - **修复**：主进程编译中断（剪贴板句柄类型、工具调用断链、`build_request` 参数不匹配）；自定义形象透明通道的方形阴影
 - **测试**：25 项 `cargo test` 全绿；真实应用内端到端验证工具回环（含请求体断言）
 
@@ -273,7 +287,7 @@ Tauri v2 桌面壳：透明置顶宠物窗口、气泡对话、托盘、全局�
 单文件零依赖 HTML 原型，验证全部交互与数据链路，保留于 [`docs/MVP-浏览器模拟版.html`](docs/MVP-浏览器模拟版.html)。
 </details>
 
-完整需求规格（[SRS-DESKPET-AI-001 v1.1](桌面%20AI%20宠物软件需求规格说明书（SRS）.md)，含 P0/P1/P2/P3 分层与需求追溯矩阵）；皮肤包格式、八态映射与 Codex 契约见 [`docs/皮肤与图集规范.md`](docs/皮肤与图集规范.md)，自动裁剪阈值见 [`docs/自动裁剪规范.md`](docs/自动裁剪规范.md)；后续排期见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
+完整需求规格（[SRS-DESKPET-AI-001 v1.2](桌面%20AI%20宠物软件需求规格说明书（SRS）.md)，含 P0/P1/P2/P3 分层与需求追溯矩阵）；产品功能相关性判断见 [`docs/产品功能相关性审计.md`](docs/产品功能相关性审计.md)；皮肤包格式、八态映射与 Codex 契约见 [`docs/皮肤与图集规范.md`](docs/皮肤与图集规范.md)，自动裁剪阈值见 [`docs/自动裁剪规范.md`](docs/自动裁剪规范.md)；后续排期见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
 
 ## 🤝 贡献
 

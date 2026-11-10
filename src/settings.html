@@ -50,7 +50,6 @@ body { background: var(--bg); display: flex; flex-direction: column; }
               </div>
               <div class="frow" style="grid-column:span 2"><label>模型名（测试连接后可下拉选择）</label><input id="pvModel" list="dlModels" placeholder="deepseek-chat"></div>
               <datalist id="dlModels"></datalist>
-              <div class="frow" style="grid-column:span 2"><label>自定义请求头（JSON，可空）</label><input id="pvHeaders" placeholder='{"x-foo":"bar"}'></div>
             </div>
             <div class="fgrid" style="margin-top:10px">
               <div class="frow"><label>Temperature（0–2）</label><input id="pvTemp" type="number" min="0" max="2" step="0.1"></div>
@@ -268,16 +267,14 @@ body { background: var(--bg); display: flex; flex-direction: column; }
 
       <!-- 隐私 -->
       <div class="pane" id="tab-privacy">
-        <h3>隐私与出站审计</h3><div class="p-desc">零埋点 · 数据仅存本地 · 密钥不进入渲染层 · 出站请求可审计（FR-SYS-003 / NFR-SEC-003 / NFR-PRV）</div>
+        <h3>隐私与安全</h3><div class="p-desc">零埋点 · 数据仅存本地 · 密钥不进入渲染层 · 出站域名公开披露（FR-SYS-003 / NFR-SEC-003 / NFR-PRV）</div>
         <div class="sec">
           <h4>本地数据</h4>
           <div id="privacyInfo" class="privacy-grid"></div>
         </div>
         <div class="sec">
-          <h4>出站请求审计 <span class="tag">仅域名 / 模型 / 状态 / 延迟</span></h4>
-          <div class="fnote" style="margin:0 0 8px">不记录密钥、请求头或对话内容。日志保存在内存中，退出即清空。</div>
-          <div class="btn-row" style="margin-top:0"><button id="outClear">清空审计记录</button><button id="outRefresh">刷新</button></div>
-          <div id="outList"></div>
+          <h4>出站域名披露 <span class="tag">静态说明</span></h4>
+          <div class="fnote" style="margin:0">仅在以下场景发起网络请求：① 对话 → 你配置的模型服务域名；② 天气 → <code>geocoding-api.open-meteo.com</code>、<code>api.open-meteo.com</code>；③ 联网搜索 → <code>html.duckduckgo.com</code>；④ 更新检查 → 默认 <code>api.github.com</code> 或你填写的清单地址。应用不提供逐请求审计表；本地日志已脱敏，不含密钥与对话内容。</div>
         </div>
         <div class="sec">
           <h4>工具能力与授权 <span class="tag">FR-TOOL-001/003 / NFR-SEC-002</span></h4>
@@ -285,7 +282,7 @@ body { background: var(--bg); display: flex; flex-direction: column; }
             <label><input type="checkbox" id="toolEnabled"> 允许模型调用本地工具（关闭后所有工具不可用）</label>
           </div>
           <div id="toolAuthList"></div>
-          <div class="fnote" style="margin-top:8px">工具白名单在编译期固定：创建提醒、读取剪贴板、打开白名单链接、启动白名单应用、查询天气、联网搜索。不存在执行任意命令的通道（NFR-SEC-002）。</div>
+          <div class="fnote" style="margin-top:8px">工具白名单在编译期固定：创建提醒、读取剪贴板、打开白名单链接、启动白名单应用、查询天气、联网搜索。天气与联网搜索默认拒绝，需在下方显式改为允许；不存在执行任意命令的通道（NFR-SEC-002）。</div>
           <div style="display:flex;gap:8px;margin-top:8px">
             <input id="wlAdd" placeholder="追加允许打开的域名，如 example.com">
             <button id="wlAddBtn">添加域名</button>
@@ -301,8 +298,18 @@ body { background: var(--bg); display: flex; flex-direction: column; }
       <!-- 关于 -->
       <div class="pane about" id="tab-about">
         <h3>桌面 AI 宠物</h3>
-        <div class="ver" id="verLine">桌面版 v2.1 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.1</div>
+        <div class="ver" id="verLine">桌面版 v2.1.2 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
         <details open>
+          <summary>v2.1.2 收敛了什么</summary>
+          <ul>
+            <li>移除「关于」页的费用估算与价格输入，仅保留产品信息、隐私说明与更新入口</li>
+            <li>移除隐私页的逐请求出站审计表，改为静态域名披露；本地结构化日志仍脱敏保留</li>
+            <li>移除供应商编辑中的自定义请求头输入，避免敏感头明文落盘</li>
+            <li>移除「关于」页内嵌的 SRS 覆盖对照表，需求追踪统一回到 docs/SRS</li>
+            <li>久坐/喝水、剪贴板感知、天气/搜索降级为默认关闭的实验性增强，不再作为主卖点</li>
+          </ul>
+        </details>
+        <details>
           <summary>v2.1.1 新增了什么</summary>
           <ul>
             <li>Codex 宠物（FR-SKN-003）：导入 <code>pet.json</code> + 1536×1872 图集（8 列 × 9 行、单格 192×208），九行按契约帧序播放并映射八态；可维护帧、时长与状态复用，并导出为 Codex 宠物包</li>
@@ -323,51 +330,16 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           <summary>v2.0 实现了什么</summary>
           <ul>
             <li>真实系统能力：透明无边框置顶宠物窗口（置顶/任务栏可见性可配置）、独立气泡窗口（智能上下翻转 + 尾巴箭头 + 跟随移动 + 边缘拖拽调宽）、系统托盘（左键唤起 / 右键菜单）、全局快捷键（Ctrl+Shift+Space 唤起、Ctrl+, 设置）、开机自启、点击穿透、失焦自动关闭并恢复原前台窗口</li>
-            <li>主进程对话：OpenAI / Anthropic / Gemini 三类流式协议适配、SSE 逐 token 推送、停止生成、非流式自动降级、超时/5xx 自动重试、429 冷却、上下文超长自动裁剪、错误分类；密钥存 Windows 凭据管理器，渲染层不可见，出站请求可在「隐私」页审计（FR-MDL-007/009/012/013、NFR-SEC-001/003）</li>
-            <li>v2.0 新增：工具调用闭环（函数调用 → 逐项授权 → 执行 → 结果回传 → 多轮续答，覆盖 OpenAI / Anthropic / Gemini 三协议）、皮肤包导入（zip：图集 + 状态机 + 提示音）、久坐/喝水提醒与免打扰时段、剪贴板感知、自动更新检查与手动安装、token 用量与费用估算、中英文界面切换</li>
+            <li>主进程对话：OpenAI / Anthropic / Gemini 三类流式协议适配、SSE 逐 token 推送、停止生成、非流式自动降级、超时/5xx 自动重试、429 冷却、上下文超长自动裁剪、错误分类；密钥存 Windows 凭据管理器，渲染层不可见（FR-MDL-007/009/012/013、NFR-SEC-001）</li>
+            <li>v2.0 新增：工具调用闭环（函数调用 → 逐项授权 → 执行 → 结果回传 → 多轮续答，覆盖 OpenAI / Anthropic / Gemini 三协议）、皮肤包导入（zip：图集 + 状态机 + 提示音）、久坐/喝水提醒与免打扰时段、剪贴板感知、自动更新检查与手动安装、中英文界面切换（费用估算与出站审计 UI 已于 v2.1.2 移除）</li>
             <li>其他功能：3 套人格 + 皮肤双向联动（含供应商绑定）、八态动画、拖拽与位置记忆、缩放、快捷动作、长期记忆注入、自然语言提醒（主进程调度器，支持一次性/每日/每周/间隔）、免打扰与补发、主动搭话、会话持久化/检索/导出、配置导入导出与 ID 重映射</li>
           </ul>
         </details>
         <details>
-          <summary>SRS 需求覆盖对照（v1.1 / DeskPet 2.1.1）</summary>
-          <table>
-            <tr><th>需求</th><th>说明</th><th>状态</th></tr>
-            <tr><td>FR-PET-001~008/010</td><td>透明置顶、任务栏可见性、拖拽记忆、多屏回收、八态动画、缩放、穿透、低帧率</td><td class="st-ok">完整（置顶层级支持 TOPMOST 提升；v2.1 低帧率 30fps）</td></tr>
-            <tr><td>FR-PET-009</td><td>APNG/GIF/WebP 单图形象 + 皮肤包多状态帧</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-PET-011</td><td>Live2D / Spine / Lottie 运行时</td><td class="st-part">P3，v3 后置</td></tr>
-            <tr><td>FR-BUB-001~016/018</td><td>弹出、定位、宽度拖拽、跟随、渲染、流式、停止、会话、关闭条件、快捷键、输出转义</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-BUB-017</td><td>全局快捷键打开设置</td><td class="st-ok">完整（P2）</td></tr>
-            <tr><td>FR-MDL-001~007/009~013</td><td>模板、自定义、测试、多配置、切换、密钥安全、参数、上下文、降级、错误分类</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-MDL-014</td><td>供应商能力矩阵（流式 / 工具 / 视觉 / 模型列表）</td><td class="st-part">按协议分支处理；无显式矩阵与视觉标记（P1）</td></tr>
-            <tr><td>FR-MDL-008</td><td>HTTP / SOCKS5 代理</td><td class="st-part">后端支持，设置页无输入项（P2）</td></tr>
-            <tr><td>FR-PSN-001~005</td><td>人格卡片、模板、切换生效、导入导出、皮肤绑定</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-MEM-001~004</td><td>显式记忆、相关度注入（≤5 条）、摘要压缩、可视化管理</td><td class="st-ok">完整（003 为 P2，v2.1 摘要）</td></tr>
-            <tr><td>FR-TOOL-001/003/004</td><td>函数调用、逐项授权、结果回传、多轮工具循环</td><td class="st-ok">完整（OpenAI / Anthropic / Gemini 三协议）</td></tr>
-            <tr><td>FR-TOOL-002</td><td>天气与联网搜索</td><td class="st-ok">完整（P2）</td></tr>
-            <tr><td>FR-TOOL-005</td><td>截图分析</td><td class="st-part">P3，v3 后置</td></tr>
-            <tr><td>FR-REM-001~007</td><td>自然语言提醒、中央播报+稍后、重复规则、免打扰与时段、主动搭话、久坐喝水、剪贴板感知</td><td class="st-ok">完整</td></tr>
-            <tr><td>FR-REM-008</td><td>睡眠 / 重启 / 时区变化后的补发策略</td><td class="st-part">错过只触发一次；DST 与时区未显式处理</td></tr>
-            <tr><td>FR-SKN-001/002</td><td>3 套内置皮肤；皮肤包（图集+状态机+音效）导入与维护；4×2 八态单图自动切割</td><td class="st-ok">完整（.deskpet-skin.zip + 维护工具 + 八态单图）</td></tr>
-            <tr><td>FR-SKN-003</td><td>Codex Pet Contract（pet.json + 8×9 / 192×208 图集）导入、九行动画、帧维护与导出</td><td class="st-ok">完整（导入 / 维护 / 导出）</td></tr>
-            <tr><td>FR-VOI-001</td><td>TTS 朗读</td><td class="st-ok">完整（系统语音，零联网，P2）</td></tr>
-            <tr><td>FR-VOI-002</td><td>ASR 语音输入</td><td class="st-part">P3，v3 后置</td></tr>
-            <tr><td>FR-SYS-001~004</td><td>托盘、自启、设置分组、更新检查与手动安装</td><td class="st-ok">完整（更新无签名，见 NFR-SEC-004）</td></tr>
-            <tr><td>FR-SYS-005~006</td><td>用量与费用、中英文界面</td><td class="st-part">005 完整；006 仅部分文案接入 i18n（P2）</td></tr>
-            <tr><td>FR-SYS-007~008</td><td>单实例、首次启动引导</td><td class="st-part">未实现（P0，v2.2 补齐）</td></tr>
-            <tr><td>FR-SYS-009</td><td>更新失败降级与版本保留</td><td class="st-part">有错误提示，无回退机制</td></tr>
-            <tr><td>FR-SYS-010</td><td>安装 / 卸载与数据保留询问</td><td class="st-part">便携版不适用，v2.3 安装器启用</td></tr>
-            <tr><td>FR-DAT-001~004、DR-001~004</td><td>本地持久化、检索导出、清理二次确认、零未授权上传</td><td class="st-ok">完整（JSON 原子写盘 + 备份回退）</td></tr>
-            <tr><td>FR-DAT-005~006</td><td>迁移备份恢复、会话批量管理</td><td class="st-part">仅有默认值补齐与单条删除，v2.3 补齐</td></tr>
-            <tr><td>NFR-INT/PERF/SEC/REL</td><td>不抢前台、协议适配、原子写盘、密钥隔离、出站审计</td><td class="st-part">SEC-004、REL-004 待 v2.2 / v2.3 补齐；SEC-005/006 为 v1 必须项</td></tr>
-            <tr><td>NFR-MNT-001</td><td>统一日志级别与结构化日志，内容脱敏</td><td class="st-ok">完整（JSON Lines，v2.1）</td></tr>
-            <tr><td>NFR-PERF-007</td><td>安装包 ≤ 30 MB</td><td class="st-ok">v2.1.1 release 实测约 14.3 MB</td></tr>
-          </table>
-        </details>
-        <details>
-          <summary>隐私与用量统计</summary>
+          <summary>隐私说明</summary>
           <ul>
             <li>零上报、零埋点；对话与配置仅存本机应用数据目录；API Key 仅存于 Windows 凭据管理器，不进入数据文件、日志与导出文件（DS-001）</li>
-            <li>用量统计（主进程累计，本地估算）：<span id="statReq">0</span> 次请求 · 输入 <span id="statTokIn">0</span> / 输出 <span id="statTokOut">0</span> tokens · 预估费用 <span id="statCost">0</span> 元</li>
+            <li>除模型对话外，仅在用户主动使用天气、联网搜索或更新检查时访问对应服务；完整出站域名见「隐私」页</li>
           </ul>
         </details>
         <details open>
@@ -377,18 +349,6 @@ body { background: var(--bg); display: flex; flex-direction: column; }
             <label><input type="radio" name="langSel" value="en"> English</label>
           </div>
           <div class="fnote" style="margin:6px 0 0">语言切换即时生效；气泡、宠物菜单与设置页同步。模型回复语言由人格 System Prompt 决定，不受此开关影响。</div>
-        </details>
-        <details open>
-          <summary>用量与费用（FR-SYS-005）</summary>
-          <div class="fgrid">
-            <div class="frow"><label>输入单价（元 / 百万 tokens）</label><input id="priceIn" type="number" min="0" step="0.01"></div>
-            <div class="frow"><label>输出单价（元 / 百万 tokens）</label><input id="priceOut" type="number" min="0" step="0.01"></div>
-          </div>
-          <div class="btn-row">
-            <button id="usageRefresh">刷新</button>
-            <button id="usageReset">清零用量</button>
-          </div>
-          <div class="fnote" id="usageLine">用量仅在本机累计，关闭应用后清零；单价由你按供应商价目表填写，结果仅供估算。</div>
         </details>
         <details>
           <summary>自动更新（FR-SYS-004）</summary>
@@ -448,7 +408,7 @@ async function renderProvEditor() {
   if (p) {
     const tpl = PROVIDER_TEMPLATES.find(t => t.baseUrl === p.baseUrl && t.type === p.type) || PROVIDER_TEMPLATES.find(t => t.type === p.type && t.key !== 'custom') || { key: 'custom' };
     $id('pvTemplate').value = p.type === 'mock' ? 'mock' : tpl.key;
-    set('pvName', p.name); set('pvType', p.type); set('pvBase', p.baseUrl); set('pvModel', p.model); set('pvHeaders', p.headers);
+    set('pvName', p.name); set('pvType', p.type); set('pvBase', p.baseUrl); set('pvModel', p.model);
     const pr = p.params || {};
     $id('pvTemp').value = pr.temp; $id('pvTopP').value = pr.topP;
     $id('pvMaxTok').value = pr.maxTokens; $id('pvRounds').value = pr.ctxRounds;
@@ -502,7 +462,6 @@ function provFormVals() {
     type: $id('pvType').value,
     baseUrl: $id('pvBase').value.trim(),
     model: $id('pvModel').value.trim(),
-    headers: $id('pvHeaders').value.trim(),
     key: $id('pvKey').value,
     params: {
       temp: clampNum($id('pvTemp').value, 0, 2, 0.8),
@@ -524,10 +483,10 @@ function saveProvider() {
   if (v.type !== 'mock' && !v.model) { toast('请填写模型名', 'warn'); return null; }
   if (editProvId) {
     const p = getProv(editProvId);
-    Object.assign(p, { name: v.name, type: v.type, baseUrl: v.baseUrl, model: v.model, headers: v.headers, params: v.params, apiKey: '' });
+    Object.assign(p, { name: v.name, type: v.type, baseUrl: v.baseUrl, model: v.model, params: v.params, apiKey: '' });
     if (v.isDefault) S.providers.forEach(x => x.isDefault = x.id === p.id);
   } else {
-    const p = { id: uid('p'), name: v.name, type: v.type, baseUrl: v.baseUrl, apiKey: '', model: v.model, headers: v.headers, params: v.params, isDefault: v.isDefault };
+    const p = { id: uid('p'), name: v.name, type: v.type, baseUrl: v.baseUrl, apiKey: '', model: v.model, params: v.params, isDefault: v.isDefault };
     if (v.isDefault) S.providers.forEach(x => x.isDefault = false);
     S.providers.push(p);
     editProvId = p.id;
@@ -2090,7 +2049,6 @@ async function renderPrivacyTab() {
       ['密钥存储', info.keyStore || '-'],
       ['遥测 / 埋点', info.telemetry ? '已启用' : '未启用（零上报）'],
       ['对话数据', info.localOnly ? '仅存本机' : '未知'],
-      ['出站审计', info.outboundAudit ? '已启用（内存）' : '未启用'],
       ['旧版明文密钥', info.legacyPlaintextKeys ? '检测到残留，请重启应用以完成迁移' : '无'],
     ];
     box.innerHTML = rows.map(r => '<div class="pg-k">' + esc(r[0]) + '</div><div class="pg-v">' + esc(r[1]) + '</div>').join('');
@@ -2098,26 +2056,7 @@ async function renderPrivacyTab() {
     box.innerHTML = '<div class="pg-v">读取失败：' + esc(String(e)) + '</div>';
   }
   renderToolAuth();
-  try {
-    const log = await invoke('outbound_log');
-    const list = $id('outList');
-    if (!log || !log.length) {
-      list.innerHTML = '<div class="empty-tip">暂无出站请求记录。发起一次对话或测试连接后即可在此查看。</div>';
-      return;
-    }
-    const rows = log.slice().reverse().map(x => {
-      const ok = x.ok ? '<span class="st-ok">成功</span>' : '<span class="st-part">失败</span>';
-      return '<tr><td>' + fmtDT(x.ts) + '</td><td>' + esc(x.host || '-') + '</td><td>' + esc(x.type || '-') +
-        '</td><td>' + esc(x.model || '-') + '</td><td>' + (x.status || '-') + '</td><td>' + ok +
-        '</td><td>' + (x.latency || 0) + ' ms</td></tr>';
-    }).join('');
-    list.innerHTML = '<table class="audit-table"><thead><tr><th>时间</th><th>域名</th><th>类型</th><th>模型</th><th>状态</th><th>结果</th><th>延迟</th></tr></thead><tbody>' + rows + '</tbody></table>';
-  } catch (e) { /* 审计不可用不阻断隐私页 */ }
 }
-$id('outClear').addEventListener('click', async () => {
-  try { await invoke('outbound_clear'); toast('审计记录已清空', 'ok'); renderPrivacyTab(); } catch (e) { toast('清空失败：' + e, 'err'); }
-});
-$id('outRefresh').addEventListener('click', renderPrivacyTab);
 
 /* ============ 会话与数据 ============ */
 function renderSessList() {
@@ -2297,41 +2236,19 @@ $id('clrAll').addEventListener('click', () => {
 
 /* ============ 关于 ============ */
 async function renderAbout() {
-  try { $id('verLine').textContent = '桌面版 ' + (await invoke('get_app_version')) + ' · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.1'; } catch (e) { }
+  try { $id('verLine').textContent = '桌面版 ' + (await invoke('get_app_version')) + ' · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2'; } catch (e) { }
   const lg = document.querySelector('input[name=langSel][value="' + (S.settings.lang === 'en' ? 'en' : 'zh') + '"]');
   if (lg) lg.checked = true;
   $id('updateUrl').value = S.settings.updateUrl || '';
   $id('updateAuto').checked = S.settings.updateAuto !== false;
   $id('reminderSound').checked = S.settings.reminderSound !== false;
-  $id('priceIn').value = S.settings.priceIn || 0;
-  $id('priceOut').value = S.settings.priceOut || 0;
   try { $id('statsLine').textContent = '本地数据：会话 ' + S.sessions.length + ' 个 · 记忆 ' + S.memories.length + ' 条 · 提醒 ' + S.reminders.length + ' 条'; } catch (e) { }
-  await refreshUsage();
   // FR-SYS-004：启动后首次打开「关于」时静默检查一次（可关闭），只提示不安装
   if (S.settings.updateAuto !== false && S.settings.updateUrl && !window.__updateChecked) {
     window.__updateChecked = true;
     checkUpdate(true);
   }
 }
-async function refreshUsage() {
-  let u = { requests: 0, tokensIn: 0, tokensOut: 0, cost: 0 };
-  try { u = await invoke('usage_snapshot'); } catch (e) { }
-  const n = x => (x || 0).toLocaleString('zh-CN');
-  $id('statReq').textContent = n(u.requests);
-  $id('statTokIn').textContent = n(u.tokensIn);
-  $id('statTokOut').textContent = n(u.tokensOut);
-  $id('statCost').textContent = (u.cost || 0).toFixed(4);
-  $id('usageLine').textContent = '本次运行累计：' + n(u.requests) + ' 次请求 · 输入 ' + n(u.tokensIn) +
-    ' / 输出 ' + n(u.tokensOut) + ' tokens · 预估 ' + (u.cost || 0).toFixed(4) + ' 元（单价 ' +
-    (S.settings.priceIn || 0) + ' / ' + (S.settings.priceOut || 0) + ' 元每百万 tokens）';
-}
-$id('priceIn').addEventListener('change', e => { S.settings.priceIn = clampNum(e.target.value, 0, 9999, 0); saveState(); refreshUsage(); });
-$id('priceOut').addEventListener('change', e => { S.settings.priceOut = clampNum(e.target.value, 0, 9999, 0); saveState(); refreshUsage(); });
-$id('usageRefresh').addEventListener('click', refreshUsage);
-$id('usageReset').addEventListener('click', async () => {
-  if (!confirm('清零本次运行的用量统计？\n仅影响统计数字，不影响会话与配置。')) return;
-  try { await invoke('usage_reset'); refreshUsage(); toast('用量已清零', 'ok'); } catch (e) { toast('清零失败：' + e, 'err'); }
-});
 document.querySelectorAll('input[name=langSel]').forEach(r => r.addEventListener('change', e => {
   if (!e.target.checked) return;
   S.settings.lang = e.target.value;

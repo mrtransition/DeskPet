@@ -78,7 +78,7 @@ const DEFAULT_STATE: &str = r##"{
     "summaryThreshold": 24, "priceIn": 0, "priceOut": 0,
     "updateUrl": "https://api.github.com/repos/mrtransition/deskpet/releases/latest",
     "updateAuto": true,
-    "toolSettings": {"enabled": true, "auth": {}, "openWhitelist": ["github.com", "www.github.com", "developer.mozilla.org", "www.bing.com", "www.baidu.com", "wikipedia.org"]},
+    "toolSettings": {"enabled": true, "auth": {"get_weather": "deny", "web_search": "deny"}, "openWhitelist": ["github.com", "www.github.com", "developer.mozilla.org", "www.bing.com", "www.baidu.com", "wikipedia.org"]},
     "lastPersonaId": "ps-1", "lastProviderId": null
   },
   "stats": {"requests": 0, "tokensIn": 0, "tokensOut": 0, "costIn": 0, "costOut": 0}
