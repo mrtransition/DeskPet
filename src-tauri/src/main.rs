@@ -3,7 +3,7 @@
 // 架构遵循 SRS：模型请求与密钥管理收敛于主进程（CON-07 / FR-MDL-013），
 // 宠物窗口 / 气泡窗口 / 设置窗口为三个独立窗口。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -23,7 +23,10 @@ use windows_sys::Win32::System::DataExchange::{
     CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
 };
 use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GetCursorPos, GetForegroundWindow, SetForegroundWindow,
+};
 
 // ================= 默认状态（与 MVP 版一致的数据结构，密钥不入库） =================
 
@@ -4831,6 +4834,78 @@ fn pet_save_pos(app: AppHandle, ctx: tauri::State<AppCtx>) -> Result<(), String>
     Ok(())
 }
 
+// 鼠标左键当前是否按下。用于在 startDragging 之后轮询拖动是否结束：
+// Windows 的系统拖动由 PostMessageW(WM_NCLBUTTONDOWN) 进入系统模态循环，
+// 前端收不到可靠的 mouseup，只能靠按键状态判断。
+#[tauri::command]
+fn mouse_left_down() -> bool {
+    unsafe { (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000) != 0 }
+}
+
+// 左键按下且光标在宠物窗口外：菜单打开时用于感知点击了其他软件/桌面。
+// 窗口内的点击仍由前端 mousedown 处理，避免误伤菜单内部操作。
+#[tauri::command]
+fn pet_click_outside(app: AppHandle) -> Result<bool, String> {
+    if !mouse_left_down() {
+        return Ok(false);
+    }
+    let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
+    let pos = pet.outer_position().map_err(|e| e.to_string())?;
+    let size = pet.outer_size().map_err(|e| e.to_string())?;
+    let mut pt = POINT { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut pt) } == 0 {
+        return Ok(false);
+    }
+    let inside = pt.x >= pos.x
+        && pt.x < pos.x + size.width as i32
+        && pt.y >= pos.y
+        && pt.y < pos.y + size.height as i32;
+    Ok(!inside)
+}
+
+// 菜单打开期间在后台线程高频检测「左键按下且光标在窗口外」。
+// 前端轮询间隔较大时会漏掉快速点击，这里用 12ms 采样并直接发事件。
+static MENU_WATCH_GEN: AtomicU64 = AtomicU64::new(0);
+
+#[tauri::command]
+fn pet_outside_watch_start(app: AppHandle) -> Result<u64, String> {
+    let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
+    let pos = pet.outer_position().map_err(|e| e.to_string())?;
+    let size = pet.outer_size().map_err(|e| e.to_string())?;
+    let gen = MENU_WATCH_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let x0 = pos.x;
+    let y0 = pos.y;
+    let x1 = pos.x + size.width as i32;
+    let y1 = pos.y + size.height as i32;
+    std::thread::spawn(move || {
+        while MENU_WATCH_GEN.load(Ordering::SeqCst) == gen {
+            if mouse_left_down() {
+                let mut pt = POINT { x: 0, y: 0 };
+                if unsafe { GetCursorPos(&mut pt) } != 0 {
+                    let inside = pt.x >= x0 && pt.x < x1 && pt.y >= y0 && pt.y < y1;
+                    if !inside {
+                        let _ = app.emit_to("pet", "pet-outside-click", ());
+                        break;
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(12));
+        }
+    });
+    Ok(gen)
+}
+
+// 只停自己那一次启动的监听；若菜单已重新打开（generation 已变），旧 stop 不会误杀新监听。
+#[tauri::command]
+fn pet_outside_watch_stop(gen: u64) {
+    let _ = MENU_WATCH_GEN.compare_exchange(
+        gen,
+        gen.wrapping_add(1),
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    );
+}
+
 #[tauri::command]
 fn pet_set_size(app: AppHandle, w: f64, h: f64) -> Result<(), String> {
     let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
@@ -4838,6 +4913,124 @@ fn pet_set_size(app: AppHandle, w: f64, h: f64) -> Result<(), String> {
     let size = pet.outer_size().map_err(|e| e.to_string())?;
     let new_x = pos.x + size.width as i32 / 2 - (w * sf(&pet)) as i32 / 2;
     let new_y = pos.y + size.height as i32 - (h * sf(&pet)) as i32;
+    pet.set_size(Size::Logical(LogicalSize::new(w, h)))
+        .map_err(|e| e.to_string())?;
+    pet.set_position(Position::Physical(PhysicalPosition::new(new_x, new_y)))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// 右键菜单布局：保持宠物屏幕位置不变，按工作区空间决定菜单在宠物左/右侧，
+// 再把宠物窗口扩展到刚好容纳菜单。返回窗口内宠物偏移与菜单可用区域（CSS px）。
+#[tauri::command]
+fn pet_menu_layout(app: AppHandle, menu_w: f64, gap: f64) -> Result<Value, String> {
+    let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
+    let pos = pet.outer_position().map_err(|e| e.to_string())?;
+    let size = pet.outer_size().map_err(|e| e.to_string())?;
+    let dpi = sf(&pet);
+    let pet_left = pos.x as f64 / dpi;
+    let pet_top = pos.y as f64 / dpi;
+    let pet_w = size.width as f64 / dpi;
+    let pet_h = size.height as f64 / dpi;
+    let work = work_area_at(
+        pos.x + size.width as i32 / 2,
+        pos.y + size.height as i32 / 2,
+    );
+    let work_l = work.left as f64 / dpi;
+    let work_t = work.top as f64 / dpi;
+    let work_r = work.right as f64 / dpi;
+    let work_b = work.bottom as f64 / dpi;
+    // 普通态宠物窗口就是宠物本体，用宽度反推缩放。菜单本身不随宠物缩放，
+    // 因此窗口至少要放得下「边距 + 宠物 + 间距 + 菜单」，高度至少 440；
+    // 同时不超过工作区，避免大缩放在小屏幕上把透明窗口盖到任务栏上。
+    let scale = (pet_w / 120.0).clamp(0.1, 4.0);
+    let need_w = 70.0 * scale + pet_w + gap.max(0.0) + menu_w.max(160.0);
+    let win_w = (500.0 * scale)
+        .max(need_w)
+        .min((work_r - work_l).max(pet_w));
+    let win_h = (440.0 * scale)
+        .max(440.0)
+        .min((work_b - work_t).max(pet_h));
+
+    // 菜单优先放右侧；右侧放不下再放左侧；两侧都不够时选空间更大的一侧。
+    let need = menu_w.max(160.0) + gap.max(0.0);
+    let room_right = work_r - (pet_left + pet_w);
+    let room_left = pet_left - work_l;
+    let side = if room_right >= need {
+        "right"
+    } else if room_left >= need {
+        "left"
+    } else if room_right >= room_left {
+        "right"
+    } else {
+        "left"
+    };
+
+    // 水平：宠物距窗口对应侧留 70*scale（窗口被工作区收窄时相应缩小）；窗口尽量夹在工作区内。
+    let margin = (70.0 * scale).min(((win_w - pet_w) / 2.0).max(0.0));
+    let pet_off_x = if side == "right" {
+        margin
+    } else {
+        win_w - margin - pet_w
+    };
+    let mut win_left = pet_left - pet_off_x;
+    let max_left = (work_r - win_w).max(work_l);
+    win_left = win_left.clamp(work_l, max_left);
+
+    // 垂直：窗口尽量落在工作区内并让宠物居中；宠物屏幕位置不变。
+    let mut win_top = pet_top - (win_h - pet_h) / 2.0;
+    let max_top = (work_b - win_h).max(work_t);
+    win_top = win_top.clamp(work_t, max_top);
+    let pet_off_y = (pet_top - win_top).clamp(0.0, (win_h - pet_h).max(0.0));
+    win_top = pet_top - pet_off_y;
+
+    let new_x = (win_left * dpi).round() as i32;
+    let new_y = (win_top * dpi).round() as i32;
+    pet.set_size(Size::Logical(LogicalSize::new(win_w, win_h)))
+        .map_err(|e| e.to_string())?;
+    pet.set_position(Position::Physical(PhysicalPosition::new(new_x, new_y)))
+        .map_err(|e| e.to_string())?;
+
+    // 物理像素取整后回算，保证菜单 bounds 与实际窗口位置一致
+    let win_left = new_x as f64 / dpi;
+    let win_top = new_y as f64 / dpi;
+    let pet_off_x = pet_left - win_left;
+    let pet_off_y = pet_top - win_top;
+    let bounds = json!({
+        "left": (work_l - win_left).max(0.0),
+        "top": (work_t - win_top).max(0.0),
+        "right": (work_r - win_left).min(win_w),
+        "bottom": (work_b - win_top).min(win_h),
+    });
+    Ok(json!({
+        "width": win_w,
+        "height": win_h,
+        "petLeft": pet_off_x,
+        "petTop": pet_off_y,
+        "side": side,
+        "bounds": bounds,
+    }))
+}
+
+// 以宠物屏幕位置为锚调整窗口大小/位置。cur_* 为当前窗口内宠物偏移，
+// new_* 为调整后窗口内宠物偏移（均为 CSS px），用于右键菜单开合时避免角色跳动。
+#[tauri::command]
+fn pet_resize_keep(
+    app: AppHandle,
+    w: f64,
+    h: f64,
+    cur_pet_x: f64,
+    cur_pet_y: f64,
+    new_pet_x: f64,
+    new_pet_y: f64,
+) -> Result<(), String> {
+    let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
+    let dpi = sf(&pet);
+    let pos = pet.outer_position().map_err(|e| e.to_string())?;
+    let pet_x = pos.x as f64 + cur_pet_x * dpi;
+    let pet_y = pos.y as f64 + cur_pet_y * dpi;
+    let new_x = (pet_x - new_pet_x * dpi).round() as i32;
+    let new_y = (pet_y - new_pet_y * dpi).round() as i32;
     pet.set_size(Size::Logical(LogicalSize::new(w, h)))
         .map_err(|e| e.to_string())?;
     pet.set_position(Position::Physical(PhysicalPosition::new(new_x, new_y)))
@@ -5507,7 +5700,9 @@ fn main() {
             provider_test,
             chat_start, chat_stop, chat_summarize, tool_auth_reply, clipboard_read, skin_pack_import,
             skin_pack_export, skin_image_export, codex_pet_import, codex_pet_export,
-            pet_clicked, pet_save_pos, pet_set_size, set_pet_scale,
+            pet_clicked, pet_save_pos, pet_set_size, pet_menu_layout, pet_resize_keep,
+            mouse_left_down, pet_click_outside,
+            pet_outside_watch_start, pet_outside_watch_stop, set_pet_scale,
             set_click_through, set_pet_visible, reset_pet_pos,
             show_bubble_cmd, hide_bubble_cmd, bubble_resize,
             bubble_reposition, bubble_set_width,

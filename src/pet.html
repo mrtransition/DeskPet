@@ -201,20 +201,30 @@ let curW = 120, curH = 112;      // 当前逻辑窗口尺寸
 let grown = false;
 let growH = 220;
 let menuOpen = false;
+let menuSide = 'right';      // 菜单在宠物左侧还是右侧（由后端按工作区空间决定）
+let menuPetLeft = 0;         // 菜单态下宠物在窗口内的偏移，保证右键时角色不跳动
+let menuPetTop = 0;
 let stateTimer = null, savePosTimer = null, miniTimer = null, bubbleFollowTimer = null;
 let petState = 'idle';
 
 function updateTransform() {
   // transform-origin 为舞台 (130,164)，offset 需按缩放换算，保证宠物不跳变
-  // 普通：宠物底边贴窗口底边；迷你气泡：底部留 54*scale；右键菜单：贴底以腾出上方空间
-  let offY;
-  if (!grown) offY = curH / 2 - 164;
-  // 菜单态：宠物竖直居中偏下（菜单由此居中展开），避免贴到底边后菜单也跟着下坠
-  else if (menuOpen) offY = curH / 2 - 164;
-  else offY = curH - 164 - 110 * petSc;
-  // 右键菜单态窗口变宽，宠物固定贴在左侧，右侧留给主菜单与子菜单
-  const pivotX = menuOpen ? 130 : curW / 2;
-  stage.style.transform = `translate(${pivotX - 130}px, ${offY}px) scale(${petSc})`;
+  // 舞台内宠物基准矩形：left 70 / top 108 / 120x112；缩放后窗口内位置由下式反推
+  let tx, ty;
+  if (!grown) {
+    // 普通：宠物恰好铺满 120x112 窗口
+    tx = curW / 2 - 130;
+    ty = curH / 2 - 164;
+  } else if (menuOpen) {
+    // 菜单态：宠物屏幕位置由后端布局固定，窗口扩展只发生在菜单一侧
+    tx = menuPetLeft - (130 - 60 * petSc);
+    ty = menuPetTop - (164 - 56 * petSc);
+  } else {
+    // 迷你气泡：宠物居中偏下，气泡占用舞台上半区
+    tx = curW / 2 - 130;
+    ty = curH - 164 - 110 * petSc;
+  }
+  stage.style.transform = `translate(${tx}px, ${ty}px) scale(${petSc})`;
 }
 async function setWindowSize(w, h) {
   curW = w; curH = h;
@@ -230,11 +240,31 @@ async function grow(h, w) {
   await setWindowSize(targetW * petSc, target * petSc);
 }
 async function shrink() {
+  stopOutsidePoll();
   if (!grown) return;
+  const fromMenu = menuOpen;
   grown = false;
   menuOpen = false;
   miniBubble.classList.remove('show');
-  await setWindowSize(120 * petSc, 112 * petSc);
+  if (fromMenu) {
+    // 菜单态窗口的位置/尺寸都不同于普通态，以宠物屏幕位置为锚还原，避免关闭菜单时角色跳动
+    const curX = menuPetLeft, curY = menuPetTop;
+    menuSide = 'right';
+    menuPetLeft = 0;
+    menuPetTop = 0;
+    curW = 120 * petSc;
+    curH = 112 * petSc;
+    updateTransform();
+    try {
+      await invoke('pet_resize_keep', {
+        w: curW, h: curH,
+        curPetX: curX, curPetY: curY,
+        newPetX: 0, newPetY: 0,
+      });
+    } catch (e) { /* 忽略 */ }
+  } else {
+    await setWindowSize(120 * petSc, 112 * petSc);
+  }
 }
 function applySkin(name) {
   if (!SKINS[name]) name = 'blue';
@@ -398,6 +428,22 @@ pet.addEventListener('mousedown', e => {
   window.addEventListener('mousemove', onPetMove);
   window.addEventListener('mouseup', onPetUp);
 });
+/* Windows 系统拖动由系统模态循环接管，前端收不到可靠的 mouseup。
+   拖动开始后轮询左键状态，释放时立即清理拖动态，避免一直显示拖动图像。 */
+let dragPoll = null;
+function stopDragPoll() {
+  if (dragPoll) { clearInterval(dragPoll); dragPoll = null; }
+}
+function startDragPoll() {
+  stopDragPoll();
+  dragPoll = setInterval(async () => {
+    let down = false;
+    try { down = await invoke('mouse_left_down'); } catch (e) { down = false; }
+    if (down) return;
+    stopDragPoll();
+    if (dragInfo && dragInfo.moved) onPetUp();
+  }, 60);
+}
 async function onPetMove(e) {
   if (!dragInfo) return;
   const dx = e.clientX - dragInfo.sx, dy = e.clientY - dragInfo.sy;
@@ -405,9 +451,11 @@ async function onPetMove(e) {
     dragInfo.moved = true;
     setPetState('drag');
     try { await curWin.startDragging(); } catch (err) { }
+    startDragPoll();
   }
 }
 async function onPetUp() {
+  stopDragPoll();
   window.removeEventListener('mousemove', onPetMove);
   window.removeEventListener('mouseup', onPetUp);
   const d = dragInfo;
@@ -416,6 +464,12 @@ async function onPetUp() {
   if (d.moved) {
     if (petState === 'drag') setPetState('idle');
   } else {
+    // 点击睡眠中的宠物即视为唤醒：同步关闭免打扰，保证右键菜单勾选与实际状态一致
+    if (S.settings.dnd) {
+      S.settings.dnd = false;
+      setPetState('idle');
+      try { await invoke('set_dnd', { on: false }); } catch (e) { }
+    }
     setPetState('click');
     setTimeout(() => { if (petState === 'click') setPetState('idle'); }, 420);
     if (grown) await shrink();
@@ -423,12 +477,8 @@ async function onPetUp() {
   }
 }
 /* 右键菜单：单层菜单，皮肤与常用操作平铺；菜单项过多时整体滚动 */
-const SKIN_MENU_MAX_H = 360;      // 菜单可视高度上限，超出由滚动容器接管
 const MENU_GAP = 8;               // 宠物与菜单之间的间距
-const MENU_WIN_W = 260 + 240;      // 宠物 120 + 菜单 ~240，并排放下且不压住角色
-function growHForMenu() { return SKIN_MENU_MAX_H + 80; }
-// 宠物贴左侧时，头部右缘的屏幕坐标（菜单从这里向右展开）
-function petHeadX() { return 130 + 62 * petSc; }
+const MENU_MAX_W = 300;           // 菜单最大宽度（用于后端判断左右哪侧放得下）
 function skinTypeTag(item) {
   if (item.type === 'builtin') return '';
   if (item.type === 'pack') return item.pack && item.pack.format === 'codex' ? '（Codex）' : '（皮肤包）';
@@ -448,11 +498,54 @@ async function pickSkin(item) {
   saveState();
   await shrink();
 }
+/* 菜单打开后由后端高频检测「左键按下且光标在宠物窗口外」：
+   点击其他软件/桌面时窗口收不到事件，检测到后收起菜单。 */
+let outsideWatchGen = 0;
+function stopOutsidePoll() {
+  const gen = outsideWatchGen;
+  if (!gen) return;
+  outsideWatchGen = 0;
+  invoke('pet_outside_watch_stop', { gen }).catch(() => { });
+}
+async function startOutsidePoll() {
+  let gen = 0;
+  try { gen = await invoke('pet_outside_watch_start'); } catch (e) { return; }
+  // 启动期间菜单已被收起：立即停掉，避免遗留后台线程
+  if (!menuOpen) { invoke('pet_outside_watch_stop', { gen }).catch(() => { }); return; }
+  outsideWatchGen = gen;
+}
+tListen('pet-outside-click', async () => {
+  if (!menuOpen) return;
+  stopOutsidePoll();
+  hideMenu();
+  await shrink();
+});
 pet.addEventListener('contextmenu', async e => {
   e.preventDefault();
   if (menuOpen) return;
+  // 迷你气泡等已让窗口变大时先还原，确保菜单布局以宠物的真实屏幕位置为锚
+  if (grown) await shrink();
   menuOpen = true;
-  await grow(growHForMenu(), MENU_WIN_W);
+  // 先标记 grown，避免布局过程中触发的 onMoved 把放大后的窗口位置写回宠物位置
+  grown = true;
+  let layout;
+  try {
+    layout = await invoke('pet_menu_layout', { menuW: MENU_MAX_W, gap: MENU_GAP });
+  } catch (err) {
+    menuOpen = false;
+    grown = false;
+    reportClientError('菜单布局失败', err);
+    return;
+  }
+  // 后端已完成窗口扩展与定位，这里只同步前端坐标系并放置菜单
+  curW = layout.width;
+  curH = layout.height;
+  menuSide = layout.side;
+  menuPetLeft = layout.petLeft;
+  menuPetTop = layout.petTop;
+  updateTransform();
+  // 等一帧让 WebView 完成窗口尺寸切换，避免菜单按旧视口裁切
+  await new Promise(r => requestAnimationFrame(() => r()));
   const lib = skinLib();
   const builtin = lib.filter(x => x.type === 'builtin');
   const imported = lib.filter(x => x.type !== 'builtin');
@@ -475,15 +568,23 @@ pet.addEventListener('contextmenu', async e => {
     { header: t('pet.skinHeader', { n: lib.length }), items: skinItems, scroll: true },
     '-',
     { icon: '⚙', label: t('pet.settings'), onClick: async () => { await shrink(); invoke('open_settings_cmd'); } },
-    { icon: '🌙', label: t('pet.dnd'), check: S.settings.dnd, onClick: async () => { await shrink(); invoke('set_dnd', { on: !S.settings.dnd }); } },
+    { icon: '🌙', label: t('pet.dnd'), check: S.settings.dnd, onClick: async () => {
+        const on = !S.settings.dnd;
+        S.settings.dnd = on;
+        if (on) setPetState('sleep');
+        else if (petState === 'sleep') setPetState('idle');
+        await shrink();
+        invoke('set_dnd', { on });
+      } },
     { icon: '📍', label: t('pet.resetPos'), onClick: async () => { await shrink(); invoke('reset_pet_pos'); } },
   ], 0, 0, {
-    // 菜单紧贴宠物右侧、竖直居中对齐宠物
-    anchor: { x: Math.round(petHeadX() + MENU_GAP), y: 'center' },
+    // 菜单紧贴宠物左/右侧（由后端按工作区空间决定）、竖直居中对齐宠物
+    anchor: { side: menuSide, y: 'center' },
     anchorRef: pet.getBoundingClientRect(),
-    bounds: { left: 4, top: 4, right: curW - 4, bottom: curH - 4 },
+    bounds: layout.bounds,
     gap: MENU_GAP,
   });
+  await startOutsidePoll();
 });
 document.addEventListener('mousedown', e => {
   if (!menuOpen || e.button !== 0) return;
@@ -492,16 +593,23 @@ document.addEventListener('mousedown', e => {
 /* 窗口移动后持久化位置（拖拽结束由 onMoved 捕获） */
 let unlistenMoved = null;
 curWin.onMoved(async () => {
+  // 菜单/迷你气泡态窗口位置不代表宠物位置，此时不保存也不重排气泡
+  if (grown) return;
   clearTimeout(savePosTimer);
   savePosTimer = setTimeout(async () => {
+    if (grown) return;  // 定时器执行前可能已进入菜单/气泡态
     try { await invoke('pet_save_pos'); } catch (e) { }
   }, 600);
   // FR-BUB-005：宠物拖动时气泡跟随（节流，避免高频 IPC）
   clearTimeout(bubbleFollowTimer);
-  bubbleFollowTimer = setTimeout(() => { invoke('bubble_reposition').catch(() => { }); }, 60);
+  bubbleFollowTimer = setTimeout(() => {
+    if (!grown) invoke('bubble_reposition').catch(() => { });
+  }, 60);
 });
 /* 窗口尺寸变化兜底（后台 resize 后同步 transform） */
 curWin.onResized(async ev => {
+  // 菜单态尺寸由 pet_menu_layout 统一管理，避免 resize 事件用旧偏移覆盖布局
+  if (menuOpen) return;
   try {
     const sf = await curWin.scaleFactor();
     const w = ev.payload.width / sf, h = ev.payload.height / sf;
@@ -557,7 +665,9 @@ tListen('clipboard-changed', ev => {
   }, 15000);
 });
 tListen('dnd-changed', ev => {
-  if (ev.payload && ev.payload.on) setPetState('sleep');
+  const on = !!(ev.payload && ev.payload.on);
+  if (S && S.settings) S.settings.dnd = on;
+  if (on) setPetState('sleep');
   else if (petState === 'sleep') setPetState('idle');
 });
 tListen('lang-changed', async ev => {
@@ -571,8 +681,12 @@ tListen('state-changed', async ev => {
   const sc = S.settings.petScale || 1;
   if (Math.abs(sc - petSc) > 0.001) {
     petSc = sc;
-    if (grown) {
-      growH = menuOpen ? 440 : 220;
+    if (menuOpen) {
+      // 菜单态尺寸依赖宠物缩放，先收起菜单再按新缩放还原，避免窗口与布局错位
+      hideMenu();
+      await shrink();
+    } else if (grown) {
+      growH = 220;
       await setWindowSize(260 * petSc, growH * petSc);
     } else {
       curW = 120 * petSc; curH = 112 * petSc;

@@ -271,9 +271,10 @@ function hideMenu() {
 function menuOutside(e) { if (!e.target.closest('.ctxmenu')) hideMenu(); }
 
 // 在 bounds 内放置菜单。
+// anchor.side 为 'left' / 'right' 时以 anchorRef 为参照贴在对应侧；
 // anchor.x 为左边缘；anchor.y 为 'center' 时相对 anchorRef 竖直居中，否则为顶端坐标。
 // 越界时先夹紧，夹不下再交给滚动容器（max-height）。
-function menuPlace(box, scroll, x, y, bounds, anchor, anchorRef) {
+function menuPlace(box, scroll, x, y, bounds, anchor, anchorRef, gap) {
   const b = bounds || { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
   const pad = 6;
   const maxW = Math.max(120, b.right - b.left - pad * 2);
@@ -286,8 +287,24 @@ function menuPlace(box, scroll, x, y, bounds, anchor, anchorRef) {
   const w = box.offsetWidth;
   const h = box.offsetHeight;
 
-  // 横向：有 anchor 时用 anchor.x 作为左边缘，否则沿用鼠标坐标 x
-  let left = (anchor && typeof anchor.x === 'number') ? anchor.x : x;
+  // 横向：优先贴 anchorRef 的指定侧；该侧放不下时自动翻到另一侧，最后才夹紧
+  const g = typeof gap === 'number' ? gap : 6;
+  let left;
+  if (anchor && anchorRef && (anchor.side === 'left' || anchor.side === 'right')) {
+    const rightX = anchorRef.right + g;
+    const leftX = anchorRef.left - g - w;
+    const fitsRight = rightX + w <= b.right - pad;
+    const fitsLeft = leftX >= b.left + pad;
+    if (anchor.side === 'right') {
+      left = fitsRight ? rightX : (fitsLeft ? leftX : rightX);
+    } else {
+      left = fitsLeft ? leftX : (fitsRight ? rightX : leftX);
+    }
+  } else if (anchor && typeof anchor.x === 'number') {
+    left = anchor.x;
+  } else {
+    left = x;
+  }
   left = Math.max(b.left + pad, Math.min(left, b.right - pad - w));
 
   let top = y;
@@ -345,8 +362,8 @@ function showMenu(items, x, y, opts) {
   root.classList.add('show');
   const anchor = opts && opts.anchor;
   const ref = opts && opts.anchorRef;   // 用于竖直居中（通常是宠物元素）
-  const placed = menuPlace(box, scroll, x, y, b, anchor, ref);
   const gap = (opts && opts.gap) || 6;
+  const placed = menuPlace(box, scroll, x, y, b, anchor, ref, gap);
   // 主菜单右缘 → 子菜单左缘的落点，供子菜单定位复用
   const subAnchorX = placed.left + placed.width + gap;
 
