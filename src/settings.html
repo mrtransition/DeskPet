@@ -309,8 +309,15 @@ body { background: var(--bg); display: flex; flex-direction: column; }
       <!-- 关于 -->
       <div class="pane about" id="tab-about">
         <h3 data-i18n="s139">桌面 AI 宠物</h3>
-        <div class="ver" id="verLine" data-i18n="s140">桌面版 v2.2.0 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
+        <div class="ver" id="verLine" data-i18n="s140">桌面版 v2.2.1 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
         <details open>
+          <summary data-i18n="n221.title">v2.2.1 修复了什么</summary>
+          <ul>
+            <li data-i18n="n221.i1">更新检查支持 GitHub Releases 清单：读取 tag_name / body / assets，不再误报「缺少 version 字段」</li>
+            <li data-i18n="n221.i2">下载安装包地址自动取 assets 里的安装包，不再把 API 地址当成下载链接</li>
+          </ul>
+        </details>
+        <details>
           <summary data-i18n="n220.title">v2.2.0 新增了什么</summary>
           <ul>
             <li data-i18n="n220.i1">单实例运行：重复启动只唤起已有宠物，不再产生第二套托盘与提醒调度器</li>

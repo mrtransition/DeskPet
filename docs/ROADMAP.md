@@ -1,6 +1,6 @@
 # DeskPet 后续开发路线图
 
-> 基线版本：v2.2.0（2026-11-11）
+> 基线版本：v2.2.1（2026-11-11）
 > 需求依据：[SRS v1.2](../桌面%20AI%20宠物软件需求规格说明书（SRS）.md)
 > 维护方式：每个里程碑完成后更新状态、验收结果与版本号。
 
@@ -57,6 +57,16 @@ v2.2.0 已覆盖 SRS 的大部分核心功能，并补齐了 i18n、右键菜单
 | 渲染层 CSP | NFR-SEC-005 | ✅ v2.2.0 | `app.security.csp` 启用，禁止内联脚本、插件与内嵌框架，仅允许本地资源与 IPC；新增 `csp_blocks_inline_scripts_and_plugins` 回归测试防止回退 |
 | 引导窗口权限 | FR-SYS-008 | ✅ v2.2.0 | `capabilities/default.json` 补入 `guide` 窗口，保持与其余窗口一致的最小权限；`open_guide_cmd` 改为 async 避免主线程阻塞导致窗口卡在 `about:blank` |
 | 启动诊断 | FR-SYS-007、FR-SYS-008 | ✅ v2.2.0 | 启动失败不再静默：重复启动时显式 `exit(0)` 并把原因写入 `DESKPET_BOOT_LOG`（便携 / CI 用）；引导窗口打开失败写入 `guide.open_failed` 警告日志，不阻断启动 |
+
+### 1.5 v2.2.1 更新检查修复
+
+| 能力 | 需求 | 状态 | 说明 |
+|---|---|---|---|
+| 更新清单兼容 | FR-SYS-004 | ✅ v2.2.1 | 默认更新源为 GitHub Releases API，版本在 `tag_name`、说明在 `body`、下载地址在 `assets[]`；`parse_manifest()` 同时支持该格式与自定义最小清单，修复「更新清单缺少 version 字段」误报 |
+| 下载地址选取 | FR-SYS-004、NFR-SEC-004 | ✅ v2.2.1 | 优先 assets 中的 `.zip`，其次 `.exe`；排除 API 自我引用 url；非 HTTPS 地址不采信 |
+| 回归样本 | FR-SYS-004 | ✅ v2.2.1 | `src-tauri/tests/fixtures/release_latest_v2.2.0.json` 保存线上真实响应，防止再次按旧格式解析 |
+
+签名与哈希校验（NFR-SEC-004）仍未实现，更新安全条目继续保留在下表。
 
 ## 2. 当前主要缺口
 
@@ -238,4 +248,4 @@ v2.2.0 已覆盖 SRS 的大部分核心功能，并补齐了 i18n、右键菜单
 
 ---
 
-最后更新：2026-11-11 · 基线 v2.2.0
+最后更新：2026-11-11 · 基线 v2.2.1

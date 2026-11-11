@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.2.0-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.2.1-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -170,6 +170,16 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.2.1</b> — 修复更新检查误报「缺少 version 字段」</summary>
+
+- **更新清单兼容（FR-SYS-004）**：默认更新源 `.../releases/latest` 返回的是 GitHub Releases API 原样 JSON，版本号在 `tag_name`、说明在 `body`、下载地址在 `assets[]`，没有 `version` 字段，导致点击「检查更新」必然报错。现统一由 `parse_manifest()` 解析，同时支持自定义最小清单与 GitHub Releases 两种格式。
+- **下载地址修正**：优先取 `assets` 里的 `.zip`（其次 `.exe`），并排除 API 顶层自我引用的 `url`，避免把一份 JSON 存成安装包；非 HTTPS 地址不采信。
+- **报错文案**：缺少版本号时明确指出需要 `version` 或 GitHub 的 `tag_name`。
+- **测试**：`cargo test` 53 项全绿，新增 5 项，其中一项使用线上真实响应作回归样本；实测点击「检查更新」显示「已是最新版本（当前 2.2.1）」。
+
+</details>
+
+<details>
 <summary><b>v2.2.0</b> — 单实例运行、首次启动引导与渲染层 CSP</summary>
 
 - **单实例运行（FR-SYS-007）**：新增 `single_instance` 模块，用 Windows 命名互斥量 `Local\DeskPet-SingleInstance-com.mrtransition.deskpet` 判定实例，命名事件把重复启动通知给首个实例。第二个进程在初始化 Tauri 之前直接退出（退出码 0），不会产生第二套托盘、调度器与 WebView2。首个实例收到通知后恢复被隐藏的宠物、把它提到前台并播放一次 `happy`，同时写入 `app.second_launch` 结构化日志。实现只依赖已有的 `windows-sys`，未引入 `tauri-plugin-single-instance`。
