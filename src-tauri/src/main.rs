@@ -5529,25 +5529,93 @@ async fn update_check(app: AppHandle, manual: Option<bool>) -> Result<Value, Str
         return Ok(json!({"ok": false, "message": format!("更新源返回 HTTP {}", status)}));
     }
     let j: Value = serde_json::from_str(&body).map_err(|_| "更新清单不是合法 JSON".to_string())?;
-    let latest = j["version"].as_str().unwrap_or("").to_string();
-    if latest.is_empty() {
-        return Ok(json!({"ok": false, "message": "更新清单缺少 version 字段"}));
-    }
+    let m = match parse_manifest(&j) {
+        Ok(m) => m,
+        Err(e) => return Ok(json!({"ok": false, "message": e})),
+    };
     let current = app.package_info().version.to_string();
-    let newer = version_tuple(&latest) > version_tuple(&current);
-    let dl = j["url"].as_str().unwrap_or("").to_string();
-    if newer && !dl.is_empty() && !dl.starts_with("https://") {
+    let newer = version_tuple(&m.version) > version_tuple(&current);
+    if newer && !m.url.is_empty() && !m.url.starts_with("https://") {
         return Ok(json!({"ok": false, "message": "更新下载地址必须使用 HTTPS"}));
     }
     Ok(json!({
         "ok": true,
         "current": current,
-        "latest": latest,
+        "latest": m.version,
         "newer": newer,
-        "notes": cut_chars(j["notes"].as_str().unwrap_or(""), 600),
-        "url": dl,
+        "notes": cut_chars(&m.notes, 600),
+        "url": m.url,
         "checkedAt": now_ms(),
     }))
+}
+
+/// 更新清单解析结果（FR-SYS-004）。
+#[derive(Debug)]
+struct Manifest {
+    version: String,
+    notes: String,
+    url: String,
+}
+
+fn https_string(v: &Value, key: &str) -> String {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.starts_with("https://"))
+        .unwrap_or_default()
+}
+
+/// 同时支持两种清单格式：
+/// 1. 默认的 GitHub Releases API（`.../releases/latest`）：版本在 `tag_name`，下载地址在 `assets[]`；
+/// 2. 自定义最小清单：`{ "version": "2.3.0", "notes": "...", "url": "https://..." }`。
+/// 查找顺序为 最小清单字段 → GitHub 字段，因此自定义清单里用户的显式取值优先。
+fn parse_manifest(j: &Value) -> Result<Manifest, String> {
+    let version = j
+        .get("version")
+        .and_then(|x| x.as_str())
+        .or_else(|| j.get("tag_name").and_then(|x| x.as_str()))
+        .or_else(|| j.get("name").and_then(|x| x.as_str()))
+        .map(|s| s.trim().trim_start_matches('v').to_string())
+        .filter(|s| !s.is_empty() && s.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .ok_or_else(|| {
+            "更新清单缺少版本号：需要 version（或 GitHub Releases 的 tag_name）字段".to_string()
+        })?;
+    let notes = j
+        .get("notes")
+        .and_then(|x| x.as_str())
+        .or_else(|| j.get("body").and_then(|x| x.as_str()))
+        .unwrap_or("")
+        .to_string();
+    // 下载地址优先级：显式 url → GitHub assets 里的安装包 → browser_download_url。
+    // 注意 GitHub Releases API 的顶层 url 是 api.github.com 的自我引用，不是安装包，必须排除，
+    // 否则「下载安装包」会把一份 JSON 存成 zip。
+    let is_api_self = |u: &str| u.starts_with("https://api.github.com/");
+    let explicit = https_string(j, "url");
+    let mut url = if !is_api_self(&explicit) { explicit } else { String::new() };
+    if url.is_empty() {
+        if let Some(assets) = j.get("assets").and_then(|a| a.as_array()) {
+            let pick = |ext: &str| {
+                assets.iter().find(|a| {
+                    let name = a.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    name.to_lowercase().ends_with(ext)
+                        && a.get("browser_download_url").and_then(|u| u.as_str())
+                            .is_some_and(|u| u.starts_with("https://"))
+                })
+            };
+            url = pick(".zip")
+                .or_else(|| pick(".exe"))
+                .and_then(|a| a.get("browser_download_url").and_then(|u| u.as_str()))
+                .unwrap_or("")
+                .to_string();
+        }
+    }
+    if url.is_empty() {
+        let direct = https_string(j, "browser_download_url");
+        if !is_api_self(&direct) {
+            url = direct;
+        }
+    }
+    Ok(Manifest { version, notes, url })
 }
 
 // FR-SYS-004：用户确认后手动下载安装包到 exports 目录，再由用户自行运行；
@@ -5932,6 +6000,66 @@ mod tests {
                     "不得禁用 script-src 的 CSP 注入"
                 );
             }
+        }
+
+        // FR-SYS-004：默认更新源就是 GitHub Releases API，必须能识别 tag_name / assets / body
+        #[test]
+        fn update_manifest_accepts_github_release() {
+            let j = json!({
+                "tag_name": "v2.3.0",
+                "name": "DeskPet v2.3.0",
+                "body": "更新说明",
+                "url": "https://api.github.com/repos/mrtransition/DeskPet/releases/1",
+                "assets": [
+                    {"name": "DeskPet.exe", "browser_download_url": "https://example.com/DeskPet.exe"},
+                    {"name": "DeskPet-v2.3.0-win-x64.zip", "browser_download_url": "https://example.com/pet.zip"}
+                ]
+            });
+            let m = parse_manifest(&j).expect("GitHub 清单应可解析");
+            assert_eq!(m.version, "2.3.0", "tag_name 需去掉 v 前缀");
+            assert_eq!(m.notes, "更新说明");
+            // 优先 zip，且不能误取 API 自身的 url 字段
+            assert_eq!(m.url, "https://example.com/pet.zip");
+            assert!(version_tuple(&m.version) > version_tuple("2.2.0"));
+        }
+
+        // 用线上真实的 GitHub 响应做一次回归：这份响应没有 version 字段、顶层 url 指向 api.github.com
+        #[test]
+        fn update_manifest_matches_live_release_shape() {
+            let raw = include_str!("../tests/fixtures/release_latest_v2.2.0.json");
+            let j: Value = serde_json::from_str(raw).expect("fixture 合法 JSON");
+            let m = parse_manifest(&j).expect("线上 GitHub 响应应可解析");
+            assert_eq!(m.version, "2.2.0");
+            assert_eq!(
+                m.url,
+                "https://github.com/mrtransition/DeskPet/releases/download/v2.2.0/DeskPet-v2.2.0-win-x64.zip"
+            );
+            // 与当前版本相同，不应提示有更新
+            assert!(!(version_tuple(&m.version) > version_tuple("2.2.0")));
+        }
+
+        // 自定义最小清单仍按原语义工作，且显式 url 优先于 assets
+        #[test]
+        fn update_manifest_accepts_minimal_manifest() {
+            let j = json!({"version": "2.3.0", "notes": "n", "url": "https://example.com/a.exe"});
+            let m = parse_manifest(&j).expect("最小清单应可解析");
+            assert_eq!((m.version.as_str(), m.notes.as_str(), m.url.as_str()), ("2.3.0", "n", "https://example.com/a.exe"));
+        }
+
+        // 非 https 的下载地址不得被当成可用地址（NFR-SEC-004）
+        #[test]
+        fn update_manifest_rejects_insecure_url() {
+            let j = json!({"version": "2.3.0", "url": "http://example.com/a.exe"});
+            assert_eq!(parse_manifest(&j).unwrap().url, "");
+        }
+
+        // 完全没有版本字段时报错必须说明缺什么，而不是笼统失败
+        #[test]
+        fn update_manifest_reports_missing_version() {
+            let e = parse_manifest(&json!({"foo": 1})).unwrap_err();
+            assert!(e.contains("version"), "错误信息应指出 version：{e}");
+            assert!(e.contains("tag_name"), "错误信息应提示 GitHub 的 tag_name：{e}");
+            assert!(parse_manifest(&json!({"tag_name": "latest"})).is_err(), "非数字版本号应拒绝");
         }
 
         // FR-SYS-008：老用户升级不得被首次引导打扰（默认 guideDone = true）
