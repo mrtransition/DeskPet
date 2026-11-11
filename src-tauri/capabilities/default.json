@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "DeskPet 全部窗口默认权限",
-  "windows": ["pet", "bubble", "settings"],
+  "windows": ["pet", "bubble", "settings", "guide"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

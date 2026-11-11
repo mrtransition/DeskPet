@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.1.4-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.2.0-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -34,7 +34,9 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | ⏰ **自然语言提醒** | 「25 分钟后提醒我喝水」「每天 8:30 提醒我站会」「每周一 9:00」「每隔 2 小时」→ 主进程调度器准点触发，支持稍后 5 分钟与免打扰排队补发 |
 | 😼 **人格与皮肤** | 3 套内置人格（贴心小助手 / 毒舌吐槽役 / 专注工作搭子）+ 3 套皮肤联动切换；支持 GIF / APNG / 动态 WebP 自定义动画形象，导入时自动裁掉四周留白与棋盘格底色（规范见 [docs/自动裁剪规范.md](docs/自动裁剪规范.md)）与人格导入导出；完整皮肤格式与映射见 [docs/皮肤与图集规范.md](docs/皮肤与图集规范.md) |
 | 🎭 **八态动画** | idle / drag / click / talk / sleep / work / happy / error 全矢量状态机，50%–200% 无级缩放 |
-| 🖥 **系统集成** | 托盘菜单（左键唤起气泡）、全局快捷键、开机自启、会话检索与 Markdown 导出 |
+| 🖥 **系统集成** | 单实例运行（重复启动只唤起已有宠物）、托盘菜单（左键唤起气泡）、全局快捷键、开机自启、会话检索与 Markdown 导出 |
+| 🚀 **首次启动引导** | 三步向导：选择模型 → 填写 Key / 地址（可先测试连接）→ 隐私与数据位置告知；可跳过，之后可从「设置 → 关于」随时重新打开 |
+| 🛡 **渲染安全** | 渲染层启用内容安全策略（CSP）：禁止内联脚本、插件与内嵌框架，仅允许本地资源与 IPC；IPC 权限按窗口最小化授予 |
 | 🖱 **宠物右键菜单** | 单层平铺：对话 / 新会话 / 皮肤 / 设置 / 免打扰 / 复位位置；皮肤多时只滚动皮肤区；菜单自动贴宠物左/右侧、不越出工作区，开合保持宠物屏幕位置；点击其他软件或桌面自动收起（详见 [交互规范](docs/宠物右键菜单与交互规范.md)） |
 | 🛠 **工具调用** | 模型可调用本地工具：创建提醒、读剪贴板、打开白名单链接 / 应用；天气与联网搜索为默认关闭的实验性工具。首次调用弹卡片授权，可逐项设「每次询问 / 始终允许 / 始终拒绝」，执行结果回传模型续答（最多 4 轮） |
 | 🎨 **皮肤包** | `.deskpet-skin.zip`：`skin.json` 状态机映射 + 八态图集 + 可选提示音，在设置里一键导入；皮肤管理可查看 / 切换 / 删除导入皮肤；皮肤维护工具支持八态诊断 / 修复 / 逐状态替换 / 清理未引用资源 / 导出备份 |
@@ -55,6 +57,10 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 2. 将两个文件放入**同一文件夹**，双击 `DeskPet.exe`
 
 > 环境：Windows 10+ 与 WebView2 运行时（Win10/11 一般已内置）。首次运行如遇 SmartScreen 提示，选择「仍要运行」（未做代码签名）。
+
+**首次启动**会自动弹出三步引导：选择模型 → 填写 Key / 地址 → 阅读隐私与数据位置。什么都不配也能直接跳过（默认演示模式），之后可从「设置 → 关于 → 重新打开首次引导」再看一遍。
+
+> 同一时间只允许运行一个实例：重复双击 `DeskPet.exe` 不会产生第二套托盘与提醒调度器，而是把已经在运行的小猫唤起并播放一次开心动画。
 
 启动后 30 秒上手：
 
@@ -149,8 +155,8 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 - [x] 八态单图（4×2 自动切割）与皮肤维护工具
 - [x] Codex Pet Contract 皮肤（`pet.json` + 8×9 图集导入 / 导出，九行动画）
 - [x] 产品相关性收敛：移除费用估算、出站审计 UI、自定义请求头与关于页 SRS 表
-- [ ] 单实例运行与首次启动引导（P0，计划 v2.2）
-- [ ] CSP、隐私披露与更新签名（计划 v2.2）
+- [x] 单实例运行与首次启动引导（P0，v2.2.0）
+- [x] CSP 渲染层内容安全策略（v2.2.0）；隐私披露与更新签名待补
 - [ ] 数据备份 / 一键恢复与安装器（计划 v2.2 / v2.3）
 - [ ] SQLite 存储与会话全文检索增强（当前为 JSON 原子写盘 + 备份回退）
 - [x] 自动更新（HTTPS 更新清单 + 手动下载安装，不做静默安装；签名校验待补）
@@ -164,6 +170,19 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.2.0</b> — 单实例运行、首次启动引导与渲染层 CSP</summary>
+
+- **单实例运行（FR-SYS-007）**：新增 `single_instance` 模块，用 Windows 命名互斥量 `Local\DeskPet-SingleInstance-com.mrtransition.deskpet` 判定实例，命名事件把重复启动通知给首个实例。第二个进程在初始化 Tauri 之前直接退出（退出码 0），不会产生第二套托盘、调度器与 WebView2。首个实例收到通知后恢复被隐藏的宠物、把它提到前台并播放一次 `happy`，同时写入 `app.second_launch` 结构化日志。实现只依赖已有的 `windows-sys`，未引入 `tauri-plugin-single-instance`。
+- **首次启动引导（FR-SYS-008）**：新增独立窗口 `src/guide.html`，三步向导「选择模型 → 填写 Key / 地址 → 隐私与数据位置」。内置演示 / DeepSeek / OpenAI / Anthropic / Gemini / Ollama / 自定义 7 个预设，可先「测试连接」再保存；API Key 仍只经 `key_set` 写入 Windows 凭据管理器。隐私页直接读取 `privacy_info`，展示数据目录、密钥存储、出站请求与默认关闭的敏感能力。
+- **引导状态与入口**：`settings.guideDone` 默认 `true`，只有 `data.json` 不存在（真正首次启动）时才置为 `false` 并自动打开引导，老用户升级不会被打扰。跳过、完成或 Alt+F4 关闭窗口都会标记已完成；「设置 → 关于」新增「重新打开首次引导」，重复打开时窗口回到第一步。
+- **CSP（NFR-SEC-005）**：确认 `tauri.conf.json` 的 `app.security.csp` 已开启并覆盖 `default-src / script-src / object-src / frame-src`；新增 `csp_blocks_inline_scripts_and_plugins` 回归测试，断言不得放开 `unsafe-inline`、不得禁用 `script-src` 的 nonce 注入。
+- **权限与窗口**：`capabilities/default.json` 的窗口列表补上 `guide`，引导页获得与其余窗口一致的最小权限；`open_guide_cmd` 改为 async 命令，避免同步命令占用主线程导致窗口创建卡在 `about:blank`。
+- **测试**：`cargo test` 46 项全绿（新增 CSP 与默认引导状态 2 项）；前端 4 个内联脚本块 `node --check` 通过，中英词条各 384 条一一对齐。运行时实测：重复启动第二个进程退出码 0、系统内仅剩一个进程，首个实例写入 `app.second_launch` 并播放 `happy`；引导窗口经「设置 → 关于」重新打开后回到第 1 步、7 个预设齐全。
+- **文档**：README、SRS 与 ROADMAP 同步到 v2.2.0 基线。
+
+</details>
+
+<details>
 <summary><b>v2.1.4</b> — 宠物右键菜单重做与交互状态完善</summary>
 
 - **右键菜单单层平铺（FR-SYS-001）**：移除皮肤二级菜单，皮肤与常用操作放在同一层；皮肤数量多时只滚动皮肤分组，顶部「对话 / 新会话」与底部「设置 / 免打扰 / 复位位置」始终可见。

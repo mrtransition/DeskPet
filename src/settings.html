@@ -309,8 +309,17 @@ body { background: var(--bg); display: flex; flex-direction: column; }
       <!-- 关于 -->
       <div class="pane about" id="tab-about">
         <h3 data-i18n="s139">桌面 AI 宠物</h3>
-        <div class="ver" id="verLine" data-i18n="s140">桌面版 v2.1.4 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
+        <div class="ver" id="verLine" data-i18n="s140">桌面版 v2.2.0 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
         <details open>
+          <summary data-i18n="n220.title">v2.2.0 新增了什么</summary>
+          <ul>
+            <li data-i18n="n220.i1">单实例运行：重复启动只唤起已有宠物，不再产生第二套托盘与提醒调度器</li>
+            <li data-i18n="n220.i2">首次启动引导：三步完成模型选择、密钥填写与隐私告知，可跳过并随时重新打开</li>
+            <li data-i18n="n220.i3">渲染层启用内容安全策略（CSP）：禁止内联脚本、插件与内嵌框架，仅允许本地资源与 IPC</li>
+            <li data-i18n="n220.i4">硬件加速开关、日志轮转、备份恢复与会话批量管理仍在后续里程碑</li>
+          </ul>
+        </details>
+        <details>
           <summary data-i18n="n214.title">v2.1.4 新增了什么</summary>
           <ul>
             <li data-i18n="n214.i1">宠物右键菜单的皮肤改为二级菜单，皮肤多时自动滚动，不再被窗口裁切</li>
@@ -376,6 +385,11 @@ body { background: var(--bg); display: flex; flex-direction: column; }
             <label><input type="radio" name="langSel" value="en"> English</label>
           </div>
           <div class="fnote" style="margin:6px 0 0" data-i18n="s168">语言切换即时生效；气泡、宠物菜单与设置页同步。模型回复语言由人格 System Prompt 决定，不受此开关影响。</div>
+        </details>
+        <details>
+          <summary data-i18n="g.reopen">重新打开首次引导</summary>
+          <div class="fnote" style="margin:6px 0 8px" data-i18n="g.reopenDesc">回顾模型选择、密钥填写与隐私告知；不会修改现有配置。</div>
+          <button id="guideOpen" data-i18n="g.reopenBtn">打开引导</button>
         </details>
         <details>
           <summary data-i18n="s169">自动更新（FR-SYS-004）</summary>
@@ -2360,6 +2374,7 @@ document.querySelectorAll('input[name=langSel]').forEach(r => r.addEventListener
 $id('updateUrl').addEventListener('change', e => { S.settings.updateUrl = e.target.value.trim(); saveState(); });
 $id('updateAuto').addEventListener('change', e => { S.settings.updateAuto = e.target.checked; saveState(); });
 $id('updateCheck').addEventListener('click', () => checkUpdate(false, true));
+$id('guideOpen').addEventListener('click', () => invoke('open_guide_cmd'));
 async function checkUpdate(silent, manual) {
   const line = $id('updateLine');
   if (!silent) line.textContent = '正在检查更新…';

@@ -28,6 +28,101 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetForegroundWindow, SetForegroundWindow,
 };
 
+// ================= 单实例运行（FR-SYS-007） =================
+// 命名互斥量判定「是否已有实例」，命名事件把重复启动通知给首个实例。
+// 第二个进程在初始化 Tauri 之前就退出，因此不会产生第二套托盘、调度器与 WebView。
+#[cfg(windows)]
+mod single_instance {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
+    use windows_sys::Win32::System::Threading::{
+        CreateEventW, CreateMutexW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE,
+        INFINITE,
+    };
+
+    const MUTEX_NAME: &str = "Local\\DeskPet-SingleInstance-com.mrtransition.deskpet";
+    const EVENT_NAME: &str = "Local\\DeskPet-SecondLaunch-com.mrtransition.deskpet";
+
+    // 事件句柄需存活到进程结束；等待线程通过 usize 传递（HANDLE 本身不是 Send）
+    static EVENT_HANDLE: AtomicUsize = AtomicUsize::new(0);
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// 首个实例返回 true；已有实例时通知对方并返回 false（调用方应立即退出）。
+    pub fn acquire() -> bool {
+        let name = wide(MUTEX_NAME);
+        // bInitialOwner = 0：只把互斥量当作「进程存活标记」，句柄不关闭，随进程退出释放
+        let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+        let already = handle.is_null() || unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        if already {
+            notify_first();
+            return false;
+        }
+        let ev = wide(EVENT_NAME);
+        let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, ev.as_ptr()) };
+        EVENT_HANDLE.store(event as usize, Ordering::SeqCst);
+        true
+    }
+
+    /// 第二个实例：打开首个实例的事件并置位。首个实例可能仍在启动中，短暂重试。
+    fn notify_first() {
+        let name = wide(EVENT_NAME);
+        for _ in 0..40 {
+            let h = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr()) };
+            if !h.is_null() {
+                unsafe { SetEvent(h) };
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// 首个实例：后台等待重复启动通知。事件为自动重置，每次置位只唤醒一次。
+    pub fn watch_first<F: Fn() + Send + 'static>(on_second_launch: F) {
+        let raw = EVENT_HANDLE.load(Ordering::SeqCst);
+        if raw == 0 {
+            return;
+        }
+        std::thread::spawn(move || loop {
+            let r = unsafe { WaitForSingleObject(raw as HANDLE, INFINITE) };
+            if r != windows_sys::Win32::Foundation::WAIT_OBJECT_0 {
+                break;
+            }
+            on_second_launch();
+        });
+    }
+}
+
+#[cfg(windows)]
+static APP_FOR_SECOND_LAUNCH: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+
+/// 重复启动时唤起现有实例：恢复被隐藏的宠物、把窗口提到前台，并让宠物做一次反馈动画。
+#[cfg(windows)]
+fn focus_existing(app: &AppHandle) {
+    let visible = {
+        let ctx = app.state::<AppCtx>();
+        let guard = ctx.pet_visible.lock().unwrap_or_else(|e| e.into_inner());
+        let v = *guard;
+        v
+    };
+    if !visible {
+        let _ = set_pet_visible(app.clone(), app.state::<AppCtx>(), true);
+    }
+    if let Some(pet) = app.get_webview_window("pet") {
+        let _ = pet.show();
+        let _ = pet.unminimize();
+        let _ = app.emit_to("pet", "second-instance", ());
+    }
+    if bubble_visible(app) {
+        if let Some(b) = app.get_webview_window("bubble") {
+            let _ = b.set_focus();
+        }
+    }
+    log_event(app, "info", "app.second_launch", "检测到重复启动，已唤起现有实例");
+}
+
 // ================= 默认状态（与 MVP 版一致的数据结构，密钥不入库） =================
 
 const DEFAULT_STATE: &str = r##"{
@@ -79,6 +174,7 @@ const DEFAULT_STATE: &str = r##"{
     "clipboardWatch": false,
     "lang": "zh", "voice": false, "voiceURI": "", "voiceRate": 1,
     "summaryThreshold": 24,
+    "guideDone": true,
     "updateUrl": "https://api.github.com/repos/mrtransition/DeskPet/releases/latest",
     "updateAuto": false,
     "toolSettings": {"enabled": true, "auth": {"get_weather": "deny", "web_search": "deny"}, "openWhitelist": ["github.com", "www.github.com", "developer.mozilla.org", "www.bing.com", "www.baidu.com", "wikipedia.org"]},
@@ -712,6 +808,25 @@ fn bubble_set_width(
         bubble_reposition(app.clone())?;
     }
     Ok(())
+}
+
+/// 首次启动引导（FR-SYS-008）：懒创建独立窗口；再次打开时复用并通知前端回到第一步。
+fn open_guide(app: &AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("guide") {
+        w.show().map_err(|e| e.to_string())?;
+        w.set_focus().map_err(|e| e.to_string())?;
+        let _ = app.emit_to("guide", "guide-shown", ());
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(app, "guide", WebviewUrl::App("guide.html".into()))
+        .title("欢迎使用 DeskPet")
+        .inner_size(720.0, 560.0)
+        .min_inner_size(640.0, 480.0)
+        .decorations(false)
+        .center()
+        .build()
+        .map(|_| ())
+        .map_err(|e| format!("打开引导失败：{}", e))
 }
 
 fn open_settings(app: &AppHandle) -> Result<(), String> {
@@ -5191,6 +5306,13 @@ fn open_settings_cmd(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn open_guide_cmd(app: AppHandle) -> Result<(), String> {
+    // 必须是 async 命令：同步命令运行在主线程，而 WebviewWindowBuilder::build()
+    // 需要主线程事件循环继续运转，同步调用会互相等待导致窗口卡在 about:blank。
+    open_guide(&app)
+}
+
+#[tauri::command]
 fn set_dnd(app: AppHandle, ctx: tauri::State<AppCtx>, on: bool) -> Result<(), String> {
     {
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -5491,20 +5613,58 @@ fn reveal_file(path: String) -> Result<(), String> {
         .map_err(|e| format!("打开目录失败：{}", e))
 }
 
+// 启动阶段（还没有 AppHandle）的失败无法写入结构化日志：若设置了 DESKPET_BOOT_LOG，
+// 就把原因追加到该文件，便于便携版 / CI 定位「启动后立刻退出」类问题。
+fn report_boot_failure(msg: &str) {
+    let Ok(path) = std::env::var("DESKPET_BOOT_LOG") else { return };
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{} {}", chrono_now(), msg);
+    }
+}
+
 // ================= 入口 =================
 
 fn main() {
+    // FR-SYS-007：已有实例时只通知对方并退出，绝不初始化第二套 Tauri 运行时
+    #[cfg(windows)]
+    if !single_instance::acquire() {
+        // 此时还没有 AppHandle 可用，把原因写进环境变量指定的启动失败文件（便携 / 诊断用）
+        report_boot_failure("single-instance: 已有实例在运行，已通知对方并退出");
+        // 显式退出码 0：重复启动是正常行为，不应被脚本 / 安装器当成失败
+        std::process::exit(0);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .on_window_event(|window, event| {
+            // FR-SYS-008：用 Alt+F4 等方式直接销毁引导窗口时，同样视为「已看过引导」
+            if window.label() == "guide" && matches!(event, tauri::WindowEvent::Destroyed) {
+                let app = window.app_handle();
+                let ctx = app.state::<AppCtx>();
+                {
+                    let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
+                    st["settings"]["guideDone"] = json!(true);
+                }
+                persist_state(&ctx);
+                let _ = app.emit("state-changed", json!({"origin": "backend"}));
+            }
+        })
         .setup(|app| {
             let dir = app.path().app_data_dir().expect("无法获取应用数据目录");
             std::fs::create_dir_all(&dir).ok();
             let data_path = dir.join("data.json");
-            let state = load_or_default(&data_path);
+            // 只有「从未创建过数据文件」才算首次启动：老用户升级时 fill_defaults 会补上
+            // guideDone = true，不会突然弹出引导页。
+            let first_run = !data_path.exists();
+            let mut state = load_or_default(&data_path);
+            if first_run {
+                state["settings"]["guideDone"] = json!(false);
+            }
             let http = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(15))
                 .build()
@@ -5528,6 +5688,17 @@ fn main() {
 
             // DS-001 / NFR-SEC-001：迁移旧版可能残留的明文 API Key
             migrate_legacy_secrets(app.handle());
+
+            // FR-SYS-007：注册重复启动回调（此时 AppHandle 已可用）
+            #[cfg(windows)]
+            {
+                let _ = APP_FOR_SECOND_LAUNCH.set(app.handle().clone());
+                single_instance::watch_first(|| {
+                    if let Some(handle) = APP_FOR_SECOND_LAUNCH.get() {
+                        focus_existing(handle);
+                    }
+                });
+            }
 
             // 气泡窗口（隐藏常驻）
             WebviewWindowBuilder::new(app, "bubble", WebviewUrl::App("bubble.html".into()))
@@ -5690,6 +5861,22 @@ fn main() {
             // 提醒 / 主动搭话调度线程
             start_scheduler(app.handle().clone());
 
+            // FR-SYS-008：首次启动展示引导（可从设置 → 关于重新打开）
+            let guide_done = {
+                let ctx = app.state::<AppCtx>();
+                let st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
+                st["settings"]["guideDone"].as_bool().unwrap_or(true)
+            };
+            if !guide_done {
+                match open_guide(app.handle()) {
+                    Ok(()) => log_event(app.handle(), "info", "guide.opened", "首次启动引导已打开"),
+                    Err(e) => {
+                        // 引导失败不阻断启动：用户仍可在「设置 → 关于」重新打开
+                        report_boot_failure(&format!("guide: {}", e));
+                    }
+                }
+            }
+
             migrate_legacy_log(app.handle());
             log_event(app.handle(), "info", "app.started", "DeskPet 桌面版启动完成");
             Ok(())
@@ -5706,7 +5893,7 @@ fn main() {
             set_click_through, set_pet_visible, reset_pet_pos,
             show_bubble_cmd, hide_bubble_cmd, bubble_resize,
             bubble_reposition, bubble_set_width,
-            open_settings_cmd, set_dnd,
+            open_settings_cmd, open_guide_cmd, set_dnd,
             set_pet_taskbar, set_pet_always_on_top,
             privacy_info,
             reminder_add, reminder_snooze, reminder_delete,
@@ -5721,6 +5908,58 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+        // NFR-SEC-005：CSP 必须开启，且不允许内联脚本（Tauri 会为内联 <script> 注入 nonce）
+        #[test]
+        fn csp_blocks_inline_scripts_and_plugins() {
+            let conf: Value =
+                serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json 合法");
+            let csp = conf["app"]["security"]["csp"]
+                .as_str()
+                .expect("app.security.csp 必须配置");
+            assert!(csp.contains("default-src 'self'"), "CSP 缺少 default-src：{csp}");
+            assert!(csp.contains("script-src 'self'"), "CSP 缺少 script-src：{csp}");
+            assert!(
+                !csp.contains("script-src 'self' 'unsafe-inline'"),
+                "script-src 不得放开 unsafe-inline：{csp}"
+            );
+            assert!(csp.contains("object-src 'none'"), "CSP 必须禁用插件：{csp}");
+            assert!(csp.contains("frame-src 'none'"), "CSP 必须禁用内嵌框架：{csp}");
+            // script-src 不能被排除在 nonce 注入之外，否则内联脚本要么失效、要么被迫放开 unsafe-inline
+            if let Some(list) = conf["app"]["security"]["dangerousDisableAssetCspModification"].as_array() {
+                assert!(
+                    !list.iter().any(|v| v.as_str() == Some("script-src")),
+                    "不得禁用 script-src 的 CSP 注入"
+                );
+            }
+        }
+
+        // FR-SYS-008：老用户升级不得被首次引导打扰（默认 guideDone = true）
+        #[test]
+        fn default_state_skips_first_run_guide() {
+            assert_eq!(default_state()["settings"]["guideDone"], json!(true));
+        }
+
+        // FR-SYS-008：只有「数据文件不存在」才算首次启动；老数据即使缺字段也被填成 true
+        #[test]
+        fn upgrade_fills_guide_done_true() {
+            let mut old = json!({"settings": {"lang": "en"}});
+            fill_defaults(&default_state(), &mut old);
+            assert_eq!(old["settings"]["guideDone"], json!(true));
+            assert_eq!(old["settings"]["lang"], json!("en"), "不得覆盖用户已有设置");
+        }
+
+        // FR-SYS-007 / FR-SYS-008：引导窗口必须在权限清单里，否则 build() 会因无权限而失败
+        #[test]
+        fn guide_window_has_capability() {
+            let caps: Value = serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("capabilities/default.json 合法");
+            let windows = caps["windows"].as_array().expect("windows 必须是数组");
+            assert!(
+                windows.iter().any(|w| w.as_str() == Some("guide")),
+                "capabilities 缺少 guide 窗口：{windows:?}"
+            );
+        }
 
         fn conf_with_key(key: &str) -> ProvConf {
             ProvConf {

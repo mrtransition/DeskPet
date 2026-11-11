@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-win="guide">
+<head>
+<meta charset="UTF-8">
+<title>欢迎使用 DeskPet</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body { background: var(--bg); display: flex; flex-direction: column; }
+#app { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.win-title { cursor: default; }
+[data-tauri-drag-region] { -webkit-app-region: drag; }
+
+.g-steps { display: flex; gap: 10px; padding: 10px 18px 0; flex: none; }
+.g-step { flex: 1; display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--t3); }
+.g-step i { width: 20px; height: 20px; border-radius: 50%; background: #E9EFF8; color: var(--t3); display: flex; align-items: center; justify-content: center; font-style: normal; font-size: 11px; flex: none; }
+.g-step.on { color: var(--primary); font-weight: 600; }
+.g-step.on i { background: var(--primary); color: #fff; }
+.g-step.done i { background: #4CAF7D; color: #fff; }
+
+#gBody { flex: 1; overflow-y: auto; padding: 16px 18px; min-height: 0; }
+.g-pane { display: none; }
+.g-pane.on { display: block; }
+.g-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-top: 12px; }
+.g-card { text-align: left; padding: 10px 12px; border: 1px solid var(--line); background: #fff; border-radius: var(--r-lg); cursor: pointer; }
+.g-card b { display: block; font-size: var(--fs); color: var(--t1); font-weight: 600; }
+.g-card span { display: block; margin-top: 2px; font-size: var(--fs-xs); color: var(--t3); word-break: break-all; }
+.g-card.on { border-color: var(--primary); background: var(--primary-bg); box-shadow: 0 0 0 1px var(--primary) inset; }
+
+.g-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--line); background: #fff; }
+.g-pos { margin: 0 auto; font-size: var(--fs-xs); color: var(--t3); }
+.g-list { margin: 10px 0 0; padding-left: 18px; font-size: var(--fs); color: var(--t2); line-height: 1.9; }
+.g-list b { color: var(--t1); font-weight: 600; }
+.g-list code { font-family: var(--mono); font-size: calc(var(--fs) - 1px); word-break: break-all; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="win-title" data-tauri-drag-region>
+    <span class="wt-ic">🐱</span><b data-i18n="g.title">欢迎使用 DeskPet</b>
+    <button class="ib" id="gClose" data-i18n-title="g.skip">✕</button>
+  </div>
+
+  <div class="g-steps">
+    <div class="g-step on" data-step="1"><i>1</i><span data-i18n="g.step1">选择模型</span></div>
+    <div class="g-step" data-step="2"><i>2</i><span data-i18n="g.step2">填写密钥 / 地址</span></div>
+    <div class="g-step" data-step="3"><i>3</i><span data-i18n="g.step3">隐私与数据</span></div>
+  </div>
+
+  <div id="gBody">
+    <section class="g-pane on" id="gp1">
+      <h3 data-i18n="g.pickModel">选择要接入的模型</h3>
+      <div class="p-desc" data-i18n="g.pickModelDesc">不配置也能用：演示模式内置完整对话链路，之后可随时在设置里切换。</div>
+      <div class="g-cards" id="gCards"></div>
+      <div class="fnote" style="margin-top:12px" data-i18n="g.keyNote">API Key 只写入 Windows 凭据管理器，不进入数据文件、日志与导出内容；请求由主进程直接发出。</div>
+    </section>
+
+    <section class="g-pane" id="gp2">
+      <h3 data-i18n="g.fillTitle">填写连接信息</h3>
+      <div class="p-desc" id="gFillDesc" data-i18n="g.fillDesc">云端服务需要 API Key；Ollama 等本地服务无需 Key，确认地址可访问即可。</div>
+      <div class="fgrid" id="gForm">
+        <div class="frow" style="grid-column:span 2"><label>BaseURL</label><input id="gBase" placeholder="https://api.deepseek.com/v1"></div>
+        <div class="frow" style="grid-column:span 2"><label data-i18n="g.model">模型名</label><input id="gModel" list="dlGuideModels" placeholder="deepseek-chat"></div>
+        <datalist id="dlGuideModels"></datalist>
+        <div class="frow" style="grid-column:span 2">
+          <label data-i18n="g.apiKey">API Key（仅写入系统凭据管理器）</label>
+          <input id="gKey" type="password" autocomplete="off" placeholder="sk-…">
+        </div>
+      </div>
+      <div class="fnote" id="gMockNote" style="display:none" data-i18n="g.demoNote">演示模式无需填写任何信息，直接点「下一步」即可。</div>
+      <div class="btn-row" style="margin-top:12px">
+        <button id="gTest" data-i18n="g.test">测试连接</button>
+        <span class="fnote" style="margin:0;align-self:center" data-i18n="g.testHint">保存前先测试，能及时发现地址或 Key 的问题</span>
+      </div>
+      <div class="test-line" id="gTestResult"></div>
+    </section>
+
+    <section class="g-pane" id="gp3">
+      <h3 data-i18n="g.privacyTitle">隐私与数据位置</h3>
+      <div class="p-desc" data-i18n="g.privacyDesc">DeskPet 不注册账号、不做埋点，所有数据默认留在本机。</div>
+      <ul class="g-list">
+        <li><b data-i18n="g.dataDirLabel">数据目录</b>：<code id="gDataDir">—</code></li>
+        <li><b data-i18n="g.keyLabel">密钥存储</b>：<span id="gKeyStore">Windows Credential Manager</span></li>
+        <li><b data-i18n="g.outboundLabel">出站请求</b>：<span data-i18n="g.outboundValue">仅在你发起对话、使用天气 / 联网搜索或检查更新时访问对应服务，不做任何后台遥测。</span></li>
+        <li><b data-i18n="g.sensitiveLabel">敏感能力</b>：<span data-i18n="g.sensitiveValue">剪贴板感知、久坐 / 喝水提醒、天气与联网搜索默认关闭；截图与语音输入尚未实现。</span></li>
+      </ul>
+      <div class="fnote" style="margin-top:12px" data-i18n="g.privacyNote">这些信息随时可在「设置 → 隐私」查看。看完本页或点「跳过」之后，引导不会再次自动弹出；如有需要，可从「设置 → 关于」重新打开。</div>
+    </section>
+  </div>
+
+  <div class="g-foot">
+    <button id="gSkip" data-i18n="g.skipText">跳过引导</button>
+    <span class="g-pos" id="gPos">1 / 3</span>
+    <button id="gBack" data-i18n="g.back">上一步</button>
+    <button id="gNext" class="primary" data-i18n="g.next">下一步</button>
+  </div>
+</div>
+<script src="shared.js"></script>
+<script src="i18n.js"></script>
+<script>
+'use strict';
+/* FR-SYS-008：首次启动引导。三步走：选择模型 → 填写密钥 / 地址 → 隐私与数据位置告知。
+   任何一步都可以跳过；跳过后 guideDone = true，之后可从「设置 → 关于」重新打开。 */
+const GUIDE_PRESETS = ['mock', 'deepseek', 'openai', 'anthropic', 'gemini', 'ollama', 'custom'];
+let gStep = 1;
+let presetKey = 'mock';
+let draftId = null;
+
+const presetOf = () => PROVIDER_TEMPLATES.find(x => x.key === presetKey) || PROVIDER_TEMPLATES[0];
+
+function presetLabel(tpl) {
+  if (tpl.key === 'mock') return t('g.presetDemo');
+  if (tpl.key === 'custom') return t('g.presetCustom');
+  return tpl.label.replace(/（.*?）/g, '').trim();
+}
+
+function renderCards() {
+  const box = $id('gCards');
+  box.innerHTML = '';
+  GUIDE_PRESETS.forEach(key => {
+    const tpl = PROVIDER_TEMPLATES.find(x => x.key === key);
+    if (!tpl) return;
+    const b = el('button', 'g-card' + (key === presetKey ? ' on' : ''));
+    b.type = 'button';
+    b.innerHTML = '<b>' + esc(presetLabel(tpl)) + '</b><span>' +
+      esc(tpl.type === 'mock' ? t('g.noConfig') : (tpl.baseUrl || t('g.customHint'))) + '</span>';
+    b.onclick = () => {
+      presetKey = key;
+      draftId = null;
+      renderCards();
+      fillForm();
+    };
+    box.appendChild(b);
+  });
+}
+
+function fillForm() {
+  const tpl = presetOf();
+  const mock = tpl.type === 'mock';
+  $id('gForm').style.display = mock ? 'none' : '';
+  $id('gMockNote').style.display = mock ? '' : 'none';
+  $id('gTest').style.display = mock ? 'none' : '';
+  $id('gBase').value = tpl.baseUrl || '';
+  $id('gModel').value = tpl.model || '';
+  $id('gKey').value = '';
+  hideResult();
+}
+
+function hideResult() {
+  const n = $id('gTestResult');
+  n.className = 'test-line';
+  n.textContent = '';
+}
+
+function showResult(ok, text) {
+  const n = $id('gTestResult');
+  n.className = 'test-line show ' + (ok ? 'ok' : 'err');
+  n.textContent = (ok ? '✓ ' : '✗ ') + text;
+}
+
+function showTesting(text) {
+  const n = $id('gTestResult');
+  n.className = 'test-line show';
+  n.textContent = text;
+}
+
+function renderStep() {
+  document.querySelectorAll('.g-step').forEach(n => {
+    const s = Number(n.dataset.step);
+    n.classList.toggle('on', s === gStep);
+    n.classList.toggle('done', s < gStep);
+  });
+  document.querySelectorAll('.g-pane').forEach(n => n.classList.toggle('on', n.id === 'gp' + gStep));
+  $id('gBack').disabled = gStep === 1;
+  $id('gPos').textContent = gStep + ' / 3';
+  $id('gNext').textContent = gStep === 3 ? t('g.finish') : t('g.next');
+  if (gStep === 3) loadPrivacy();
+}
+
+async function loadPrivacy() {
+  try {
+    const info = await invoke('privacy_info');
+    if (info.dataDir) $id('gDataDir').textContent = info.dataDir;
+    if (info.keyStore) $id('gKeyStore').textContent = info.keyStore;
+  } catch (e) { reportClientError('读取隐私信息', e); }
+}
+
+/* 把引导里的连接信息写入供应商列表（存在同地址供应商时复用，避免重复条目） */
+function upsertProvider() {
+  const tpl = presetOf();
+  if (tpl.type === 'mock') return null;
+  const baseUrl = $id('gBase').value.trim();
+  const model = $id('gModel').value.trim();
+  if (!baseUrl || !model) return null;
+  let p = draftId ? getProv(draftId) : null;
+  if (!p) p = S.providers.find(x => x.baseUrl === baseUrl && x.type === tpl.type) || null;
+  if (!p) {
+    p = {
+      id: uid('p'), name: presetLabel(tpl), type: tpl.type, baseUrl, model, apiKey: '', headers: '',
+      params: { temp: 0.8, topP: 1, maxTokens: 1024, ctxRounds: 10, ctxTokens: 8000, timeout: 30, retry: 2, stream: true },
+      isDefault: true,
+    };
+    S.providers.push(p);
+  } else {
+    p.baseUrl = baseUrl;
+    p.model = model;
+    if (tpl.key !== 'custom') p.name = presetLabel(tpl);
+  }
+  draftId = p.id;
+  S.providers.forEach(x => { x.isDefault = x.id === p.id; });
+  // 与设置页一致：绑定演示模式的人格 / 会话自动迁移到新供应商，避免「配好了却还在演示模式」
+  S.personas.forEach(ps => {
+    const cur = getProv(ps.providerId);
+    if (!cur || cur.type === 'mock') ps.providerId = p.id;
+  });
+  S.sessions.forEach(s => {
+    const sp = getProv(s.providerId);
+    if (!sp || sp.type === 'mock') s.providerId = p.id;
+  });
+  S.settings.lastProviderId = p.id;
+  const key = $id('gKey').value;
+  if (key) invoke('key_set', { id: p.id, key });
+  return p;
+}
+
+async function finishGuide() {
+  const tpl = presetOf();
+  if (tpl.type !== 'mock') {
+    const baseUrl = $id('gBase').value.trim();
+    const model = $id('gModel').value.trim();
+    if (baseUrl || model) {
+      const p = upsertProvider();
+      if (!p) {
+        toast(t('g.needBase'), 'warn');
+        gStep = 2;
+        renderStep();
+        return;
+      }
+    }
+  }
+  S.settings.guideDone = true;
+  try { await saveStateNow(); } catch (e) { return; }
+  tEmit('guide-finished', {});
+  await curWin.hide();
+}
+
+async function skipGuide() {
+  S.settings.guideDone = true;
+  try { await saveStateNow(); } catch (e) { return; }
+  tEmit('guide-finished', {});
+  await curWin.hide();
+}
+
+$id('gNext').onclick = () => {
+  if (gStep === 3) { finishGuide(); return; }
+  gStep += 1;
+  renderStep();
+};
+$id('gBack').onclick = () => { if (gStep > 1) { gStep -= 1; renderStep(); } };
+$id('gSkip').onclick = skipGuide;
+$id('gClose').onclick = skipGuide;
+$id('gTest').onclick = async () => {
+  const tpl = presetOf();
+  if (tpl.type === 'mock') return;
+  const baseUrl = $id('gBase').value.trim();
+  const model = $id('gModel').value.trim();
+  if (!baseUrl || !model) { toast(t('g.needBase'), 'warn'); return; }
+  const p = upsertProvider();
+  if (!p) { toast(t('g.needBase'), 'warn'); return; }
+  showTesting(t('g.testing'));
+  try {
+    await saveStateNow();
+    const r = await invoke('provider_test', { id: p.id });
+    if (r.ok) {
+      const extra = r.note ? ' · ' + r.note : '';
+      showResult(true, t('g.testOk', { ms: r.latency }) + extra);
+      if (r.models && r.models.length) {
+        $id('dlGuideModels').innerHTML = r.models.map(m => '<option value="' + esc(m) + '">').join('');
+      }
+    } else {
+      showResult(false, r.message || t('g.testFail'));
+    }
+  } catch (e) {
+    showResult(false, String(e));
+  }
+};
+
+/* 每次打开都回到第一步与初始预设：窗口是懒创建的，复用窗口时不清状态会停在上次的位置 */
+function resetGuide() {
+  gStep = 1;
+  presetKey = 'mock';
+  draftId = null;
+  renderCards();
+  fillForm();
+  renderStep();
+}
+
+tListen('guide-shown', async () => {
+  await loadState();
+  applyI18n();
+  resetGuide();
+});
+tListen('lang-changed', async () => {
+  await loadState();
+  applyI18n();
+  renderCards();
+  renderStep();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') skipGuide(); });
+
+(async function init() {
+  await loadState();
+  applyI18n();
+  resetGuide();
+})();
+</script>
+</body>
+</html>

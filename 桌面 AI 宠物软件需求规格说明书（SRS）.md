@@ -6,7 +6,7 @@
 | 文档编号 | SRS-DESKPET-AI-001 |
 | 版本 | v1.2（产品相关性收敛修订版） |
 | 修订日期 | 2026-11-11 |
-| 对应产品基线 | DeskPet 2.1.4 |
+| 对应产品基线 | DeskPet 2.2.0 |
 | 文档性质 | **自包含文档**：不依赖任何外部产品文档，可作为设计、开发、测试、验收的唯一需求基准 |
 | 编制依据 | GB/T 8567-2006《计算机软件文档编制规范》；参照 IEEE Std 830-1998 |
 | 适用阶段 | 需求评审 → 概要设计 → 详细设计 → 测试设计 → 验收 |
@@ -702,11 +702,12 @@
 | v2.0 实现基线 | 2026-10-30 | 按本 SRS 交付 DeskPet 2.0.0：新增 FR-TOOL-001~004（含三协议工具循环）、FR-SKN-002（皮肤包）、FR-REM-006/007（久坐喝水、剪贴板感知）、FR-SYS-004~006（更新检查、用量费用、中英界面）、FR-PET-002 置顶层级提升；未交付项见下 | — |
 | v2.1 实现基线 | 2026-11-04 | 交付 DeskPet 2.1.0：FR-MEM-003 模型摘要压缩、FR-VOI-001 TTS 朗读（ASR 见 FR-VOI-002）、FR-PET-010 低帧率 30fps、NFR-MNT-001 JSON Lines 结构化日志与脱敏；旧数据自动补默认值，旧纯文本日志启动时归档 | — |
 | v2.1.1 实现基线 | 2026-11-10 | 交付 DeskPet 2.1.1：FR-SKN-002 补齐 4×2 八态单图自动切割与皮肤维护工具；FR-SKN-003 Codex Pet Contract 导入 / 导出（8×9 图集、九行帧序、帧时长与逐帧维护、八态映射）；皮肤包与宠物包校验上限统一为 128 MB / 64 MB / 256 MB / 200 条目；新增《皮肤与图集规范》与 Codex 示例素材 | — |
+| v2.2.0 实现基线 | 2026-11-11 | 交付 DeskPet 2.2.0：FR-SYS-007 单实例运行（Windows 命名互斥量 + 命名事件，重复启动只唤起已有实例，不产生第二套托盘与调度器）；FR-SYS-008 首次启动引导（独立三步向导窗口，覆盖模型选择、密钥填写与隐私告知，`guideDone` 记录状态并可从「设置 → 关于」重新打开）；NFR-SEC-005 渲染层 CSP（禁止内联脚本、插件与内嵌框架，仅允许本地资源与 IPC，并新增回归测试）。同步 README、ROADMAP 与窗口能力配置 | — |
 | v2.1.4 实现基线 | 2026-11-11 | 交付 DeskPet 2.1.3 / 2.1.4：i18n 全量接入、更新检查默认关闭、实验性能力折叠、移除隐藏开发者接口；FR-SYS-001 补充宠物右键菜单入口并改为单层平铺与皮肤区滚动，菜单贴合宠物左右侧、不越出工作区、开合保持宠物屏幕位置；FR-REM-004 补充点击睡眠宠物唤醒并同步关闭免打扰；FR-PET-004 补充系统拖动释放后恢复 `idle`；菜单打开时点击其他软件/桌面自动收起。新增 AC-026 并同步 README、ROADMAP 与《宠物右键菜单与交互规范》 | — |
 | v1.2（文档修订） | 2026-11-10 | 产品相关性收敛：费用估算（FR-SYS-005）移出用户界面；FR-MDL-002 移除自定义请求头；FR-MDL-008 改为仅遵循系统代理；NFR-SEC-003 改为静态域名披露 + 本地脱敏日志，移除逐请求审计 UI；FR-REM-006/007、FR-TOOL-002 降级为默认关闭的实验性增强；删除关于页 SRS 对照表；同步 1.2、1.2.1、1.6、2.2、3.1、3.2.4、4、5.2 与实现状态 | — |
 | v1.1（文档修订） | 2026-11-04 | 范围审计修订：新增 1.2.1 版本分层、1.6 优先级边界、3.1.11 版本归属；拆分 FR-PET-009/FR-TOOL-002/FR-VOI-001；新增 FR-PET-011、FR-BUB-018、FR-MDL-014、FR-TOOL-005、FR-REM-008、FR-VOI-002、FR-SYS-007~010、FR-DAT-005~006；新增 NFR-UI-004、NFR-INT-006、NFR-CON-005、NFR-REL-004、NFR-SEC-005~006、NFR-MNT-003；新增 DS-004 与 AC-016~025；按单条需求重写实现状态表 | — |
 
-**v1.2 实现状态（按单条需求，基线 DeskPet 2.1.4）**
+**v1.2 实现状态（按单条需求，基线 DeskPet 2.2.0）**
 
 > 状态口径：已实现 / 部分 / 未实现 / 不适用。“部分”不计入验收通过率；P3 仅登记，不参与当前统计。
 
@@ -715,7 +716,7 @@
 | FR-PET-001~008、FR-PET-010 | 已实现 | 透明置顶、任务栏开关、拖拽记忆、多屏回收、八态动画、缩放、穿透、低帧率；v2.1.4 起拖动释放后立即恢复 `idle` |
 | FR-PET-009 | 已实现 | GIF / APNG / WebP 单图与皮肤包多状态帧 |
 | FR-PET-011 | 未实现（P3） | Live2D / Spine / Lottie 运行时未内置，见 TBD-01 |
-| FR-BUB-001~016、FR-BUB-018 | 已实现 | 018 已做 HTML 转义与链接协议白名单；CSP 缺口见 NFR-SEC-005 |
+| FR-BUB-001~016、FR-BUB-018 | 已实现 | 018 已做 HTML 转义与链接协议白名单；渲染层 CSP 见 NFR-SEC-005（v2.2.0） |
 | FR-BUB-017 | 已实现（P2） | 全局快捷键打开设置 |
 | FR-MDL-001~007、FR-MDL-009~013 | 已实现 | 002 自 v1.2 起不再提供自定义请求头输入；其余为模板、测试、多配置、切换、密钥安全、参数、上下文、降级与错误分类 |
 | FR-MDL-014 | 部分（P1） | 流式 / 工具 / 模型列表按协议分支处理；无显式能力矩阵与视觉能力标记 |
@@ -735,8 +736,8 @@
 | FR-SYS-001~004 | 已实现 | 004 为 HTTPS 清单检查 + 用户确认，无签名校验（NFR-SEC-004）；001 含宠物右键菜单（单层平铺、皮肤区滚动、贴合左右侧、外部点击收起） |
 | FR-SYS-005 | 已移除（v1.2） | 费用估算与价格输入已移出用户界面；不再作为产品功能 |
 | FR-SYS-006 | 已实现（P2） | v2.1.3 起设置页 / 气泡 / 宠物菜单的界面文案全部接入 i18n（约 275 条中英对齐）；人格、模型、皮肤等内容数据保持原文，不做翻译 |
-| FR-SYS-007 | 未实现（P0） | 未引入单实例插件 |
-| FR-SYS-008 | 未实现（P0） | 无首次启动引导与隐私告知页 |
+| FR-SYS-007 | 已实现（P0） | v2.2.0：Windows 命名互斥量 + 命名事件判定单实例，重复启动只通知首个实例并以退出码 0 退出（原因写入 `DESKPET_BOOT_LOG`），唤起宠物播放反馈动画，不产生第二套托盘 / 调度器 |
+| FR-SYS-008 | 已实现（P0） | v2.2.0：独立三步引导窗口（模型选择 → 密钥 / 地址 → 隐私与数据位置），`settings.guideDone` 记录状态；仅真正首次启动（`data.json` 不存在）自动弹出，可从「设置 → 关于」重新打开并回到第一步 |
 | FR-SYS-009 | 部分（P1） | 更新失败有提示；无版本回退与保留机制 |
 | FR-SYS-010 | 不适用（P1） | 便携版 v1 无安装器 / 卸载器，v2.3 启用 |
 | FR-DAT-001~004 | 已实现 | JSON 原子写盘 + 备份回退；检索为前端内存 `includes()` |
@@ -755,14 +756,14 @@
 | NFR-SEC-001~002 | 已实现 | — |
 | NFR-SEC-003 | 已实现（v1.2） | 隐私页静态列明模型、天气、搜索与更新域名；逐请求审计 UI 已移除，本地日志继续脱敏 |
 | NFR-SEC-004 | 未实现 | 仅校验 HTTPS，无签名或哈希校验 |
-| NFR-SEC-005 | 部分 | 有输出转义与链接白名单；`csp` 仍为 `null` |
+| NFR-SEC-005 | 已实现（v2.2.0） | 输出转义与链接白名单；`app.security.csp` 已启用并禁止内联脚本、插件与内嵌框架，`csp_blocks_inline_scripts_and_plugins` 回归测试防止回退 |
 | NFR-SEC-006 | 不适用（v1.2） | 自定义请求头输入已移出产品范围 |
 | NFR-MNT-001~002 | 已实现 | — |
 | NFR-MNT-003 | 部分 | 有旧日志归档；无轮转与最大体积限制 |
 | NFR-PORT-001~002 | 已实现 | Windows 基线；macOS / Linux 未验证 |
 | NFR-PRV-001~003 | 已实现 | — |
 
-对应实现位置：工具调度与三协议适配 `src-tauri/src/main.rs`（`run_chat` / `tool_defs` / `tool_calls_payload` / `anthropic_block` / `gemini_parts`）；皮肤包解析与导出 `read_skin_zip` / `skin_zip_bytes`，Codex 契约 `read_codex_zip` / `codex_export_pack`，八态单图切割与维护工具 `src/settings.html`（`petImageSplitEight` / `renderSkinMaintenance` / `renderCodexMaintenance`）；更新检查 `update_check` / `update_download`；健康提醒 `tick_health`；界面文案 `src/i18n.js`；宠物右键菜单布局与外部点击监听 `pet_menu_layout` / `pet_resize_keep` / `pet_outside_watch_start` / `pet_outside_watch_stop`（`src-tauri/src/main.rs`），菜单渲染与定位 `showMenu` / `menuPlace`（`src/shared.js`），交互状态 `src/pet.html`。
+对应实现位置：工具调度与三协议适配 `src-tauri/src/main.rs`（`run_chat` / `tool_defs` / `tool_calls_payload` / `anthropic_block` / `gemini_parts`）；皮肤包解析与导出 `read_skin_zip` / `skin_zip_bytes`，Codex 契约 `read_codex_zip` / `codex_export_pack`，八态单图切割与维护工具 `src/settings.html`（`petImageSplitEight` / `renderSkinMaintenance` / `renderCodexMaintenance`）；更新检查 `update_check` / `update_download`；健康提醒 `tick_health`；界面文案 `src/i18n.js`；宠物右键菜单布局与外部点击监听 `pet_menu_layout` / `pet_resize_keep` / `pet_outside_watch_start` / `pet_outside_watch_stop`（`src-tauri/src/main.rs`），菜单渲染与定位 `showMenu` / `menuPlace`（`src/shared.js`），交互状态 `src/pet.html`；单实例 `single_instance` 模块与 `focus_existing`，首次引导 `open_guide` / `open_guide_cmd` 与 `src/guide.html`，窗口能力 `src-tauri/capabilities/default.json`，CSP 配置与回归测试见 `src-tauri/tauri.conf.json` / `csp_blocks_inline_scripts_and_plugins`。
 
 ### 6.5 需求条目统计
 
@@ -777,9 +778,9 @@
 | 验收用例（AC） | 26 条 |
 | 待定项（TBD） | 6 条 |
 
-**v1 验收分母**：功能需求 69 条（P0 32 + P1 37）；P2 12 条不阻塞发布，P3 3 条不进入当前验收，FR-SYS-005 已移出产品范围。非功能需求 36 条与 NFR-CON 5 条全部登记，其中 NFR-SEC-004（更新签名）、NFR-UI-004（无障碍）、NFR-INT-006（硬件加速）、NFR-MNT-003（日志轮转）按 v2.2 验收，NFR-REL-004（安全模式）、NFR-PERF-008（FTS 检索）按 v2.3 验收，NFR-PERF-006 作为发布门禁；其余 NFR 在 v1 验收前关闭。
+**v1 验收分母**：功能需求 69 条（P0 32 + P1 37）；P2 12 条不阻塞发布，P3 3 条不进入当前验收，FR-SYS-005 已移出产品范围。非功能需求 36 条与 NFR-CON 5 条全部登记，其中 NFR-SEC-004（更新签名）、NFR-UI-004（无障碍）、NFR-INT-006（硬件加速）、NFR-MNT-003（日志轮转）按 v2.2 验收（v2.2.0 已关闭 NFR-SEC-005 CSP），NFR-REL-004（安全模式）、NFR-PERF-008（FTS 检索）按 v2.3 验收，NFR-PERF-006 作为发布门禁；其余 NFR 在 v1 验收前关闭。
 
-**当前基线说明（DeskPet 2.1.4）**：状态表中标记为“部分 / 未实现”的 P0/P1 项，必须在 v1 验收前关闭；`docs/ROADMAP.md` 的 v2.2 是计划关闭里程碑，不构成对 P0/P1 的豁免。发布说明须逐条列出未关闭项，不得以需求段整体“已交付”掩盖部分实现。
+**当前基线说明（DeskPet 2.2.0）**：v2.2.0 已关闭两个 P0 缺口 FR-SYS-007 / FR-SYS-008 与 NFR-SEC-005；状态表中其余标记为“部分 / 未实现”的 P0/P1 项，必须在 v1 验收前关闭；`docs/ROADMAP.md` 的后续里程碑是计划关闭节点，不构成对 P0/P1 的豁免。发布说明须逐条列出未关闭项，不得以需求段整体“已交付”掩盖部分实现。
 
 ---
 

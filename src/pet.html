@@ -648,6 +648,10 @@ tListen('chat-state', ev => {
   if (['work', 'talk', 'idle', 'error'].includes(s)) setPetState(s);
 });
 tListen('reminder-fx', () => setPetState('happy'));
+/* FR-SYS-007：重复启动时，首个实例被唤起并让宠物做一次反馈动画 */
+tListen('second-instance', () => setPetState('happy'));
+/* FR-SYS-008：引导完成 / 跳过后的反馈 */
+tListen('guide-finished', () => setPetState('happy'));
 tListen('chatter', ev => showMini(ev.payload && ev.payload.text));
 /* FR-REM-007：剪贴板变化提示。点击后才把内容交给气泡处理，未点击不发送任何数据。 */
 tListen('clipboard-changed', ev => {
