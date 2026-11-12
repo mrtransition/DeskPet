@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.2.1-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.3.0-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -157,7 +157,7 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 - [x] 产品相关性收敛：移除费用估算、出站审计 UI、自定义请求头与关于页 SRS 表
 - [x] 单实例运行与首次启动引导（P0，v2.2.0）
 - [x] CSP 渲染层内容安全策略（v2.2.0）；隐私披露与更新签名待补
-- [ ] 数据备份 / 一键恢复与安装器（计划 v2.2 / v2.3）
+- [ ] 数据备份 / 一键恢复与安装器（计划 v2.4）
 - [ ] SQLite 存储与会话全文检索增强（当前为 JSON 原子写盘 + 备份回退）
 - [x] 自动更新（HTTPS 更新清单 + 手动下载安装，不做静默安装；签名校验待补）
 - [x] 界面中英双语覆盖（设置页 / 气泡 / 宠物菜单的界面文案已接入 i18n；人格、模型、皮肤等内容数据保持原文）
@@ -170,6 +170,17 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.3.0</b> — 智能去除背景与皮肤导入入口收敛</summary>
+
+- **智能去除背景（FR-SKN-002 扩展）**：设置页「皮肤」新增可选去背景步骤。纯前端算法（边缘带量化直方图估色 + 四边洪泛连通域 + Alpha 距离映射 + 可分离盒式羽化）处理白墙 / 绿幕 / 蓝幕等简单背景，无需联网、深度学习或新依赖；提供原图与棋盘格透明结果双栏预览，以及容差 / 羽化 / 边缘采样带实时联动。结果可直接进入 4×2 八态单图切割与对齐流程，也可导出透明 PNG。
+- **皮肤导入收敛**：仅保留「导入八态单图（4×2）」与「导入皮肤包」；单张图片与 Codex 宠物导入入口已屏蔽，历史条目仍可切换 / 删除。规范见 [`docs/皮肤与图集规范.md`](docs/皮肤与图集规范.md)。
+- **皮肤资源外置（NFR-PERF-004）**：皮肤图片与音效改为 `skins/*.json` 按引用存取，`data.json` 不再随每次保存携带十几 MB 资源；启动时自动迁移旧数据并清理未引用文件。
+- **文档与 i18n**：新增《方案：将极简图片背景去除工具合并到 DeskPet》落地记录，同步自动裁剪规范、ROADMAP 与中英文词条。
+- **测试**：`cargo test`、前端脚本 `node --check`、中英词条对齐与背景去除合成图测试通过；1600×1600 图像处理约 70–150 ms。
+
+</details>
+
+<details>
 <summary><b>v2.2.1</b> — 修复更新检查误报「缺少 version 字段」</summary>
 
 - **皮肤管理收敛**：移除「导入单张图片」与「导入 Codex 宠物」两个入口（按钮、文件控件、导入逻辑均下线，旧渲染层投递文件也会被丢弃），仅保留「导入八态单图（4×2）」与「导入皮肤包」；Codex 历史条目只读展示。皮肤包规范与自检清单见 [`docs/皮肤与图集规范.md`](docs/皮肤与图集规范.md) 第 7bis 节。

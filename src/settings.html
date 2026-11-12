@@ -356,8 +356,17 @@ body { background: var(--bg); display: flex; flex-direction: column; }
       <!-- 关于 -->
       <div class="pane about" id="tab-about">
         <h3 data-i18n="s139">桌面 AI 宠物</h3>
-        <div class="ver" id="verLine" data-i18n="s140">桌面版 v2.2.1 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
+        <div class="ver" id="verLine" data-i18n="s140">桌面版 v2.3.0 · Tauri v2 · 依据 SRS-DESKPET-AI-001 v1.2</div>
         <details open>
+          <summary data-i18n="n230.title">v2.3.0 新增了什么</summary>
+          <ul>
+            <li data-i18n="n230.i1">智能去除背景：纯前端处理纯色 / 绿幕 / 蓝幕背景，原图与透明结果双栏预览，容差、羽化、采样带实时联动；结果可直接进入八态单图切割或导出 PNG</li>
+            <li data-i18n="n230.i2">皮肤导入入口收敛：仅保留「导入八态单图」与「导入皮肤包」，单张图片与 Codex 宠物导入入口已屏蔽，历史条目仍可切换 / 删除</li>
+            <li data-i18n="n230.i3">皮肤图片与音效外置到 skins/*.json，降低 data.json 体积，避免每次保存传输十几 MB 资源</li>
+            <li data-i18n="n230.i4">同步中英文词条、自动裁剪 / 皮肤规范与 ROADMAP 文档</li>
+          </ul>
+        </details>
+        <details>
           <summary data-i18n="n221.title">v2.2.1 修复了什么</summary>
           <ul>
             <li data-i18n="n221.i1">更新检查支持 GitHub Releases 清单：读取 tag_name / body / assets，不再误报「缺少 version 字段」</li>
