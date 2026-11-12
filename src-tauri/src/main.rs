@@ -203,6 +203,8 @@ struct AppCtx {
     tool_wait: Mutex<std::collections::HashMap<String, ToolWait>>,
     clipboard_last: Mutex<String>,
     http: reqwest::Client,
+    // NFR-PERF-004：导入皮肤的图片 / 音效（按 `skins/<id>.json` 引用缓存）
+    skin_assets: Mutex<SkinAssets>,
 }
 
 // FR-REM-006：久坐 / 喝水计时器
@@ -293,7 +295,13 @@ fn write_state_file(ctx: &AppCtx, snapshot: &str) {
     if std::fs::write(&tmp, snapshot).is_err() {
         return;
     }
-    if ctx.data_path.exists() {
+    // 备份不必每次全量复制（数据大时一次就是十几 MB 的额外 I/O）：
+    // 距离上次备份超过 5 分钟、或原文件很小（< 2 MB）时才刷新，保证仍有可回退的副本。
+    let refresh = match std::fs::metadata(&ctx.data_path) {
+        Ok(m) => m.len() < 2 * 1024 * 1024 || backup_age_secs(&bak) > 300,
+        Err(_) => false,
+    };
+    if ctx.data_path.exists() && refresh {
         let _ = std::fs::copy(&ctx.data_path, &bak);
     }
     if std::fs::rename(&tmp, &ctx.data_path).is_err() {
@@ -301,6 +309,15 @@ fn write_state_file(ctx: &AppCtx, snapshot: &str) {
         let _ = std::fs::copy(&tmp, &ctx.data_path);
         let _ = std::fs::remove_file(&tmp);
     }
+}
+
+fn backup_age_secs(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(u64::MAX)
 }
 
 // 快照并落盘：短临界区取锁序列化，写盘在锁外。调用方不得已持有 state 锁；
@@ -862,6 +879,26 @@ fn pet_default_pos(app: &AppHandle) -> (i32, i32) {
     let h = (112.0 * pet_scale * dpi) as i32;
     let work = work_area_at(1600, 900);
     (work.right - w - 24, work.bottom - h - 24)
+}
+
+// FR-PET-005：把窗口位置夹进所在显示器的工作区，保证整窗可见（含任务栏区域）。
+// 拖拽落点、缩放重排、菜单/气泡尺寸变化都走这里，避免宠物被推出屏幕后「消失」。
+fn clamp_to_work_area(x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
+    // 用窗口中心判断所在显示器太宽松：窗口压在屏幕底沿外时中心可能仍在屏内，
+    // 夹紧就失效了。这里要求「整个窗口都落在工作区内」，越界任意一边都拉回。
+    let work = work_area_at(x + w / 2, y + h / 2);
+    let max_x = (work.right - w).max(work.left);
+    let max_y = (work.bottom - h).max(work.top);
+    let cx = if x < work.left { work.left } else if x > max_x { max_x } else { x };
+    let cy = if y < work.top { work.top } else if y > max_y { max_y } else { y };
+    (cx, cy)
+}
+
+// 夹紧并设置位置，返回最终坐标
+fn place_pet(pet: &tauri::WebviewWindow, x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
+    let (cx, cy) = clamp_to_work_area(x, y, w, h);
+    let _ = pet.set_position(Position::Physical(PhysicalPosition::new(cx, cy)));
+    (cx, cy)
 }
 
 fn position_pet(app: &AppHandle) {
@@ -3022,11 +3059,273 @@ fn regex_like_contains(t: &str, keys: &[&str]) -> bool {
     keys.iter().any(|k| lower.contains(k))
 }
 
+// ================= 皮肤资源外部存储（NFR-PERF-004） =================
+// 导入皮肤的图片 / 音效以前以 data URL 完整存进状态，data.json 涨到十几 MB 后，
+// 每次 state_load / state_save 都要整份序列化、跨 IPC、复制备份，设置页与宠物窗口明显卡顿。
+// 现在把大块资源从状态里摘出来，改存：
+//   data.json             settings.skinPack / skins[].pack 的 files / sounds 变为 {"$blob":"skins/<id>.json"}
+//   skins/<id>.json       该皮肤的 {"files":{…},"sounds":{…}}，id 与 skins[].id 一致
+//   skins/current.json    当前生效皮肤的资源快照（pet / bubble 直接读）
+// 读取时按 `$blob` 把资源原地填回，前端拿到的结构与以前完全一致；写入时再摘出去。
+// 迁移在启动加载时做一次，之后状态文件只跟元数据一样大。
+const SKIN_BLOB_DIR: &str = "skins";
+const SKIN_BLOB_MARK: &str = "$blob";
+
+// 内存资源缓存：Key = 引用相对路径，Value = {"files":…,"sounds":…}
+type SkinAssets = std::collections::HashMap<String, Value>;
+
+fn skin_blob_name(id: &str) -> String {
+    let safe: String = id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    if safe.is_empty() { "_".to_string() } else { safe }
+}
+
+fn skin_blob_dir(ctx: &AppCtx) -> std::path::PathBuf {
+    ctx.data_path
+        .parent()
+        .map(|d| d.join(SKIN_BLOB_DIR))
+        .unwrap_or_else(|| std::path::PathBuf::from(SKIN_BLOB_DIR))
+}
+
+fn skin_blob_path(ctx: &AppCtx, rel: &str) -> Option<std::path::PathBuf> {
+    let name = rel.strip_prefix(&format!("{}/", SKIN_BLOB_DIR))?;
+    // 只接受 `skins/<单层文件名>.json`，杜绝路径穿越
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || !name.ends_with(".json")
+    {
+        return None;
+    }
+    Some(skin_blob_dir(ctx).join(name))
+}
+
+// 只有含非空字符串条目才算有资源；`{}` 这类空壳（前端序列化产物）不算，
+// 否则会把已外部化的资源文件覆盖成空壳。
+// 合并两份资源：新值里非空的键覆盖旧值，空壳不覆盖
+fn merge_assets(old: Option<Value>, new: &Value) -> Value {
+    let mut out = old.unwrap_or_else(|| json!({"files": {}, "sounds": {}}));
+    for key in ["files", "sounds"] {
+        if let Some(items) = new[key].as_object() {
+            if items.is_empty() {
+                continue;
+            }
+            if !out[key].is_object() {
+                out[key] = json!({});
+            }
+            if let Some(dst) = out[key].as_object_mut() {
+                for (k, v) in items {
+                    dst.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn pack_has_bytes(pack: &Value) -> bool {
+    ["files", "sounds"].iter().any(|k| {
+        pack[k]
+            .as_object()
+            .map(|o| o.values().any(|v| v.as_str().map(|s| !s.is_empty()).unwrap_or(false)))
+            .unwrap_or(false)
+    })
+}
+
+fn assets_of(files: &Value, sounds: &Value) -> Value {
+    json!({ "files": files, "sounds": sounds })
+}
+
+fn skin_assets(ctx: &AppCtx) -> std::sync::MutexGuard<'_, SkinAssets> {
+    ctx.skin_assets.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+// 写入资源文件并放进内存缓存；返回引用路径
+fn store_skin_assets(ctx: &AppCtx, id: &str, assets: Value) -> Option<String> {
+    let rel = format!("{}/{}.json", SKIN_BLOB_DIR, skin_blob_name(id));
+    if let Some(path) = skin_blob_path(ctx, &rel) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let text = serde_json::to_string(&assets).ok()?;
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, &text).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+    skin_assets(ctx).insert(rel.clone(), assets);
+    Some(rel)
+}
+
+fn load_skin_assets(ctx: &AppCtx, rel: &str) -> Option<Value> {
+    if let Some(v) = skin_assets(ctx).get(rel) {
+        return Some(v.clone());
+    }
+    let path = skin_blob_path(ctx, rel)?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let v: Value = serde_json::from_str(&text).ok()?;
+    skin_assets(ctx).insert(rel.to_string(), v.clone());
+    Some(v)
+}
+
+// 把一个 pack 的资源摘出去落到 blob，pack 里只留 {"$blob":…}；返回是否有改动。
+// 输入可能是「内联资源」（导入 / 维护后），也可能是前端回传时只剩引用（已外部化）。
+fn externalize_pack(ctx: &AppCtx, id: &str, pack: &mut Value) -> bool {
+    if !pack.is_object() {
+        return false;
+    }
+    let existing_ref = pack[SKIN_BLOB_MARK].as_str().map(|s| s.to_string());
+    let files = pack["files"].take();
+    let sounds = pack["sounds"].take();
+    let incoming = assets_of(&files, &sounds);
+    let inline_bytes = pack_has_bytes(&incoming);
+    if inline_bytes {
+        // 同一皮肤可能被连续外部化两次（例如皮肤包内 files 与 sounds 分属不同批次）：
+        // 与已有资源合并，空壳不得覆盖已有文件，否则音效会被 later 的空对象冲掉。
+        let merged = match &existing_ref {
+            Some(rel) => merge_assets(load_skin_assets(ctx, rel), &incoming),
+            None => incoming.clone(),
+        };
+        if let Some(rel) = store_skin_assets(ctx, id, merged) {
+            if let Some(o) = pack.as_object_mut() {
+                o.insert(SKIN_BLOB_MARK.to_string(), Value::String(rel));
+            }
+            return true;
+        }
+        return false;
+    }
+    // 没有内联资源：沿用原引用；引用也没有就说明这个皮肤没有资源，保持干净
+    if let Some(o) = pack.as_object_mut() {
+        match existing_ref {
+            Some(rel) => {
+                o.insert(SKIN_BLOB_MARK.to_string(), Value::String(rel));
+            }
+            None => {
+                o.remove(SKIN_BLOB_MARK);
+            }
+        }
+    }
+    false
+}
+
+// 把 `$blob` 指向的资源填回 pack（前端看到的仍是完整结构）
+fn hydrate_pack(ctx: &AppCtx, pack: &mut Value) {
+    let Some(rel) = pack[SKIN_BLOB_MARK].as_str().map(|s| s.to_string()) else {
+        return;
+    };
+    if let Some(assets) = load_skin_assets(ctx, &rel) {
+        pack["files"] = assets["files"].clone();
+        pack["sounds"] = assets["sounds"].clone();
+    }
+    // 保留引用：前端保存时据它把资源换回引用，避免每次回传十几 MB
+    if let Some(o) = pack.as_object_mut() {
+        o.insert(SKIN_BLOB_MARK.to_string(), Value::String(rel));
+    }
+}
+
+// 状态快照（内部存储形态）：当前皮肤的引用需要单独带一份，避免被其他字段挤掉
+fn blob_refs(st: &Value) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    if let Some(a) = st["settings"]["skins"].as_array() {
+        for s in a {
+            if let (Some(id), Some(rel)) = (s["id"].as_str(), s["pack"][SKIN_BLOB_MARK].as_str()) {
+                out.insert(id.to_string(), rel.to_string());
+            }
+        }
+    }
+    if let Some(rel) = st["settings"]["skinPack"][SKIN_BLOB_MARK].as_str() {
+        out.insert("current".to_string(), rel.to_string());
+    }
+    out
+}
+
+// 迁移后清理不再被任何皮肤引用的资源文件
+fn prune_skin_assets(ctx: &AppCtx, st: &Value) {
+    let keep: std::collections::HashSet<String> = blob_refs(st)
+        .into_values()
+        .filter_map(|r| r.rsplit('/').next().map(|s| s.to_string()))
+        .collect();
+    if let Ok(entries) = std::fs::read_dir(skin_blob_dir(ctx)) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let is_asset = name.ends_with(".json");
+            if is_asset && !keep.contains(&name) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let mut cache = skin_assets(ctx);
+    cache.retain(|rel, _| rel.rsplit('/').next().map(|n| keep.contains(n)).unwrap_or(false));
+}
+
 // ================= Tauri 命令 =================
 
+// 前端拿到的状态是「完整形态」：皮肤资源按 $blob 引用就地展开
+fn state_hydrated(ctx: &AppCtx) -> Value {
+    let mut v = ctx.state.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(a) = v["settings"]["skins"].as_array_mut() {
+        for s in a.iter_mut() {
+            hydrate_pack(ctx, &mut s["pack"]);
+        }
+    }
+    let mut pack = v["settings"]["skinPack"].clone();
+    hydrate_pack(ctx, &mut pack);
+    v["settings"]["skinPack"] = pack;
+    v
+}
+
+// 启动迁移：旧版 data.json 里内联的皮肤资源 → skins/*.json，状态只留 $blob 引用。
+// 只在确实存在内联资源时重写数据文件；失败不阻断启动（下次保存会再次尝试）。
+fn migrate_skin_assets(app: &AppHandle) {
+    let ctx = app.state::<AppCtx>();
+    let changed = {
+        let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut changed = false;
+        let ids: Vec<(usize, String)> = st["settings"]["skins"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .enumerate()
+                    .map(|(i, s)| (i, s["id"].as_str().unwrap_or("").to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (i, id) in ids {
+            if id.is_empty() {
+                continue;
+            }
+            let mut pack = st["settings"]["skins"][i]["pack"].clone();
+            if externalize_pack(&ctx, &id, &mut pack) {
+                st["settings"]["skins"][i]["pack"] = pack;
+                changed = true;
+            }
+        }
+        let mut pack = st["settings"]["skinPack"].clone();
+        if pack.is_object() && externalize_pack(&ctx, "current", &mut pack) {
+            st["settings"]["skinPack"] = pack;
+            changed = true;
+        }
+        changed
+    };
+    if changed {
+        prune_skin_assets(&ctx, &ctx.state.lock().unwrap_or_else(|e| e.into_inner()));
+        persist_state(&ctx);
+        log_event(app, "info", "skin.assets.externalized", "皮肤图片 / 音效已迁出数据文件");
+    }
+}
+
 #[tauri::command]
-fn state_load(ctx: tauri::State<AppCtx>) -> Value {
-    ctx.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
+async fn state_load(app: AppHandle) -> Result<Value, String> {
+    // 快照 + 展开皮肤资源是阻塞 I/O：放到后台线程，别占主线程（打开设置最明显）
+    tauri::async_runtime::spawn_blocking(move || {
+        let ctx = app.state::<AppCtx>();
+        state_hydrated(&ctx)
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // 合并前端全量快照：提醒与部分设置以主进程为准（便于单元测试）
@@ -3060,14 +3359,81 @@ fn merge_state_snapshot(st: &mut Value, state: Value, origin: &str) {
     }
 }
 
-#[tauri::command]
-fn state_save(app: AppHandle, ctx: tauri::State<AppCtx>, state: Value, origin: String) -> Result<(), String> {
+// NFR-PERF-004：保存前把皮肤图片 / 音效摘到 `skins/*.json`，
+// 状态里只留引用，data.json 与 IPC 体积不随皮肤数量增长。
+// 前端回传的快照里，已外部化的皮肤只有 `$blob` 引用、没有内联资源。
+// 合并会用整份快照替换状态，所以先记下旧引用，合并后按 id 继承，避免资源被空对象冲掉。
+fn absorb_state(ctx: &AppCtx, state: Value, origin: &str) {
     {
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
-        merge_state_snapshot(&mut st, state, &origin);
+        let prev_refs = blob_refs(&st);
+        merge_state_snapshot(&mut st, state, origin);
+        if let Some(a) = st["settings"]["skins"].as_array_mut() {
+            for s in a.iter_mut() {
+                let id = s["id"].as_str().unwrap_or("").to_string();
+                let has_bytes = pack_has_bytes(&s["pack"]);
+                if !has_bytes && s["pack"].is_object() {
+                    if let Some(rel) = prev_refs.get(&id) {
+                        s["pack"][SKIN_BLOB_MARK] = Value::String(rel.clone());
+                    }
+                }
+            }
+        }
+        if st["settings"]["skinPack"].is_object() {
+            let has_bytes = pack_has_bytes(&st["settings"]["skinPack"]);
+            if !has_bytes {
+                // 当前皮肤快照优先沿用同一 id 的资源文件，退回到 "current"
+                let cur_id = st["settings"]["activeSkin"].as_str().unwrap_or("").to_string();
+                if let Some(rel) = prev_refs.get(&cur_id).or_else(|| prev_refs.get("current")) {
+                    st["settings"]["skinPack"][SKIN_BLOB_MARK] = Value::String(rel.clone());
+                }
+            }
+        }
+        // 先取一份 id 清单（借用结束后再落盘，避免持锁做 I/O 之外的复制）
+        let ids: Vec<(usize, String)> = st["settings"]["skins"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .enumerate()
+                    .map(|(i, s)| (i, s["id"].as_str().unwrap_or("").to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (i, id) in ids {
+            if id.is_empty() {
+                continue;
+            }
+            let mut pack = st["settings"]["skins"][i]["pack"].clone();
+            if externalize_pack(ctx, &id, &mut pack) {
+                st["settings"]["skins"][i]["pack"] = pack;
+            }
+        }
+        let mut pack = st["settings"]["skinPack"].clone();
+        // 当前皮肤快照与 skins[] 里的同一条重复，统一存到 "current" 这个独立文件，
+        // 避免它和某个皮肤条目共用文件后互相覆盖
+        if pack.is_object() && externalize_pack(ctx, "current", &mut pack) {
+            st["settings"]["skinPack"] = pack;
+        }
     }
-    persist_state(&ctx);
-    let _ = app.emit("state-changed", json!({"origin": origin}));
+}
+
+#[tauri::command]
+async fn state_save(
+    app: AppHandle,
+    state: Value,
+    origin: String,
+) -> Result<(), String> {
+    let handle = app.clone();
+    let origin_tag = origin.clone();
+    // 序列化 + 写盘是阻塞 I/O：放后台线程，主线程 / 其他窗口不再被十几 MB 的复制卡住
+    tauri::async_runtime::spawn_blocking(move || {
+        let ctx = handle.state::<AppCtx>();
+        absorb_state(&ctx, state, &origin);
+        persist_state(&ctx);
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let _ = app.emit("state-changed", json!({"origin": origin_tag}));
     Ok(())
 }
 
@@ -4941,9 +5307,12 @@ fn pet_clicked(app: AppHandle) -> Result<(), String> {
 fn pet_save_pos(app: AppHandle, ctx: tauri::State<AppCtx>) -> Result<(), String> {
     let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
     let pos = pet.outer_position().map_err(|e| e.to_string())?;
+    let size = pet.outer_size().map_err(|e| e.to_string())?;
+    // 拖动可能停在屏幕边缘外：先夹回工作区再存，避免下次启动 / 显示时人物「消失」
+    let (x, y) = place_pet(&pet, pos.x, pos.y, size.width as i32, size.height as i32);
     {
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
-        st["settings"]["petPos"] = json!({"x": pos.x, "y": pos.y});
+        st["settings"]["petPos"] = json!({"x": x, "y": y});
     }
     persist_state(&ctx);
     Ok(())
@@ -5026,12 +5395,13 @@ fn pet_set_size(app: AppHandle, w: f64, h: f64) -> Result<(), String> {
     let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
     let pos = pet.outer_position().map_err(|e| e.to_string())?;
     let size = pet.outer_size().map_err(|e| e.to_string())?;
-    let new_x = pos.x + size.width as i32 / 2 - (w * sf(&pet)) as i32 / 2;
-    let new_y = pos.y + size.height as i32 - (h * sf(&pet)) as i32;
+    let new_w = (w * sf(&pet)) as i32;
+    let new_h = (h * sf(&pet)) as i32;
+    let new_x = pos.x + size.width as i32 / 2 - new_w / 2;
+    let new_y = pos.y + size.height as i32 - new_h;
     pet.set_size(Size::Logical(LogicalSize::new(w, h)))
         .map_err(|e| e.to_string())?;
-    pet.set_position(Position::Physical(PhysicalPosition::new(new_x, new_y)))
-        .map_err(|e| e.to_string())?;
+    place_pet(&pet, new_x, new_y, new_w, new_h);
     Ok(())
 }
 
@@ -5148,8 +5518,7 @@ fn pet_resize_keep(
     let new_y = (pet_y - new_pet_y * dpi).round() as i32;
     pet.set_size(Size::Logical(LogicalSize::new(w, h)))
         .map_err(|e| e.to_string())?;
-    pet.set_position(Position::Physical(PhysicalPosition::new(new_x, new_y)))
-        .map_err(|e| e.to_string())?;
+    place_pet(&pet, new_x, new_y, (w * dpi).round() as i32, (h * dpi).round() as i32);
     Ok(())
 }
 
@@ -5162,7 +5531,24 @@ fn set_pet_scale(app: AppHandle, ctx: tauri::State<AppCtx>, scale: f64) -> Resul
         st["settings"]["petScale"] = json!(scale);
     }
     persist_state(&ctx);
-    let _ = pet.set_size(Size::Logical(LogicalSize::new(120.0 * scale, 112.0 * scale)));
+    // 缩放以「底边中点」为锚点重排，并夹回工作区：贴边放大时不会把宠物顶出屏幕
+    let (pos, size) = (pet.outer_position(), pet.outer_size());
+    if let (Ok(p), Ok(sz)) = (pos, size) {
+        let dpi = sf(&pet);
+        let nw = (120.0 * scale * dpi).round() as i32;
+        let nh = (112.0 * scale * dpi).round() as i32;
+        let nx = p.x + sz.width as i32 / 2 - nw / 2;
+        let ny = p.y + sz.height as i32 - nh;
+        let _ = pet.set_size(Size::Logical(LogicalSize::new(120.0 * scale, 112.0 * scale)));
+        // 记录夹紧后的真实位置，否则贴边缩放后下次仍按越界坐标重排
+        let (fx, fy) = place_pet(&pet, nx, ny, nw, nh);
+        let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
+        st["settings"]["petPos"] = json!({"x": fx, "y": fy});
+        drop(st);
+        persist_state(&ctx);
+    } else {
+        let _ = pet.set_size(Size::Logical(LogicalSize::new(120.0 * scale, 112.0 * scale)));
+    }
     // 前端据此更新 petSc 与舞台 transform（此前无事件导致缩放视觉失效）
     let _ = app.emit_to("pet", "state-changed", json!({"origin": "backend"}));
     Ok(())
@@ -5738,7 +6124,7 @@ fn main() {
                 .build()
                 .expect("HTTP 客户端构建失败");
             app.manage(AppCtx {
-                data_path,
+                data_path: data_path.clone(),
                 state: Mutex::new(state),
                 stop: AtomicBool::new(false),
                 chat_seq: std::sync::atomic::AtomicU64::new(0),
@@ -5751,8 +6137,13 @@ fn main() {
                 file_lock: Mutex::new(()),
                 tool_wait: Mutex::new(std::collections::HashMap::new()),
                 clipboard_last: Mutex::new(String::new()),
+                skin_assets: Mutex::new(std::collections::HashMap::new()),
                 http,
             });
+
+            // NFR-PERF-004：把旧版数据里内联的皮肤图片 / 音效迁到 skins/*.json，
+            // 让 data.json 只保留元数据。迁移会重写一次数据文件，仅在确有内联资源时发生。
+            migrate_skin_assets(app.handle());
 
             // DS-001 / NFR-SEC-001：迁移旧版可能残留的明文 API Key
             migrate_legacy_secrets(app.handle());
@@ -6234,6 +6625,7 @@ mod tests {
                 file_lock: Mutex::new(()),
                 tool_wait: Mutex::new(std::collections::HashMap::new()),
                 clipboard_last: Mutex::new(String::new()),
+                skin_assets: Mutex::new(std::collections::HashMap::new()),
                 http: reqwest::Client::new(),
             };
             {
@@ -6242,6 +6634,125 @@ mod tests {
             }
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"ok\":true}");
             let _ = std::fs::remove_file(&path);
+        }
+
+        // 测试用 AppCtx：数据文件放在临时目录，其余字段取中性默认值
+        fn test_ctx(dir: &std::path::Path) -> AppCtx {
+            let _ = std::fs::create_dir_all(dir);
+            AppCtx {
+                data_path: dir.join("data.json"),
+                state: Mutex::new(json!({})),
+                stop: AtomicBool::new(false),
+                chat_seq: std::sync::atomic::AtomicU64::new(0),
+                chat_cancelled: AtomicBool::new(false),
+                bubble_anchor_below: Mutex::new(false),
+                fg_before: Mutex::new(0),
+                pet_visible: Mutex::new(true),
+                pending: Mutex::new(vec![]),
+                dnd_queue: Mutex::new(vec![]),
+                file_lock: Mutex::new(()),
+                tool_wait: Mutex::new(std::collections::HashMap::new()),
+                clipboard_last: Mutex::new(String::new()),
+                skin_assets: Mutex::new(std::collections::HashMap::new()),
+                http: reqwest::Client::new(),
+            }
+        }
+
+        // NFR-PERF-004：皮肤图片 / 音效必须离开 data.json，保存后再读回结构不变
+        #[test]
+        fn skin_assets_are_externalized_and_hydrated() {
+            let dir = std::env::temp_dir().join("deskpet-skin-blob");
+            let _ = std::fs::remove_dir_all(&dir);
+            let ctx = test_ctx(&dir);
+            let durl = "data:image/png;base64,AAAA";
+            let initial = json!({
+                "settings": {
+                    "activeSkin": "sk-1",
+                    "skins": [
+                        { "id": "sk-1", "type": "pack", "name": "A",
+                          "pack": { "name": "A", "states": {"idle": "a.png"},
+                                    "files": {"a.png": durl}, "sounds": {"reminder.ogg": "data:audio/ogg;base64,BBBB"} } },
+                        { "id": "sk-2", "type": "pack", "name": "B",
+                          "pack": { "name": "B", "states": {"idle": "b.png"}, "files": {"b.png": durl} } }
+                    ],
+                    "skinPack": { "name": "A", "states": {"idle": "a.png"}, "files": {"a.png": durl}, "sounds": {} }
+                }
+            });
+            {
+                let mut st = ctx.state.lock().unwrap();
+                *st = initial.clone();
+            }
+            absorb_state(&ctx, initial.clone(), "settings");
+
+            // 状态（内部形态）里不再有图片数据，只剩引用
+            let stored = ctx.state.lock().unwrap().clone();
+            let text = serde_json::to_string(&stored).unwrap();
+            assert!(!text.contains("data:image/png"), "data.json 里仍内联图片：{} 字节", text.len());
+            assert!(stored["settings"]["skins"][0]["pack"]["files"].as_object().is_none());
+            let rel = stored["settings"]["skins"][0]["pack"][SKIN_BLOB_MARK].as_str().unwrap().to_string();
+            assert!(rel.starts_with("skins/"), "引用路径异常：{rel}");
+            // 两个皮肤各自一个文件
+            assert_ne!(
+                stored["settings"]["skins"][1]["pack"][SKIN_BLOB_MARK].as_str(),
+                Some(rel.as_str())
+            );
+            assert!(skin_blob_path(&ctx, &rel).unwrap().exists(), "资源文件未落盘");
+
+            // 读回（前端形态）：结构与初始一致，且含图片与音效
+            let hydrated = state_hydrated(&ctx);
+            assert_eq!(hydrated["settings"]["skins"][0]["pack"]["files"]["a.png"], durl);
+            assert_eq!(hydrated["settings"]["skins"][0]["pack"]["sounds"]["reminder.ogg"], "data:audio/ogg;base64,BBBB");
+            assert_eq!(hydrated["settings"]["skinPack"]["files"]["a.png"], durl);
+            // 前端形态同时带引用标记：保存时据此把资源换回引用，避免回传十几 MB
+            assert_eq!(
+                hydrated["settings"]["skins"][0]["pack"][SKIN_BLOB_MARK].as_str(),
+                Some(rel.as_str())
+            );
+            // 回传时只带标记、不带内容：再次保存不得把资源写丢
+            let echo = hydrated.clone();
+            absorb_state(&ctx, echo, "settings");
+            let after = state_hydrated(&ctx);
+            assert_eq!(after["settings"]["skins"][0]["pack"]["files"]["a.png"], durl);
+            assert_eq!(
+                after["settings"]["skins"][0]["pack"]["sounds"]["reminder.ogg"],
+                "data:audio/ogg;base64,BBBB",
+                "前端回传只有引用时，音效不能被冲掉"
+            );
+
+            // 保存时体积只跟元数据有关：100 KB 图片 → 状态文本远小于 1 KB
+            let small = ctx.state.lock().unwrap().clone();
+            assert!(serde_json::to_string(&small).unwrap().len() < 2048);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        // 引用路径必须限定在 skins/ 下（防路径穿越）
+        #[test]
+        fn skin_blob_path_rejects_traversal() {
+            let dir = std::env::temp_dir().join("deskpet-skin-blob-path");
+            let ctx = test_ctx(&dir);
+            for bad in ["../evil.json", "skins/../evil.json", "skins/a/b.json", "other/a.json", "skins/a.txt", ""] {
+                assert!(skin_blob_path(&ctx, bad).is_none(), "应拒绝 {bad}");
+            }
+            assert!(skin_blob_path(&ctx, "skins/sk-1.json").is_some());
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        // FR-PET-005：越界坐标必须被夹回工作区，整窗可见
+        #[test]
+        fn pet_position_is_clamped_into_work_area() {
+            let work = work_area_at(960, 500);
+            let w = 120;
+            let h = 112;
+            // 右下溢出（用户现场：y=903，工作区高 1032）
+            let (x, y) = clamp_to_work_area(work.right - 50, work.bottom - 10, w, h);
+            assert!(x + w <= work.right && y + h <= work.bottom, "右下未夹紧：({x},{y})");
+            // 左上溢出
+            let (x, y) = clamp_to_work_area(work.left - 200, work.top - 200, w, h);
+            assert_eq!((x, y), (work.left, work.top));
+            // 尚未越界的位置保持原样（不能把正常摆放的宠物强行挪走）
+            let inside_x = work.left + 100;
+            let inside_y = work.top + 100;
+            assert_eq!(clamp_to_work_area(inside_x, inside_y, w, h), (inside_x, inside_y));
         }
 
         fn rem(id: &str, due: i64, rule: &str) -> Value {
@@ -6408,14 +6919,23 @@ mod tests {
                 file_lock: Mutex::new(()),
                 tool_wait: Mutex::new(std::collections::HashMap::new()),
                 clipboard_last: Mutex::new(String::new()),
+                skin_assets: Mutex::new(std::collections::HashMap::new()),
                 http: reqwest::Client::new(),
             };
             write_state_file(&ctx, "{\"v\":1}");
+            // 小文件每次写盘都会刷新备份：第二次写入前 .bak 应是第一次的内容
             write_state_file(&ctx, "{\"v\":2}");
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"v\":2}");
             let bak = path.with_extension("json.bak");
             assert_eq!(std::fs::read_to_string(&bak).unwrap(), "{\"v\":1}");
             assert!(!path.with_extension("json.tmp").exists());
+
+            // 大文件 + 新鲜备份：不再每次全量复制（十几 MB 的额外 I/O 曾拖慢所有保存）
+            let big = format!("{{\"pad\":\"{}\"}}", "x".repeat(3 * 1024 * 1024));
+            write_state_file(&ctx, &big);
+            let bak_before = std::fs::read_to_string(&bak).unwrap();
+            write_state_file(&ctx, &format!("{{\"pad\":\"{}\"}}", "y".repeat(3 * 1024 * 1024)));
+            assert_eq!(std::fs::read_to_string(&bak).unwrap(), bak_before, "大文件不应每次复制备份");
             let _ = std::fs::remove_dir_all(&dir);
         }
 
@@ -6919,6 +7439,24 @@ mod codex_contract_tests {
                 "states": {"idle": "missing.png"}
             });
             assert!(skin_zip_bytes(&pack).unwrap_err().contains("状态"));
+        }
+
+        // 皮肤管理：单张图片与 Codex 宠物导入入口必须保持屏蔽（UI 无入口 + 渲染层不注册导入处理）
+        #[test]
+        fn skin_management_hides_image_and_codex_import() {
+            let html = include_str!("../../src/settings.html");
+            for gone in ["id=\"skinPick\"", "id=\"codexPetPick\"", "id=\"codexExportBtn\"",
+                         "id=\"codexPetFile\"", "id=\"skinFile\""] {
+                assert!(!html.contains(gone), "已屏蔽的导入入口仍在页面中：{gone}");
+            }
+            // 保留的导入入口：八态单图与皮肤包
+            for kept in ["id=\"skinSheetPick\"", "id=\"skinPackPick\""] {
+                assert!(html.contains(kept), "保留的导入入口丢失：{kept}");
+            }
+            // 兜底：旧渲染层若仍投递文件，不得再调用主进程解包
+            assert!(!html.contains("invoke('codex_pet_import'"), "Codex 导入调用未移除");
+            assert!(!html.contains("type: 'image', name: f.name"), "单张图片导入写入皮肤库的流程未移除");
+            assert!(html.contains("$id('skinFile')?.addEventListener('change'"), "单图兜底提示缺失");
         }
 
         #[test]

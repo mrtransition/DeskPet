@@ -58,11 +58,36 @@ let S = null;
 async function loadState() { S = await invoke('state_load'); return S; }
 let saveTimer = null;
 let savePending = false;
+/* NFR-PERF-004：皮肤图片 / 音效由主进程按 `$blob` 引用单独存放，前端拿到的仍是完整数据。
+   回传时把已经落盘的资源换回引用（只带标记），否则每次保存都要序列化 + 传输十几 MB，
+   设置页与宠物窗口都会明显卡顿。资源被改动时清掉 `$blob` 标记，让主进程重建文件。 */
+const SKIN_BLOB_MARK = '$blob';
+// 读取皮肤资源（图片 / 音效）；改动后调用 markPackDirty 让本次保存带上新资源
+function packFiles(pack) { return (pack && pack.files) || {}; }
+function markPackDirty(pack) {
+  if (pack && typeof pack === 'object') delete pack[SKIN_BLOB_MARK];
+  return pack;
+}
+function stripSkinAssets(pack) {
+  if (!pack || typeof pack !== 'object' || !pack[SKIN_BLOB_MARK]) return pack;
+  const out = { ...pack };
+  if (out.files && Object.keys(out.files).length) out.files = {};
+  if (out.sounds && Object.keys(out.sounds).length) out.sounds = {};
+  return out;
+}
+function stateForSave() {
+  const snap = { ...S, settings: { ...S.settings } };
+  const skins = Array.isArray(S.settings.skins) ? S.settings.skins : [];
+  snap.settings.skins = skins.map(item => (item.type === 'pack' && item.pack
+    ? { ...item, pack: stripSkinAssets(item.pack) } : item));
+  if (S.settings.skinPack) snap.settings.skinPack = stripSkinAssets(S.settings.skinPack);
+  return snap;
+}
 async function saveState() {
   clearTimeout(saveTimer);
   savePending = true;
   saveTimer = setTimeout(async () => {
-    try { await invoke('state_save', { state: S, origin: MY_ORIGIN }); }
+    try { await invoke('state_save', { state: stateForSave(), origin: MY_ORIGIN }); }
     catch (e) { toast('保存失败：' + e, 'err'); }
     finally { savePending = false; }
   }, 200);
@@ -71,7 +96,7 @@ async function saveState() {
 async function saveStateNow() {
   clearTimeout(saveTimer);
   savePending = true;
-  try { await invoke('state_save', { state: S, origin: MY_ORIGIN }); }
+  try { await invoke('state_save', { state: stateForSave(), origin: MY_ORIGIN }); }
   catch (e) { toast('保存失败：' + e, 'err'); throw e; }
   finally { savePending = false; }
 }

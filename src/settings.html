@@ -10,6 +10,25 @@ body { background: var(--bg); display: flex; flex-direction: column; }
 #app { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .win-title { cursor: default; }
 [data-tauri-drag-region] { -webkit-app-region: drag; }
+/* 智能去除背景：双栏预览 + 参数联动（方案文档路径 A） */
+.bg-panel { margin-top: 10px; }
+.bg-previews { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.bg-preview { border: 1px solid var(--line); border-radius: var(--r); background: #FDFEFE; overflow: hidden; }
+.bg-preview-head { padding: 4px 9px; font-size: 10px; color: var(--t3); border-bottom: 1px solid var(--line); background: #F7FAFD; }
+.bg-canvas-wrap { display: flex; align-items: center; justify-content: center; min-height: 130px; max-height: 260px; padding: 6px; }
+.bg-canvas-wrap canvas { display: block; max-width: 100%; max-height: 246px; width: auto; height: auto; }
+.bg-canvas-wrap.checker {
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #E7EDF5 25%, transparent 25%),
+    linear-gradient(-45deg, #E7EDF5 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #E7EDF5 75%),
+    linear-gradient(-45deg, transparent 75%, #E7EDF5 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+.bg-params { margin-top: 10px; }
+.bg-status { margin-top: 7px; font-size: 10px; color: var(--t3); line-height: 1.5; min-height: 15px; }
 </style>
 </head>
 <body>
@@ -112,19 +131,48 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           <h4><span data-i18n="s41">皮肤</span> <span class="tag" data-i18n="d.skinBuiltin">FR-SKN-001 内置 3 套</span></h4>
           <div class="skin-cards" id="skinSel"></div>
           <div class="inline-opts" style="margin-top:9px">
-            <button id="skinPick" data-i18n="s43">导入单张图片（GIF / APNG / WebP，自动裁剪内容）</button>
+            <!-- 单张图片与 Codex 宠物导入入口已屏蔽：仅保留八态单图与皮肤包两种导入方式 -->
             <button id="skinSheetPick" data-i18n="s44">导入八态单图（4×2 自动切割）</button>
             <button id="skinPackPick" data-i18n="s45">导入皮肤包（.zip：图集+状态机+音效，≤128 MB）</button>
-            <button id="codexPetPick" data-i18n="s46">导入 Codex 宠物（pet.json + 1536×1872 图集）</button>
             <button id="skinReset" data-i18n="s47">恢复内置矢量皮肤</button>
-            <input id="skinFile" type="file" accept="image/gif,image/png,image/webp" hidden>
             <input id="skinSheetFile" type="file" accept="image/png,image/webp" hidden>
             <input id="skinPackFile" type="file" accept=".zip,application/zip" hidden>
-            <input id="codexPetFile" type="file" accept=".zip,application/zip" hidden>
           </div>
-          <div class="fnote" id="skinFileInfo" data-i18n="s48">导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互。导入时会自动裁掉四周留白与导出残留的棋盘格底色（长边超 4096 先缩放，48 MB 上限）；动图与 8×9 图集整幅保留，不抠图；4×2 八态单图请使用「导入八态单图」按格切割。</div>
+          <div class="fnote" id="skinFileInfo" data-i18n="s48">导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互。自定义形象请使用「导入八态单图」（4×2 自动切割）或「导入皮肤包」（.deskpet-skin.zip）；单张图片与 Codex 宠物导入入口已关闭。</div>
           <div class="fnote" data-i18n-html="h49">八态单图规则：单张图按 <b>4 列 × 2 行</b>排列，按行读取 8 个状态，顺序固定为 <code>idle / happy / sleep / work / click / drag / error / talk</code>。导入时逐格切割、裁掉格内留白，并统一画布和底边对齐，切换状态时角色不会跳动；背景需为透明或浅色棋盘格。</div>
-          <div class="fnote" data-i18n-html="h53">Codex 宠物遵循 OpenAI Codex Pet Contract：<code>pet.json</code>（id / displayName / description / spritesheetPath）+ 8 列 × 9 行、单格 192×208、总尺寸 1536×1872 的透明图集；九行依次为 idle / running-right / running-left / waving / jumping / failed / waiting / running / review，未使用的格子必须完全透明。可直接导入 <code>~/.codex/pets/&lt;id&gt;/</code> 目录打包成的 zip，也可把当前皮肤导出为 Codex 宠物包。</div>
+          <div class="fnote" data-i18n-html="h53">皮肤包规范见 <code>docs/皮肤与图集规范.md</code>：<code>skin.json</code>（name 必填，states 映射八态）+ 八态图片（png / gif / webp）+ 可选音效（ogg / mp3 / wav），整包 ≤128 MB、单文件 ≤64 MB、解压 ≤256 MB、≤200 个条目；缺失状态回退 <code>idle</code>。Codex 宠物导入入口已关闭。</div>
+        </div>
+        <div class="sec">
+          <h4><span data-i18n="bg.title">智能去除背景</span> <span class="tag" data-i18n="bg.tag">可选 · 纯色 / 简单背景</span></h4>
+          <div class="fnote" data-i18n="bg.note">可选步骤：选择 JPG / PNG / WebP 图片，自动去掉纯色或简单背景，生成透明 PNG 后再进入「八态单图」切割与对齐流程。仅适合白墙、绿幕、蓝幕等简单背景，无法处理发丝、毛发与半透明物体。</div>
+          <div class="inline-opts" style="margin-top:8px">
+            <button id="bgPick" data-i18n="bg.pick">选择图片去背景（JPG / PNG / WebP）</button>
+            <button id="bgClose" data-i18n="bg.close" hidden>收起预览</button>
+            <input id="bgFile" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+          </div>
+          <div id="bgPanel" class="bg-panel" hidden>
+            <div class="bg-previews">
+              <div class="bg-preview">
+                <div class="bg-preview-head" data-i18n="bg.original">原图</div>
+                <div class="bg-canvas-wrap"><canvas id="bgCanvasSrc"></canvas></div>
+              </div>
+              <div class="bg-preview">
+                <div class="bg-preview-head" data-i18n="bg.result">去除背景结果</div>
+                <div class="bg-canvas-wrap checker"><canvas id="bgCanvasOut"></canvas></div>
+              </div>
+            </div>
+            <div class="fgrid bg-params">
+              <div class="frow"><label><span data-i18n="bg.tolerance">颜色容差</span>：<b id="bgTolVal">32</b></label><input id="bgTolerance" type="range" min="0" max="120" step="1" value="32"></div>
+              <div class="frow"><label><span data-i18n="bg.feather">边缘羽化</span>：<b id="bgFeatherVal">2</b></label><input id="bgFeather" type="range" min="0" max="10" step="1" value="2"></div>
+              <div class="frow"><label><span data-i18n="bg.edgeSample">边缘采样带</span>：<b id="bgEdgeVal">12</b></label><input id="bgEdge" type="range" min="2" max="64" step="1" value="12"></div>
+            </div>
+            <div class="bg-status" id="bgStatus"></div>
+            <div class="btn-row">
+              <button id="bgApply" class="primary" data-i18n="bg.apply" disabled>应用结果并导入八态单图（4×2）</button>
+              <button id="bgDownload" data-i18n="bg.download" disabled>下载透明 PNG</button>
+              <button id="bgReset" data-i18n="bg.reset">恢复默认参数</button>
+            </div>
+          </div>
         </div>
         <div class="sec">
           <h4><span data-i18n="mgr.title">皮肤管理</span> <span class="tag" data-i18n="mgr.tag">查看 / 删除导入皮肤</span></h4>
@@ -144,7 +192,6 @@ body { background: var(--bg); display: flex; flex-direction: column; }
             <button id="skinBatchPick" data-i18n="s63">批量导入八态图片</button>
             <button id="skinMakePack" data-i18n="s64">以当前图片创建皮肤包</button>
             <button id="skinExportBtn" class="primary" data-i18n="s65">导出当前皮肤（.zip）</button>
-            <button id="codexExportBtn" data-i18n="s66">导出为 Codex 宠物（pet.json + spritesheet.png）</button>
           </div>
           <div class="fnote" id="skinDiag" style="margin-top:8px"></div>
           <div class="skin-state-grid" id="skinStateGrid"></div>
@@ -417,6 +464,7 @@ body { background: var(--bg); display: flex; flex-direction: column; }
 
 <script src="shared.js"></script>
 <script src="i18n.js"></script>
+<script src="background-remover.js"></script>
 <script>
 'use strict';
 let editProvId = null, editPersId = null;
@@ -883,13 +931,14 @@ function renderCustomSkin() {
   const entry = S.settings.activeSkin ? findCustomSkin(S.settings.activeSkin) : null;
   const imported = (S.settings.skins || []).length;
   if (pack && pack.format === 'codex') {
+    // 历史数据兼容：导入入口已屏蔽，旧数据仅读显示，不再提供维护 / 导出操作
     const rows = pack.rows || [];
     const frames = rows.reduce((n, r) => n + (r.frames || 0), 0);
     info.innerHTML = t('d.skinCodex', {
       name: esc(pack.name), id: esc(pack.id || '-'),
       atlas: pack.atlas ? pack.atlas.width + '×' + pack.atlas.height : '1536×1872',
       rows: rows.length, frames, size: fmtBytes(pack.byteSize || 0),
-    }) + (imported ? t('d.skinSaved', { n: imported }) : '');
+    }) + t('d.skinCodexOff') + (imported ? t('d.skinSaved', { n: imported }) : '');
     return;
   }
   if (pack && pack.files) {
@@ -968,12 +1017,11 @@ function renderSkinMaintenance() {
   verInput.disabled = !pack;
   $id('skinMakePack').disabled = !cs || !cs.data;
   $id('skinExportBtn').textContent = pack && pack.format === 'codex' ? '导出 Codex 宠物包（.zip）' : (pack ? t('d.skinExportZip') : (cs && cs.data ? '导出当前形象图片' : t('d.skinExportZip')));
-  const cxBtn = $id('codexExportBtn');
-  if (cxBtn) cxBtn.disabled = !pack;
   const diag = $id('skinDiag');
   const grid = $id('skinStateGrid');
   grid.innerHTML = '';
   if (pack && pack.format === 'codex') {
+    // Codex 宠物导入入口已屏蔽：仅提示，不再渲染帧 / 状态复用维护面板
     renderCodexMaintenance(pack);
     return;
   }
@@ -1087,6 +1135,9 @@ function renderCodexMaintenance(pack) {
   const grid = $id('skinStateGrid');
   grid.innerHTML = '';
   const rows = pack.rows || [];
+  // 导入入口已屏蔽：旧数据可查看基本契约信息，但不再提供帧级维护
+  diag.innerHTML = '<span style="color:var(--warn)">该 Codex 宠物来自历史数据；Codex 宠物导入入口已屏蔽，仅可查看、切换或删除。</span>';
+  return;
   const atlas = pack.atlas || {};
   const total = rows.reduce((n, r) => n + (r.frames || 0), 0);
   const issues = [];
@@ -1299,6 +1350,7 @@ $id('skinPruneBtn').addEventListener('click', () => {
   if (!removed.length) { toast('没有未引用的图片资源', 'warn'); return; }
   if (!confirm('清理 ' + removed.length + ' 个未被任何状态引用的图片资源？\n清理后仍可通过「导出当前皮肤」保留备份。')) return;
   removed.forEach(f => { delete pack.files[f]; });
+  markPackDirty(pack);
   saveState(); renderPetTab();
   toast('已清理 ' + removed.length + ' 个未引用图片资源', 'ok');
 });
@@ -1355,6 +1407,7 @@ $id('skinStateFile').addEventListener('change', e => {
           row.durations = d;
         } else {
           p2.files['codex-frame-' + job.row + '-' + job.col + '.png'] = data;
+          markPackDirty(p2);
           (p2.frames = p2.frames || []).forEach(x => {
             if (x.row === job.row && x.col === job.col) x.src = data;
           });
@@ -1380,6 +1433,7 @@ $id('skinStateFile').addEventListener('change', e => {
     let n = 1;
     while (pack.files[name] && pack.files[name] !== dataUrl) name = base + '-' + (++n) + '.' + ext;
     pack.files[name] = dataUrl;
+    markPackDirty(pack);
     if (!pack.states) pack.states = {};
     pack.states[st] = name;
     saveState(); renderPetTab();
@@ -1429,6 +1483,7 @@ $id('skinBatchFiles').addEventListener('change', async e => {
     let name = base + '.png', n = 1;
     while (pack.files[name] && pack.files[name] !== item.info.data) name = base + '-' + (++n) + '.png';
     pack.files[name] = item.info.data;
+    markPackDirty(pack);
     if (item.info.cropped) cropped++;
     if (item.hit) { pack.states[item.hit[0]] = name; matched++; }
   }
@@ -1438,7 +1493,7 @@ $id('skinBatchFiles').addEventListener('change', async e => {
     : '（文件名未匹配状态，可在下拉框中手动指定）'), matched ? 'ok' : 'warn');
 });
 
-$id('skinPick').addEventListener('click', () => $id('skinFile').click());
+/* 单张图片：导入入口已屏蔽（无 #skinPick 按钮），由 #skinFile 的兜底监听统一提示 */
 $id('skinReset').addEventListener('click', () => {
   if (!activeCustomSkin()) { toast('当前已使用内置皮肤', 'warn'); return; }
   S.settings.activeSkin = null;
@@ -1446,31 +1501,40 @@ $id('skinReset').addEventListener('click', () => {
   saveState(); renderPetTab();
   toast('已切换回内置矢量皮肤（导入的皮肤仍保留在列表中）', 'ok');
 });
-$id('skinFile').addEventListener('change', e => {
-  const f = e.target.files[0];
+// 单张图片导入入口已屏蔽：保留兜底，旧渲染层缓存仍触发 input 时直接丢弃，不写入皮肤库
+$id('skinFile')?.addEventListener('change', e => {
   e.target.value = '';
-  const bad = petImageFileOk(f);
-  if (bad) { if (f) toast(bad, 'warn'); return; }
-  petImageAnalyze(f).then(info => {
-    const entry = {
-      id: uid('sk'), type: 'image', name: f.name,
-      label: f.name.replace(/\.[^.]+$/, '') || '自定义形象',
-      data: info.data, ts: Date.now(),
-      // 保留分析结果：宠物窗口据此判断透明通道与原始留白
-      alpha: info.hasAlpha, natural: { width: info.width, height: info.height },
-      trim: { cropped: info.cropped === true, crop: info.crop || null, note: info.note || '' },
-    };
-    S.settings.skins = S.settings.skins || [];
-    S.settings.skins.push(entry);
-    useCustomSkin(entry.id);
-    saveState(); renderPetTab();
-    const size = info.width && info.height ? '（' + info.width + '×' + info.height + '）' : '';
-    const how = info.cropped
-      ? '已自动裁剪内容' + size
-      : (info.note || '保留原始画面') + size;
-    toast('已导入形象：' + f.name + ' · ' + how, info.cropped ? 'ok' : 'warn');
-  }).catch(err => toast('导入失败：' + (err && err.message ? err.message : err), 'err'));
+  toast(t('s48_off'), 'warn');
 });
+/* 八态单图落库：切割结果 → 可维护皮肤包（原图与去背景两条导入路径共用）。
+   extra.source 记录切割来源；extra.background 记录去背景参数，便于追溯。 */
+function saveEightStateSkin(info, base, extra) {
+  const name = base || '八态皮肤';
+  const sheet = {
+    layout: info.layout,
+    order: info.order.slice(),
+    source: (extra && extra.source) || '',
+    common: info.common,
+  };
+  if (extra && extra.background) sheet.background = extra.background;
+  const pack = {
+    name, version: '1.0', states: {}, group: {}, files: {}, sounds: {}, ts: Date.now(), sheet,
+  };
+  info.states.forEach(item => {
+    const file = item.state + '.png';
+    pack.files[file] = item.data;
+    pack.states[item.state] = file;
+  });
+  const entry = { id: uid('sk'), type: 'pack', name, label: name, pack, ts: Date.now() };
+  S.settings.skins = S.settings.skins || [];
+  const dup = S.settings.skins.findIndex(s => s.type === 'pack' && s.pack && s.pack.sheet && s.name === name);
+  if (dup >= 0) { entry.id = S.settings.skins[dup].id; S.settings.skins[dup] = entry; }
+  else S.settings.skins.push(entry);
+  useCustomSkin(entry.id);
+  saveState(); renderPetTab();
+  return entry;
+}
+
 /* 八态单图：按 4×2 规则切割成 8 张状态图，直接生成可维护的皮肤包 */
 $id('skinSheetPick').addEventListener('click', () => $id('skinSheetFile').click());
 $id('skinSheetFile').addEventListener('change', e => {
@@ -1480,23 +1544,7 @@ $id('skinSheetFile').addEventListener('change', e => {
   if (bad) { if (f) toast(bad, 'warn'); return; }
   petImageSplitEight(f).then(info => {
     const base = safeSkinFileName(f.name, '八态皮肤').replace(/\.[^.]+$/, '') || '八态皮肤';
-    const pack = {
-      name: base, version: '1.0', states: {}, group: {}, files: {}, sounds: {}, ts: Date.now(),
-      // 保留切割来源与规则，便于后续追溯 / 重新导出
-      sheet: { layout: info.layout, order: info.order.slice(), source: f.name, common: info.common },
-    };
-    info.states.forEach(item => {
-      const file = item.state + '.png';
-      pack.files[file] = item.data;
-      pack.states[item.state] = file;
-    });
-    const entry = { id: uid('sk'), type: 'pack', name: base, label: base, pack, ts: Date.now() };
-    S.settings.skins = S.settings.skins || [];
-    const dup = S.settings.skins.findIndex(s => s.type === 'pack' && s.pack && s.pack.sheet && s.name === base);
-    if (dup >= 0) { entry.id = S.settings.skins[dup].id; S.settings.skins[dup] = entry; }
-    else S.settings.skins.push(entry);
-    useCustomSkin(entry.id);
-    saveState(); renderPetTab();
+    saveEightStateSkin(info, base, { source: f.name });
     toast('已导入八态单图：' + base + ' · 4×2 切割为 8 张（' + info.order.join(' / ') + '）', 'ok');
   }).catch(err => toast('八态单图切割失败：' + (err && err.message ? err.message : err), 'err'));
 });
@@ -1529,44 +1577,9 @@ $id('skinPackFile').addEventListener('change', e => {
   rd.onerror = () => toast('读取文件失败', 'err');
   rd.readAsDataURL(f);
 });
-$id('codexPetPick').addEventListener('click', () => $id('codexPetFile').click());
-/* FR-SKN-003：Codex 宠物包（pet.json + spritesheet）由主进程校验并切片 */
-$id('codexPetFile').addEventListener('change', e => {
-  const f = e.target.files[0];
-  e.target.value = '';
-  if (!f) return;
-  if (f.size > 128 * 1024 * 1024) { toast('宠物包超过 128 MB', 'err'); return; }
-  const rd = new FileReader();
-  rd.onload = async () => {
-    const b64 = String(rd.result).split(',')[1] || '';
-    try {
-      const pack = await invoke('codex_pet_import', { data: b64 });
-      // 同名（同 id）皮肤覆盖旧条目，避免列表堆积
-      const entry = { id: uid('sk'), type: 'pack', name: pack.name || 'Codex 宠物', label: pack.name || 'Codex 宠物', pack, ts: Date.now() };
-      S.settings.skins = S.settings.skins || [];
-      const dup = S.settings.skins.findIndex(s => s.type === 'pack' && s.pack && s.pack.format === 'codex' && s.pack.id === pack.id);
-      if (dup >= 0) { entry.id = S.settings.skins[dup].id; S.settings.skins[dup] = entry; }
-      else S.settings.skins.push(entry);
-      useCustomSkin(entry.id);
-      saveState();
-      renderPetTab();
-      toast('已导入 Codex 宠物：' + pack.name + '（' + (pack.rows || []).length + ' 行 / ' +
-        (pack.rows || []).reduce((n, r) => n + (r.frames || 0), 0) + ' 帧）', 'ok');
-    } catch (err) { toast('导入失败：' + err, 'err'); }
-  };
-  rd.onerror = () => toast('读取文件失败', 'err');
-  rd.readAsDataURL(f);
-});
-$id('codexExportBtn').addEventListener('click', async () => {
-  const pack = S.settings.skinPack;
-  if (!pack || !pack.files) { toast('请先选择一个皮肤或 Codex 宠物', 'warn'); return; }
-  try {
-    const path = await invoke('codex_pet_export', { pack });
-    toast('已导出 Codex 宠物：' + path, 'ok');
-    invoke('reveal_file', { path }).catch(() => { });
-  } catch (e) { toast('导出失败：' + e, 'err'); }
-});
-
+/* Codex 宠物导入入口已屏蔽：按钮与「导出为 Codex 宠物」均已移除，这里只保留兜底 */
+$id('codexPetPick')?.addEventListener('click', () => toast(t('s48_off'), 'warn'));
+$id('codexPetFile')?.addEventListener('change', e => { e.target.value = ''; toast(t('s48_off'), 'warn'); });
 /* FR-PET-009：自动裁剪规范（见 docs/自动裁剪规范.md）
    所有阈值集中在此，规范文档与本表一一对应；改动必须同步文档与验收用例。 */
 const PET_CROP = {
@@ -1647,15 +1660,20 @@ function petImageIsAnimated(dataUrl, mime, name) {
   }
 }
 
-// P1 归一化：长边超限先等比缩小；后续坐标都在缩略图上算，输出时再按 scale 还原
-function petImageRaster(f) {
-  return readImageFile(f).then(dataUrl => new Promise((resolve, reject) => {
+// P1 归一化：长边超限先等比缩小；后续坐标都在缩略图上算，输出时再按 scale 还原。
+// source 可以是 File / Blob，也可以是已生成的 data URL（去背景结果需要再次切割时使用）。
+// cap 允许去背景等场景单独收紧最大边，默认仍用自动裁剪规范的 4096。
+function petImageRaster(source, cap) {
+  const fromDataUrl = typeof source === 'string';
+  const maxSide = cap || PET_CROP.maxSide;
+  const read = fromDataUrl ? Promise.resolve(source) : readImageFile(source);
+  return read.then(dataUrl => new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       const w = img.naturalWidth || img.width;
       const h = img.naturalHeight || img.height;
       if (!w || !h) { reject(new Error('图片尺寸无效')); return; }
-      const scale = Math.min(1, PET_CROP.maxSide / Math.max(w, h));
+      const scale = Math.min(1, maxSide / Math.max(w, h));
       const sw = Math.max(1, Math.round(w * scale));
       const sh = Math.max(1, Math.round(h * scale));
       const c = document.createElement('canvas');
@@ -1666,7 +1684,11 @@ function petImageRaster(f) {
       g.drawImage(img, 0, 0, sw, sh);
       let px;
       try { px = g.getImageData(0, 0, sw, sh).data; } catch (err) { reject(err); return; }
-      resolve({ img, dataUrl, w, h, sw, sh, scale, px, mime: (f && f.type) || '', name: (f && f.name) || '' });
+      resolve({
+        img, dataUrl, w, h, sw, sh, scale, px,
+        mime: fromDataUrl ? 'image/png' : ((source && source.type) || ''),
+        name: fromDataUrl ? 'background-removed.png' : ((source && source.name) || ''),
+      });
     };
     img.onerror = () => reject(new Error('图片无法解析'));
     img.src = dataUrl;
@@ -1918,6 +1940,172 @@ function petImageSplitEight(f) {
     return { states, width: w, height: h, layout: '4x2', order: EIGHT_STATE_SHEET.order.slice(), common: { width: outW, height: outH } };
   });
 }
+
+/* ============ 智能去除背景（可选步骤，纯前端路径 A） ============
+   见 docs/方案：将极简图片背景去除工具合并到 DeskPet.md。
+   处理链：选择图片 → 双栏预览 / 调参 → 应用结果并导入八态单图（4×2）或导出透明 PNG。
+   算法位于 background-remover.js，本段只负责文件、画布与参数联动。 */
+const BG_REMOVE = Object.freeze({ maxSide: 1600, tolerance: 32, feather: 2, edgeSample: 12 });
+let bgState = null, bgTimer = null, bgJob = 0;
+
+const bgIsEn = () => !!(typeof S !== 'undefined' && S && S.settings && S.settings.lang === 'en');
+const bgErrText = err => (err && err.message ? err.message : String(err));
+
+function bgFileBad(f) {
+  if (!f) return t('bg.needImage');
+  if (!/^image\/(jpeg|png|webp)$/i.test(f.type || '') && !/\.(jpe?g|png|webp)$/i.test(f.name || '')) return t('bg.needImage');
+  if (f.size > PET_CROP.maxBytes) return t('bg.tooBig', { mb: Math.round(PET_CROP.maxBytes / 1024 / 1024) });
+  return '';
+}
+
+function bgPanelShow(open) {
+  $id('bgPanel').hidden = !open;
+  $id('bgClose').hidden = !open;
+}
+
+function bgSyncLabels() {
+  $id('bgTolVal').textContent = $id('bgTolerance').value;
+  $id('bgFeatherVal').textContent = $id('bgFeather').value;
+  $id('bgEdgeVal').textContent = $id('bgEdge').value;
+}
+
+function bgClosePanel() {
+  bgJob++;                 // 让仍在排队的处理结果失效
+  bgState = null;
+  clearTimeout(bgTimer);
+  bgPanelShow(false);
+  $id('bgFile').value = '';
+  // 释放大图 canvas 的 backing store，避免关闭预览后仍长期占用内存
+  ['bgCanvasSrc', 'bgCanvasOut'].forEach(id => { $id(id).width = 0; $id(id).height = 0; });
+}
+
+// 先让「处理中」显示出来，再在下一帧执行同步像素运算
+function bgSchedule() {
+  if (!bgState) return;
+  clearTimeout(bgTimer);
+  bgSyncLabels();
+  $id('bgApply').disabled = true;
+  $id('bgDownload').disabled = true;
+  $id('bgStatus').textContent = t('bg.processing');
+  bgTimer = setTimeout(() => requestAnimationFrame(() => bgRender()), 60);
+}
+
+function bgRender() {
+  if (!bgState || !window.BgRemover) return;
+  const job = bgState.job;
+  const tolerance = +$id('bgTolerance').value;
+  const feather = +$id('bgFeather').value;
+  const edgeSample = +$id('bgEdge').value;
+  let out, info;
+  try {
+    out = new ImageData(new Uint8ClampedArray(bgState.base), bgState.sw, bgState.sh);
+    info = BgRemover.removeBackground(out, { tolerance, feather, edgeSample });
+  } catch (err) {
+    if (bgState && bgState.job === job) {
+      $id('bgStatus').textContent = t('bg.applyFail', { msg: bgErrText(err) });
+      toast(t('bg.applyFail', { msg: bgErrText(err) }), 'err');
+    }
+    return;
+  }
+  if (!bgState || bgState.job !== job) return;
+
+  bgState.result = out;
+  bgState.info = info;
+  const c = $id('bgCanvasOut');
+  c.width = bgState.sw;
+  c.height = bgState.sh;
+  c.getContext('2d').putImageData(out, 0, 0);
+
+  const hex = '#' + info.backgroundColor
+    .map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0'))
+    .join('');
+  const pct = Math.round(info.removedRatio * 1000) / 10;
+  $id('bgStatus').textContent = t('bg.status', { hex, pct, ms: Math.max(1, Math.round(info.elapsedMs)) });
+  const changed = info.removedPixels > 0;
+  $id('bgApply').disabled = !changed;
+  $id('bgDownload').disabled = !changed;
+  if (!changed) $id('bgStatus').textContent += ' · ' + t('bg.nothingRemoved');
+}
+
+async function bgLoadFile(f) {
+  const bad = bgFileBad(f);
+  if (bad) { toast(bad, 'warn'); return; }
+  if (!window.BgRemover) { toast(t('bg.applyFail', { msg: 'background-remover.js 未加载' }), 'err'); return; }
+  const job = ++bgJob;
+  bgPanelShow(true);
+  bgSyncLabels();
+  $id('bgStatus').textContent = t('bg.loading');
+  $id('bgApply').disabled = true;
+  $id('bgDownload').disabled = true;
+  try {
+    // 大图先缩到 1600 以内再处理，避免洪泛填充与模糊阻塞 WebView
+    const r = await petImageRaster(f, BG_REMOVE.maxSide);
+    if (job !== bgJob) return;
+    bgState = {
+      name: f.name || 'background',
+      sw: r.sw, sh: r.sh,
+      base: new Uint8ClampedArray(r.px),
+      result: null, info: null, job,
+    };
+    const src = $id('bgCanvasSrc');
+    src.width = r.sw;
+    src.height = r.sh;
+    src.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(r.px), r.sw, r.sh), 0, 0);
+    bgSchedule();
+  } catch (err) {
+    if (job !== bgJob) return;
+    $id('bgStatus').textContent = t('bg.applyFail', { msg: bgErrText(err) });
+    toast(t('bg.applyFail', { msg: bgErrText(err) }), 'err');
+  }
+}
+
+$id('bgPick').addEventListener('click', () => $id('bgFile').click());
+$id('bgFile').addEventListener('change', e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (f) bgLoadFile(f);
+});
+$id('bgClose').addEventListener('click', bgClosePanel);
+['bgTolerance', 'bgFeather', 'bgEdge'].forEach(id => {
+  $id(id).addEventListener('input', bgSchedule);
+});
+$id('bgReset').addEventListener('click', () => {
+  $id('bgTolerance').value = BG_REMOVE.tolerance;
+  $id('bgFeather').value = BG_REMOVE.feather;
+  $id('bgEdge').value = BG_REMOVE.edgeSample;
+  bgSchedule();
+});
+$id('bgApply').addEventListener('click', () => {
+  if (!bgState || !bgState.result || !bgState.info) { toast(t('bg.needResult'), 'warn'); return; }
+  const data = $id('bgCanvasOut').toDataURL('image/png');
+  const stem = safeSkinFileName(bgState.name, '八态皮肤').replace(/\.[^.]+$/, '') || '八态皮肤';
+  const base = cut(stem, 30) + (bgIsEn() ? '-no-bg' : '-去背景');
+  const source = bgState.name;
+  const background = {
+    tolerance: +$id('bgTolerance').value,
+    feather: +$id('bgFeather').value,
+    edgeSample: +$id('bgEdge').value,
+    color: bgState.info.backgroundColor.slice(),
+    removedRatio: Math.round(bgState.info.removedRatio * 1000) / 1000,
+  };
+  petImageSplitEight(data).then(info => {
+    saveEightStateSkin(info, base, { source, background });
+    toast(t('bg.applied', { name: base }), 'ok');
+    bgClosePanel();
+  }).catch(err => toast(t('bg.applyFail', { msg: bgErrText(err) }), 'err'));
+});
+$id('bgDownload').addEventListener('click', async () => {
+  if (!bgState || !bgState.result) { toast(t('bg.needResult'), 'warn'); return; }
+  const data = $id('bgCanvasOut').toDataURL('image/png');
+  const stem = safeSkinFileName(bgState.name, 'background').replace(/\.[^.]+$/, '') || 'background';
+  try {
+    const path = await invoke('skin_image_export', { name: stem + '-transparent', data });
+    toast(t('bg.exported', { path }), 'ok');
+    invoke('reveal_file', { path }).catch(() => { });
+  } catch (err) {
+    toast(t('bg.applyFail', { msg: bgErrText(err) }), 'err');
+  }
+});
 
 let scaleTimer = null, bubbleWTimer = null;
 $id('petScale').addEventListener('input', e => {
