@@ -334,6 +334,16 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           </div>
           <div class="fnote" data-i18n="s117">导出文件位于应用数据目录的 exports 文件夹（见导出后的提示路径）。</div>
         </div>
+        <div class="sec">
+          <h4><span data-i18n="bk.title">备份与恢复</span> <span class="tag" data-i18n="bk.tag">FR-DAT-005 本地快照</span></h4>
+          <div class="btn-row" style="margin-top:0">
+            <button id="bkCreate" class="primary" data-i18n="bk.create">创建备份</button>
+            <button id="bkRefresh" data-i18n="bk.refresh">刷新列表</button>
+            <button id="bkReveal" data-i18n="bk.reveal">打开备份目录</button>
+          </div>
+          <div class="fnote" data-i18n="bk.note">备份只写入应用数据目录 backups/，包含会话、记忆、提醒与设置（不含 API Key）。最多保留 20 份；恢复前会自动为当前数据再存一份快照，密钥需在恢复后重新填写。</div>
+          <div id="bkList"></div>
+        </div>
         <div class="sec" style="border-color:#F0C7C7">
           <h4 style="color:var(--err)"><span data-i18n="s118">危险区</span> <span class="tag" style="color:var(--err);border-color:#F0C7C7;background:var(--err-bg)" data-i18n="d.tagConfirm">DR-003 二次确认</span></h4>
           <div class="btn-row" style="margin-top:0">
@@ -526,6 +536,7 @@ function renderAll() {
   renderProvList(); renderProvEditor();
   renderPsList(); renderPeEditor();
   renderPetTab(); renderMemTab(); renderSessList(); renderPrivacyTab(); renderAbout();
+  loadBackups();
 }
 
 /* ============ 模型 ============ */
@@ -2699,6 +2710,80 @@ $id('impConfigFile').addEventListener('change', e => {
     e.target.value = '';
   };
   rd.readAsText(f);
+});
+
+/* FR-DAT-005：本地备份与恢复。列表只读 index.json 元数据，不加载备份正文。 */
+let backupCache = { items: [], dir: '' };
+function renderBackupList() {
+  const box = $id('bkList');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!backupCache.items.length) {
+    box.appendChild(el('div', 'empty-tip', t('bk.empty')));
+    return;
+  }
+  backupCache.items.forEach(it => {
+    const tagText = it.tag === 'pre-restore' ? t('bk.tagPre') : (it.tag === 'external' ? t('bk.tagExt') : t('bk.tagManual'));
+    const row = el('div', 'row-item');
+    const main = el('div', 'ri-main');
+    const title = el('div', 'ri-title');
+    title.textContent = tagText + (it.appVersion ? ' · v' + it.appVersion : '');
+    const sub = el('div', 'ri-sub');
+    const parts = [];
+    if (it.ts) parts.push(fmtDT(it.ts));
+    parts.push(fmtBytes(it.size));
+    if (it.counts) parts.push(t('bk.counts', { s: it.counts.sessions || 0, m: it.counts.memories || 0, r: it.counts.reminders || 0 }));
+    sub.textContent = parts.join(' · ');
+    main.appendChild(title); main.appendChild(sub);
+    const btns = el('div', 'ri-btns');
+    const rb = el('button', '', t('bk.restore'));
+    rb.addEventListener('click', () => restoreBackup(it));
+    const db = el('button', 'danger', t('bk.delete'));
+    db.addEventListener('click', () => deleteBackup(it));
+    btns.appendChild(rb); btns.appendChild(db);
+    row.appendChild(main); row.appendChild(btns);
+    box.appendChild(row);
+  });
+}
+async function loadBackups() {
+  try {
+    const r = await invoke('backup_list');
+    backupCache = { items: (r && r.items) || [], dir: (r && r.dir) || '' };
+    renderBackupList();
+  } catch (e) {
+    const box = $id('bkList');
+    if (box) box.innerHTML = '<div class="empty-tip">' + t('bk.loadFail') + esc(String(e)) + '</div>';
+  }
+}
+async function restoreBackup(it) {
+  if (!confirm(t('bk.confirmRestore', { f: it.file }))) return;
+  try {
+    const r = await invoke('backup_restore', { file: it.file });
+    toast(t('bk.restored', { f: r.restored, s: r.safety }), 'ok');
+    await loadState();
+    renderAll();
+  } catch (e) { toast(t('bk.restoreFail') + e, 'err'); }
+}
+async function deleteBackup(it) {
+  if (!confirm(t('bk.confirmDelete', { f: it.file }))) return;
+  try {
+    await invoke('backup_delete', { file: it.file });
+    toast(t('bk.deleted'), 'ok');
+    await loadBackups();
+  } catch (e) { toast(t('bk.deleteFail') + e, 'err'); }
+}
+$id('bkCreate').addEventListener('click', async () => {
+  try {
+    const r = await invoke('backup_create');
+    toast(t('bk.created', { f: r.file }), 'ok');
+    await loadBackups();
+  } catch (e) { toast(t('bk.createFail') + e, 'err'); }
+});
+$id('bkRefresh').addEventListener('click', loadBackups);
+$id('bkReveal').addEventListener('click', async () => {
+  if (!backupCache.dir) { await loadBackups(); }
+  if (!backupCache.dir) { toast(t('bk.loadFail'), 'err'); return; }
+  try { await invoke('reveal_file', { path: backupCache.dir }); } catch (e) { toast(String(e), 'err'); }
 });
 $id('clrSessions').addEventListener('click', () => {
   if (!confirm('清除全部 ' + S.sessions.length + ' 个会话及其消息？\n不影响记忆、供应商配置与人格。')) return;

@@ -261,6 +261,243 @@ fn persist_state(ctx: &AppCtx) {
     }
 }
 
+// ================= 本地备份与恢复（FR-DAT-005） =================
+// 备份是 data.json 的完整本地快照，写入 <app_data>/backups/，不联网、不自动上传。
+// 密钥不在 data.json 中，因此备份不含 API Key；恢复后需要重新填写。
+// 索引 index.json 只保存列表元数据，避免每次打开设置页都读取所有备份正文。
+
+const BACKUP_SCHEMA: u64 = 1;
+const BACKUP_MAX: usize = 20;
+
+fn state_counts(st: &Value) -> Value {
+    let count = |key: &str| st[key].as_array().map(|a| a.len()).unwrap_or(0);
+    json!({
+        "providers": count("providers"),
+        "personas": count("personas"),
+        "sessions": count("sessions"),
+        "messages": st["sessions"]
+            .as_array()
+            .map(|a| a.iter().map(|s| s["msgs"].as_array().map(|m| m.len()).unwrap_or(0)).sum::<usize>())
+            .unwrap_or(0),
+        "memories": count("memories"),
+        "reminders": count("reminders"),
+        "skins": st["settings"]["skins"].as_array().map(|a| a.len()).unwrap_or(0),
+    })
+}
+
+fn backup_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("backups");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+// 只接受 basename 形式的固定前缀文件名，拒绝路径穿越与 Windows 保留字符。
+fn valid_backup_name(file: &str) -> Option<String> {
+    let name = std::path::Path::new(file).file_name()?.to_str()?.to_string();
+    if name != file || !name.starts_with("deskpet-backup-") || !name.ends_with(".json") {
+        return None;
+    }
+    if name.contains("..")
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return None;
+    }
+    Some(name)
+}
+
+// 恢复前的结构校验：只接受本应用生成的快照，缺字段一律拒绝（fail closed）。
+fn parse_backup_state(text: &str) -> Result<Value, String> {
+    let v: Value = serde_json::from_str(text).map_err(|e| format!("备份文件不是有效 JSON：{}", e))?;
+    if v["schema"].as_u64() != Some(BACKUP_SCHEMA) {
+        return Err("备份格式版本不受支持".into());
+    }
+    let state = v["state"].clone();
+    if !state.is_object() {
+        return Err("备份中缺少有效状态".into());
+    }
+    for key in ["providers", "personas", "sessions", "memories", "reminders"] {
+        if !state[key].is_array() {
+            return Err(format!("备份状态缺少数组字段：{}", key));
+        }
+    }
+    if !state["settings"].is_object() {
+        return Err("备份状态缺少 settings".into());
+    }
+    Ok(state)
+}
+
+fn read_backup_index(dir: &std::path::Path) -> Vec<Value> {
+    std::fs::read_to_string(dir.join("index.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v["items"].as_array().cloned())
+        .unwrap_or_default()
+}
+
+fn write_backup_index(dir: &std::path::Path, items: &[Value]) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(&json!({"schema": BACKUP_SCHEMA, "items": items}))
+        .map_err(|e| e.to_string())?;
+    let tmp = dir.join("index.json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, dir.join("index.json")).map_err(|e| e.to_string())
+}
+
+fn create_backup(app: &AppHandle, ctx: &AppCtx, tag: &str) -> Result<Value, String> {
+    let dir = backup_dir(app)?;
+    let (state, counts) = {
+        let st = state_lock(ctx);
+        (st.clone(), state_counts(&st))
+    };
+    let created = chrono_now();
+    let ts = now_ms();
+    let stamp: String = created.chars().filter(|c| c.is_ascii_digit()).collect();
+    let file = format!("deskpet-backup-{}-{}.json", stamp, rand_suffix());
+    let wrapper = json!({
+        "schema": BACKUP_SCHEMA,
+        "createdAt": created,
+        "ts": ts,
+        "appVersion": env!("CARGO_PKG_VERSION"),
+        "tag": tag,
+        "counts": counts,
+        "state": state,
+    });
+    let text = serde_json::to_string_pretty(&wrapper).map_err(|e| e.to_string())?;
+    {
+        let _guard = ctx.file_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = dir.join(format!("{}.tmp", file));
+        std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, dir.join(&file)).map_err(|e| e.to_string())?;
+    }
+    let entry = json!({
+        "file": file,
+        "createdAt": created,
+        "ts": ts,
+        "appVersion": env!("CARGO_PKG_VERSION"),
+        "tag": tag,
+        "counts": counts,
+        "size": std::fs::metadata(dir.join(&file)).map(|m| m.len()).unwrap_or(0),
+    });
+    let mut items = read_backup_index(&dir);
+    items.retain(|it| it["file"] != entry["file"]);
+    items.insert(0, entry.clone());
+    // 只保留最近 BACKUP_MAX 份，超出的按索引顺序删除，避免无限增长。
+    while items.len() > BACKUP_MAX {
+        if let Some(old) = items.pop() {
+            if let Some(name) = old["file"].as_str().and_then(valid_backup_name) {
+                let _ = std::fs::remove_file(dir.join(name));
+            }
+        }
+    }
+    write_backup_index(&dir, &items)?;
+    Ok(entry)
+}
+
+fn list_backups(app: &AppHandle) -> Result<Value, String> {
+    let dir = backup_dir(app)?;
+    let mut items: Vec<Value> = read_backup_index(&dir)
+        .into_iter()
+        .filter(|it| {
+            it["file"]
+                .as_str()
+                .and_then(valid_backup_name)
+                .map(|n| dir.join(n).exists())
+                .unwrap_or(false)
+        })
+        .collect();
+    // 索引外的文件（例如用户手动复制进来）只列出基本信息，不读取正文。
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if valid_backup_name(&name).is_none() || items.iter().any(|it| it["file"] == name) {
+                continue;
+            }
+            let meta = e.metadata().ok();
+            let ts = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            items.push(json!({
+                "file": name,
+                "createdAt": "",
+                "ts": ts,
+                "appVersion": "",
+                "tag": "external",
+                "counts": Value::Null,
+                "size": meta.map(|m| m.len()).unwrap_or(0),
+            }));
+        }
+    }
+    items.sort_by(|a, b| b["ts"].as_i64().unwrap_or(0).cmp(&a["ts"].as_i64().unwrap_or(0)));
+    Ok(json!({"items": items, "dir": dir.to_string_lossy()}))
+}
+
+fn restore_backup(app: &AppHandle, ctx: &AppCtx, file: &str) -> Result<Value, String> {
+    let name = valid_backup_name(file).ok_or("备份文件名无效")?;
+    let dir = backup_dir(app)?;
+    let text = std::fs::read_to_string(dir.join(&name)).map_err(|_| "备份文件不存在或不可读".to_string())?;
+    let mut state = parse_backup_state(&text)?;
+    // 旧备份可能缺少新版本字段：只补默认值，不覆盖已有内容。
+    fill_defaults(&default_state(), &mut state);
+    // 覆盖前先给当前数据留一份快照；失败则不继续，避免不可回退。
+    let safety = create_backup(app, ctx, "pre-restore")?;
+    {
+        let mut st = state_lock(ctx);
+        *st = state;
+    }
+    *ctx.pending.lock().unwrap_or_else(|e| e.into_inner()) = vec![];
+    *ctx.dnd_queue.lock().unwrap_or_else(|e| e.into_inner()) = vec![];
+    persist_state(ctx);
+    if let Some(pet) = app.get_webview_window("pet") {
+        let _ = pet.set_ignore_cursor_events(false);
+    }
+    position_pet(app);
+    rebuild_tray(app);
+    let _ = app.emit("state-reset", ());
+    let _ = app.emit("state-changed", json!({"origin": "backend"}));
+    log_event(app, "warn", "backup.restored", &format!("已从 {} 恢复数据", name));
+    Ok(json!({"restored": name, "safety": safety["file"]}))
+}
+
+fn delete_backup(app: &AppHandle, file: &str) -> Result<(), String> {
+    let name = valid_backup_name(file).ok_or("备份文件名无效")?;
+    let dir = backup_dir(app)?;
+    let path = dir.join(&name);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    let mut items = read_backup_index(&dir);
+    items.retain(|it| it["file"] != name);
+    write_backup_index(&dir, &items)
+}
+
+#[tauri::command]
+fn backup_create(app: AppHandle, ctx: tauri::State<AppCtx>) -> Result<Value, String> {
+    create_backup(&app, &ctx, "manual")
+}
+
+#[tauri::command]
+fn backup_list(app: AppHandle) -> Result<Value, String> {
+    list_backups(&app)
+}
+
+#[tauri::command]
+fn backup_restore(app: AppHandle, ctx: tauri::State<AppCtx>, file: String) -> Result<Value, String> {
+    restore_backup(&app, &ctx, &file)
+}
+
+#[tauri::command]
+fn backup_delete(app: AppHandle, file: String) -> Result<(), String> {
+    delete_backup(&app, &file)
+}
+
 // NFR-MNT-001：统一日志级别 + JSON Lines 结构化日志，写入前脱敏。
 // 保留 app_log 作为 info 级别快捷入口，避免所有调用点都传事件名。
 fn app_log(app: &AppHandle, msg: &str) {
@@ -5656,17 +5893,8 @@ fn diagnostics_export(app: AppHandle, ctx: tauri::State<AppCtx>) -> Result<Strin
 
     let (counts, settings, grants_count, grants_recent) = {
         let st = state_lock(&ctx);
-        let count = |key: &str| st[key].as_array().map(|a| a.len()).unwrap_or(0);
         let tool = &st["settings"]["toolSettings"];
-        let counts = json!({
-            "providers": count("providers"),
-            "personas": count("personas"),
-            "sessions": count("sessions"),
-            "messages": st["sessions"].as_array().map(|a| a.iter().map(|s| s["msgs"].as_array().map(|m| m.len()).unwrap_or(0)).sum::<usize>()).unwrap_or(0),
-            "memories": count("memories"),
-            "reminders": count("reminders"),
-            "skins": st["settings"]["skins"].as_array().map(|a| a.len()).unwrap_or(0),
-        });
+        let counts = state_counts(&st);
         // 白名单式设置快照：新增字段不会自动进入诊断包，避免无意泄露。
         let settings = json!({
             "lang": st["settings"]["lang"],
@@ -6445,6 +6673,7 @@ fn main() {
             set_pet_taskbar, set_pet_always_on_top,
             privacy_info,
             tool_auth_set, tool_auth_reset, diagnostics_export,
+            backup_create, backup_list, backup_restore, backup_delete,
             reminder_add, reminder_snooze, reminder_delete,
             take_pending_notices,
             export_text, quit_app, get_app_version, update_check, update_download, reveal_file
@@ -7586,6 +7815,46 @@ mod codex_contract_tests {
             assert_eq!(grants[0]["tool"], "open_url");
             assert_eq!(grants[0]["action"], "allow");
             assert_eq!(grants[0]["via"], "settings");
+        }
+
+        // FR-DAT-005：备份文件名必须是固定前缀的 basename，拒绝路径穿越与外部文件
+        #[test]
+        fn backup_names_reject_traversal_and_foreign_files() {
+            assert_eq!(
+                valid_backup_name("deskpet-backup-20260101120000-1.json").as_deref(),
+                Some("deskpet-backup-20260101120000-1.json")
+            );
+            for bad in [
+                "../deskpet-backup-1.json",
+                "C:\\temp\\deskpet-backup-1.json",
+                "deskpet-backup-1.txt",
+                "index.json",
+                "deskpet-backup-../1.json",
+                "",
+            ] {
+                assert!(valid_backup_name(bad).is_none(), "应拒绝：{bad}");
+            }
+        }
+
+        // FR-DAT-005：恢复前必须校验 schema 与关键数组字段，缺字段一律拒绝
+        #[test]
+        fn backup_payload_requires_schema_and_state_arrays() {
+            let good = json!({"schema": 1, "state": default_state()});
+            assert!(parse_backup_state(&good.to_string()).is_ok());
+            assert!(parse_backup_state(&json!({"schema": 2, "state": default_state()}).to_string()).is_err());
+            assert!(parse_backup_state(&json!({"schema": 1, "state": {"settings": {}}}).to_string()).is_err());
+            let mut bad = default_state();
+            bad["sessions"] = json!({});
+            assert!(parse_backup_state(&json!({"schema": 1, "state": bad}).to_string()).is_err());
+        }
+
+        #[test]
+        fn state_counts_matches_default_state() {
+            let c = state_counts(&default_state());
+            assert_eq!(c["sessions"], 0);
+            assert_eq!(c["messages"], 0);
+            assert_eq!(c["memories"], 0);
+            assert!(c["providers"].as_u64().unwrap() >= 4);
         }
 
         #[test]
