@@ -49,6 +49,7 @@ fn focus_existing(app: &AppHandle) {
 
 const DEFAULT_STATE: &str = r##"{
   "v": 1,
+  "schema": 2,
   "providers": [
     {"id":"p-demo","name":"演示模式（内置，无需 Key）","type":"mock","baseUrl":"","model":"demo-pet-v1","headers":"","apiKey":"","isDefault":true,
      "params":{"temp":0.8,"topP":1,"maxTokens":1024,"ctxRounds":10,"ctxTokens":8000,"timeout":30,"retry":2,"stream":true}},
@@ -107,7 +108,7 @@ const DEFAULT_STATE: &str = r##"{
     "updateUrl": "https://api.github.com/repos/mrtransition/DeskPet/releases/latest",
     "updateAuto": false,
     "toolSettings": {"enabled": true, "auth": {"get_weather": "deny", "web_search": "deny"}, "grants": [], "openWhitelist": ["github.com", "www.github.com", "developer.mozilla.org", "www.bing.com", "www.baidu.com", "wikipedia.org"]},
-    "lastPersonaId": "ps-1", "lastProviderId": null
+    "lastPersonaId": "ps-1", "lastProviderId": null, "mockPinned": false
   },
   "stats": {"requests": 0, "tokensIn": 0, "tokensOut": 0}
 }"##;
@@ -157,30 +158,80 @@ struct ToolWait {
     tx: tokio::sync::oneshot::Sender<ToolDecision>,
 }
 
-fn load_or_default(path: &std::path::PathBuf) -> Value {
-    // NFR-REL-002 / NFR-REL-003：主文件损坏时回退到最近一次备份，避免静默丢失全部数据
+/// 启动加载结果：`migrated_from` 为迁移前的数据模式版本（未迁移为 None）。
+struct LoadedState {
+    state: Value,
+    migrated_from: Option<u64>,
+    /// 迁移或回退原因，用于诊断日志（可能为空）
+    note: String,
+}
+
+// NFR-REL-002 / NFR-REL-003：主文件损坏时回退到最近一次备份，避免静默丢失全部数据
+fn load_or_default_with_report(path: &std::path::PathBuf) -> LoadedState {
     let try_read = |p: &std::path::PathBuf| -> Option<Value> {
         std::fs::read_to_string(p)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
     };
     if let Some(mut v) = try_read(path) {
+        let mut note = String::new();
+        let migrated_from = migrate_loaded(path, &mut v, &mut note);
         fill_defaults(&default_state(), &mut v);
-        return v;
+        return LoadedState { state: v, migrated_from, note };
     }
     let bak = path.with_extension("json.bak");
     if let Some(mut v) = try_read(&bak) {
-        // 保留损坏文件供排查，不让下一次写入直接覆盖现场
+        // 迁移前先把损坏现场复制出来，交给 migrate_loaded 判断是否另存原始副本
+        let backup_source = path.with_extension(format!("json.corrupt-{}", now_ms()));
         if path.exists() {
-            let _ = std::fs::rename(path, path.with_extension(format!("json.corrupt-{}", now_ms())));
+            let _ = std::fs::rename(path, &backup_source);
         }
+        let mut note = String::from("主文件解析失败，已回退到上一次备份 data.json.bak");
+        let migrated_from = migrate_loaded(&backup_source, &mut v, &mut note);
         fill_defaults(&default_state(), &mut v);
-        return v;
+        return LoadedState { state: v, migrated_from, note };
     }
     if path.exists() {
         let _ = std::fs::rename(path, path.with_extension(format!("json.corrupt-{}", now_ms())));
     }
-    default_state()
+    LoadedState { state: default_state(), migrated_from: None, note: String::new() }
+}
+
+// FR-DAT-005：把已读到的数据迁移到当前数据模式。迁移失败时保留迁移前的原始现场
+// （`data.json.corrupt-<时间戳>`），并回退为默认状态启动，避免用半成品覆盖用户数据。
+fn migrate_loaded(path: &std::path::PathBuf, v: &mut Value, note: &mut String) -> Option<u64> {
+    let from = v["schema"].as_u64().unwrap_or(1);
+    match migrate_state(v) {
+        Ok(steps) => {
+            if !steps.is_empty() {
+                // 迁移前先在内存中留一份原始数据，成功后再另存（此时 path 仍是旧结构）
+                if let Ok(text) = std::fs::read_to_string(path) {
+                    let keep = serde_json::from_str::<Value>(&text)
+                        .ok()
+                        .map(|v| v["schema"].as_u64().unwrap_or(1) == from)
+                        .unwrap_or(false);
+                    if keep {
+                        let _ = std::fs::write(
+                            path.with_extension(format!("json.pre-v{}-{}", from, now_ms())),
+                            text,
+                        );
+                    }
+                }
+                *note = format!("数据模式已从 v{} 迁移到 v{}", from, DATA_SCHEMA);
+                return Some(from);
+            }
+            None
+        }
+        Err(e) => {
+            // 原始文件（未迁移）另存一份，便于人工排查或交回旧版程序
+            if let Ok(text) = std::fs::read_to_string(path) {
+                let _ = std::fs::write(path.with_extension(format!("json.corrupt-{}", now_ms())), text);
+            }
+            *note = format!("数据迁移失败（{}），已保留原始文件并回退为默认数据", e);
+            *v = default_state();
+            None
+        }
+    }
 }
 
 // 升级兼容：旧版 data.json 没有新版本新增的字段。只补缺失的键，不覆盖用户已有值；
@@ -259,6 +310,75 @@ fn persist_state(ctx: &AppCtx) {
     if let Some(s) = s {
         write_state_file(ctx, &s);
     }
+}
+
+// FR-DAT-005：状态快照统一带当前数据模式号。前端回传的整份快照可能来自旧渲染层
+// （没有 schema 字段），这里一律以主进程的 DATA_SCHEMA 为准，避免写入时丢版本号。
+fn with_data_schema(mut st: Value) -> Value {
+    if st.is_object() {
+        st["schema"] = json!(DATA_SCHEMA);
+    }
+    st
+}
+
+// ================= 数据模式版本号与迁移框架（FR-DAT-005） =================
+// `data.json` 顶层 `schema` 记录数据模式版本，`v` 字段保持原语义（数据内容版本，历史遗留）。
+// 迁移在启动加载时按「逐版本一步」执行：1 → 2 → … → DATA_SCHEMA。
+// 失败处理：迁移前先把原文件复制成 `data.json.corrupt-<时间戳>` 原始快照，
+// 回退为默认状态照常启动；成功且确有变化时才写盘（写盘同样做原子替换并保留 .bak）。
+// 备份文件外层带独立的 `schema`（BACKUP_SCHEMA），不与数据模式口径混用。
+
+const DATA_SCHEMA: u64 = 2;
+
+// 逐版本迁移的最小单元。返回 false 表示数据不符合该版本的预期形状，应中止迁移。
+type StateMigration = fn(&mut Value) -> bool;
+
+// 版本 1 → 2：引入数据模式号，并按当前默认结构补齐缺失的分组（如 `settings`）。
+// 只补缺省、不覆盖用户已有值；形状不符（不是对象）时返回 false 让迁移中止。
+fn migrate_state_v1_to_v2(st: &mut Value) -> bool {
+    if !st.is_object() {
+        return false;
+    }
+    let default = default_state();
+    if !st.as_object().map(|o| o.contains_key("settings")).unwrap_or(false) {
+        st["settings"] = default["settings"].clone();
+    }
+    if !st["settings"].is_object() {
+        return false;
+    }
+    true
+}
+
+fn migration_for(from: u64) -> Option<StateMigration> {
+    match from {
+        1 => Some(migrate_state_v1_to_v2),
+        _ => None,
+    }
+}
+
+// 返回本次迁移经过的版本步骤；`from > DATA_SCHEMA`（旧版程序看到更新格式）视为失败。
+fn migrate_state(st: &mut Value) -> Result<Vec<u64>, String> {
+    let mut from = st["schema"].as_u64().unwrap_or(1);
+    if from == 0 {
+        from = 1;
+    }
+    let mut steps = vec![];
+    while from < DATA_SCHEMA {
+        let f = migration_for(from).ok_or_else(|| format!("缺少 {} → {} 的迁移步骤", from, from + 1))?;
+        if !f(st) {
+            return Err(format!("数据不满足 v{} 的形状，迁移中止", from));
+        }
+        from += 1;
+        st["schema"] = json!(from);
+        steps.push(from);
+    }
+    if from > DATA_SCHEMA {
+        return Err(format!(
+            "数据模式 v{} 高于当前程序支持的 v{}，已停止迁移以免覆盖更新版本数据",
+            from, DATA_SCHEMA
+        ));
+    }
+    Ok(steps)
 }
 
 // ================= 本地备份与恢复（FR-DAT-005） =================
@@ -352,7 +472,7 @@ fn create_backup(app: &AppHandle, ctx: &AppCtx, tag: &str) -> Result<Value, Stri
     let dir = backup_dir(app)?;
     let (state, counts) = {
         let st = state_lock(ctx);
-        (st.clone(), state_counts(&st))
+        (with_data_schema(st.clone()), state_counts(&st))
     };
     let created = chrono_now();
     let ts = now_ms();
@@ -446,6 +566,8 @@ fn restore_backup(app: &AppHandle, ctx: &AppCtx, file: &str) -> Result<Value, St
     let mut state = parse_backup_state(&text)?;
     // 旧备份可能缺少新版本字段：只补默认值，不覆盖已有内容。
     fill_defaults(&default_state(), &mut state);
+    // 旧备份可能来自更早的数据模式：先迁移到当前模式，失败则拒绝恢复（当前数据不受影响）。
+    migrate_state(&mut state).map_err(|e| format!("备份数据无法迁移到当前模式：{}", e))?;
     // 覆盖前先给当前数据留一份快照；失败则不继续，避免不可回退。
     let safety = create_backup(app, ctx, "pre-restore")?;
     {
@@ -3734,6 +3856,11 @@ async fn state_save(
     tauri::async_runtime::spawn_blocking(move || {
         let ctx = handle.state::<AppCtx>();
         absorb_state(&ctx, state, &origin);
+        {
+            let mut st = state_lock(&ctx);
+            let next = with_data_schema(st.take());
+            *st = next;
+        }
         persist_state(&ctx);
     })
     .await
@@ -6487,7 +6614,8 @@ fn main() {
             // 只有「从未创建过数据文件」才算首次启动：老用户升级时 fill_defaults 会补上
             // guideDone = true，不会突然弹出引导页。
             let first_run = !data_path.exists();
-            let mut state = load_or_default(&data_path);
+            let loaded = load_or_default_with_report(&data_path);
+            let mut state = loaded.state;
             if first_run {
                 state["settings"]["guideDone"] = json!(false);
             }
@@ -6512,6 +6640,20 @@ fn main() {
                 skin_assets: Mutex::new(std::collections::HashMap::new()),
                 http,
             });
+
+            // FR-DAT-005：数据模式迁移的结果写入诊断日志（不含任何正文）。
+            // 成功迁移时首次落盘就写的是新结构，原始现场另存为 data.json.corrupt-<时间戳>。
+            if let Some(from) = loaded.migrated_from {
+                log_event(
+                    app.handle(),
+                    "info",
+                    "data.migrated",
+                    &format!("数据模式 v{} → v{} 迁移完成", from, DATA_SCHEMA),
+                );
+            }
+            if !loaded.note.is_empty() && loaded.migrated_from.is_none() {
+                log_event(app.handle(), "warn", "data.load_fallback", &loaded.note);
+            }
 
             // NFR-PERF-004：把旧版数据里内联的皮肤图片 / 音效迁到 skins/*.json，
             // 让 data.json 只保留元数据。迁移会重写一次数据文件，仅在确有内联资源时发生。
@@ -7944,6 +8086,181 @@ mod codex_contract_tests {
             let mut bad = default_state();
             bad["sessions"] = json!({});
             assert!(parse_backup_state(&json!({"schema": 1, "state": bad}).to_string()).is_err());
+        }
+
+        // 「配好了却还是演示模式」回归：前端解析供应商的规则必须仍然存在，且与后端口径一致
+        #[test]
+        fn provider_selection_falls_back_to_real_default() {
+            let js = include_str!("../../src/shared.js");
+            // 失效判定：会话/全局绑定仍是 mock，而用户已把真实供应商设为默认
+            assert!(js.contains("function providerBindingExpired(pv)"), "缺少绑定失效判定");
+            assert!(
+                js.contains("if (!isMockProv(pv)) return false;")
+                    && js.contains("if (S.settings.mockPinned) return false;")
+                    && js.contains("return !!dft && !isMockProv(dft);"),
+                "失效判定被改动：需保留「真实供应商有效 / 显式钉住演示模式有效 / 默认已换真实则失效」"
+            );
+            assert!(
+                js.contains("function pickProv()") && js.contains("function activeProv() { return pickProv(); }"),
+                "气泡页必须通过 pickProv 解析当前供应商"
+            );
+            // 原始缺陷：activeProv 只认会话绑定、不回退，导致会话钉在 p-demo 时永远走演示模式
+            assert!(
+                !js.contains("function activeProv() { const s = curSession(); const id = (s && s.providerId) || S.settings.lastProviderId; return getProv(id) || defProvObj(); }"),
+                "activeProv 又退回「只认会话绑定」的旧实现"
+            );
+            // 选择供应商必须立即落盘，否则防抖窗口内关窗会丢失选择
+            assert!(js.contains("S.settings.mockPinned = isMockProv(p);"), "缺少显式演示模式标记");
+            assert!(js.contains("await saveStateNow();"), "切换供应商必须立即写盘");
+            assert!(default_state()["settings"].get("mockPinned").is_some(), "默认状态缺少 mockPinned");
+
+            // 后端：会话里存的是 mock 时，mock 分支仍是内置回复（行为不变，只是前端不再错误落到这里）
+            let st = default_state();
+            let demo = st["providers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["type"] == json!("mock"))
+                .expect("默认状态应含演示供应商");
+            assert_eq!(demo["id"], json!("p-demo"));
+            assert_eq!(st["personas"][0]["providerId"], json!("p-demo"));
+            assert_eq!(st["settings"]["mockPinned"], json!(false), "演示模式默认未显式钉住");
+        }
+
+        // FR-DAT-005：默认数据必须带当前数据模式号
+        #[test]
+        fn default_state_carries_data_schema() {
+            assert_eq!(default_state()["schema"], json!(DATA_SCHEMA));
+        }
+
+        // FR-DAT-005：无 schema 的旧数据按 v1 处理并逐版本迁到当前模式，用户已有值不丢
+        #[test]
+        fn legacy_state_without_schema_migrates_to_current() {
+            let mut old = json!({"v": 1, "sessions": [{"id": "s1", "title": "旧会话"}],
+                                 "settings": {"lang": "en"}});
+            let steps = migrate_state(&mut old).expect("v1 数据应可迁移");
+            assert_eq!(steps, vec![DATA_SCHEMA]);
+            assert_eq!(old["schema"], json!(DATA_SCHEMA));
+            assert_eq!(old["settings"]["lang"], json!("en"));
+            assert_eq!(old["sessions"][0]["title"], json!("旧会话"));
+            // 已是最新模式的再迁移一次应为空步骤（幂等）
+            assert!(migrate_state(&mut old).unwrap().is_empty());
+        }
+
+        // FR-DAT-005：缺失 settings 的旧数据在迁移时按默认结构补齐
+        #[test]
+        fn migration_fills_missing_settings_group() {
+            let mut st = json!({"v": 1});
+            assert_eq!(migrate_state(&mut st).unwrap(), vec![DATA_SCHEMA]);
+            assert!(st["settings"].is_object());
+            assert_eq!(st["settings"]["lang"], json!("zh"));
+        }
+
+        // FR-DAT-005：形状不符与「更新版本的数据」都必须中止迁移，不产出半成品
+        #[test]
+        fn migration_rejects_bad_shape_and_newer_schema() {
+            let mut bad = json!({"schema": 1, "settings": "not-an-object"});
+            assert!(migrate_state(&mut bad).is_err());
+            assert_eq!(bad["schema"], json!(1), "中止时不得改写版本号");
+
+            let mut newer = json!({"schema": DATA_SCHEMA + 3, "settings": {}});
+            let e = migrate_state(&mut newer).unwrap_err();
+            assert!(e.contains("高于当前程序支持"), "错误信息应说明版本过高：{e}");
+            assert_eq!(newer["schema"], json!(DATA_SCHEMA + 3), "不得覆盖更新版本数据");
+        }
+
+        // FR-DAT-005：每个旧版本都必须有对应迁移步骤，否则加载时会静默停在旧版
+        #[test]
+        fn every_legacy_version_has_a_step() {
+            for v in 1..DATA_SCHEMA {
+                assert!(migration_for(v).is_some(), "缺少 v{v} → v{} 的迁移步骤", v + 1);
+            }
+            assert!(migration_for(DATA_SCHEMA).is_none());
+        }
+
+        // FR-DAT-005：前端回传的整份快照不得丢掉数据模式号
+        #[test]
+        fn saved_snapshot_keeps_data_schema() {
+            let from_frontend = json!({"v": 1, "settings": {"lang": "en"}});
+            let st = with_data_schema(from_frontend);
+            assert_eq!(st["schema"], json!(DATA_SCHEMA));
+            assert_eq!(st["settings"]["lang"], json!("en"));
+        }
+
+        // FR-DAT-005：备份外层 schema 沿用 BACKUP_SCHEMA，恢复时会迁移到当前数据模式
+        #[test]
+        fn old_backup_is_migrated_on_restore() {
+            let mut st = parse_backup_state(&json!({"schema": BACKUP_SCHEMA, "state": default_state()}).to_string())
+                .expect("合法备份");
+            st.as_object_mut().unwrap().remove("schema");
+            assert_eq!(migrate_state(&mut st).unwrap(), vec![DATA_SCHEMA]);
+            assert_eq!(st["schema"], json!(DATA_SCHEMA));
+        }
+
+        // FR-DAT-005：真实文件走一遍启动加载 —— 旧数据被迁移、原始数据另存、写回后二次加载幂等
+        #[test]
+        fn load_migrates_legacy_file_and_keeps_original_copy() {
+            let dir = std::env::temp_dir().join(format!("deskpet-data-migrate-{}", rand_suffix()));
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("data.json");
+            let legacy = json!({"v": 1, "sessions": [{"id": "s1", "title": "旧会话"}],
+                                "settings": {"lang": "en"}});
+            std::fs::write(&path, serde_json::to_string(&legacy).unwrap()).unwrap();
+
+            let loaded = load_or_default_with_report(&path);
+            assert_eq!(loaded.migrated_from, Some(1));
+            assert_eq!(loaded.state["schema"], json!(DATA_SCHEMA));
+            assert_eq!(loaded.state["sessions"][0]["title"], json!("旧会话"));
+
+            // 原始数据另存为 data.json.pre-v1-<ts>，不得覆盖主文件
+            let copies: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("data.json.pre-v1-"))
+                .collect();
+            assert_eq!(copies.len(), 1, "迁移前原始数据应另存一份");
+            let kept: Value = serde_json::from_str(&std::fs::read_to_string(copies[0].path()).unwrap()).unwrap();
+            assert!(kept["schema"].is_null(), "另存的是迁移前的原样数据");
+
+            // 新结构写回后再次加载：不再迁移，且不产生新的原始副本
+            let ctx = AppCtx {
+                data_path: path.clone(),
+                state: Mutex::new(loaded.state),
+                stop: AtomicBool::new(false),
+                chat_seq: std::sync::atomic::AtomicU64::new(0),
+                chat_cancelled: AtomicBool::new(false),
+                bubble_anchor_below: Mutex::new(false),
+                fg_before: Mutex::new(0),
+                pet_visible: Mutex::new(true),
+                pending: Mutex::new(vec![]),
+                dnd_queue: Mutex::new(vec![]),
+                file_lock: Mutex::new(()),
+                tool_wait: Mutex::new(std::collections::HashMap::new()),
+                clipboard_last: Mutex::new(String::new()),
+                skin_assets: Mutex::new(std::collections::HashMap::new()),
+                http: reqwest::Client::new(),
+            };
+            persist_state(&ctx);
+            let again = load_or_default_with_report(&path);
+            assert_eq!(again.migrated_from, None);
+            assert_eq!(again.state["sessions"][0]["title"], json!("旧会话"));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        // FR-DAT-005：迁移失败时保留原始现场并回退为默认数据，不让应用起不来
+        #[test]
+        fn load_falls_back_to_default_when_migration_fails() {
+            let dir = std::env::temp_dir().join(format!("deskpet-data-migrate-bad-{}", rand_suffix()));
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("data.json");
+            std::fs::write(&path, json!({"schema": 1, "settings": [], "personas": [], "sessions": [],
+                                         "memories": [], "reminders": []}).to_string()).unwrap();
+            let loaded = load_or_default_with_report(&path);
+            assert_eq!(loaded.migrated_from, None);
+            assert!(loaded.note.contains("迁移失败"), "应记录失败原因：{}", loaded.note);
+            assert_eq!(loaded.state["schema"], json!(DATA_SCHEMA));
+            assert_eq!(loaded.state["sessions"].as_array().unwrap().len(), 0);
+            let _ = std::fs::remove_dir_all(&dir);
         }
 
         #[test]

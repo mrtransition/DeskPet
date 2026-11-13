@@ -267,12 +267,14 @@ function renderHead() {
 }
 function openSwitchMenu(x, y) {
   const s = curSession();
+  const curId = (activeProv() || {}).id;
   const items = [];
   S.providers.forEach(pr => items.push({
     icon: '🤖', label: pr.name + (pr.model && pr.type !== 'mock' ? ' · ' + pr.model : ''),
-    check: s ? s.providerId === pr.id : false,
-    onClick: () => {
-      if (s) { s.providerId = pr.id; S.settings.lastProviderId = pr.id; saveState(); }
+    check: curId === pr.id,
+    onClick: async () => {
+      // 立即写盘，避免防抖窗口内关窗丢失选择（之后又回到演示模式）
+      await setSessionProvider(pr.id);
       renderHead();
     },
   }));
@@ -439,14 +441,25 @@ async function generate() {
     toast('请求过于频繁，请 ' + Math.ceil((cooldownUntil - Date.now()) / 1000) + ' 秒后再试', 'warn');
     return;
   }
-  const prov = activeProv();
-  // 演示模式提示：已配置真实供应商（含密钥或本地服务）但当前仍是演示模式时，一次性提醒切换
-  if (prov.type === 'mock') {
+  let prov = activeProv();
+  // 已配置真实供应商却仍解析到演示模式：先自动切到真实默认并落盘，不让用户在无提示下继续得到内置回复
+  if (isMockProv(prov)) {
     const real = S.providers.find(p => p.type !== 'mock' && p.baseUrl);
-    if (real && !mockHintShown) {
-      mockHintShown = true;
-      pushSys('当前为演示模式（内置回复，非真实模型）。已检测到配置「' + real.name + '」，点上方 ⚡ 可切换，或在设置 → 模型中将其设为默认', { warn: true, ephemeral: true });
+    if (real) {
+      await setSessionProvider(real.id);
+      prov = getProv(real.id);
+      renderHead();
+      if (!mockHintShown) {
+        mockHintShown = true;
+        pushSys('已将本次对话切换到「' + real.name + '」，后续回复来自真实模型（可在 ⚡ 里改回演示模式）', { ephemeral: true });
+      }
     }
+  }
+  // 会话绑定已失效（例如供应商被删除）时必须显式说明，不能让回复来源含糊
+  const sess = curSession();
+  if (sess && sess.providerId && sess.providerId !== prov.id) {
+    sess.providerId = prov.id;
+    saveState();
   }
   // FR-MEM-003：先压缩较早对话，再按摘要 + 最近轮次构建上下文
   preparing = true;

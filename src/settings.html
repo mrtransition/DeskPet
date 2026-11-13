@@ -31,6 +31,9 @@ body { background: var(--bg); display: flex; flex-direction: column; }
 }
 .bg-params { margin-top: 10px; }
 .bg-status { margin-top: 7px; font-size: 10px; color: var(--t3); line-height: 1.5; min-height: 15px; }
+/* 当前生效供应商：直接说明回复来自真实模型还是内置演示内容 */
+.pv-active { font-size: var(--fs-xs); line-height: 1.6; color: var(--t2); background: #F4FAF7; border: 1px solid var(--line); border-radius: var(--r); padding: 7px 10px; }
+.pv-active.mock { color: #8A6A12; background: #FFF8E6; border-color: #F0DCA8; }
 </style>
 </head>
 <body>
@@ -82,6 +85,7 @@ body { background: var(--bg); display: flex; flex-direction: column; }
               <div class="frow"><label data-i18n="s20">失败自动重试（主进程，0–5）</label><input id="pvRetry" type="number" min="0" max="5" step="1"></div>
               <div class="frow"><label data-i18n="s21">流式输出</label><select id="pvStream"><option value="1" data-i18n="s22">开启（推荐）</option><option value="0" data-i18n="s23">关闭</option></select></div>
             </div>
+            <div class="pv-active" id="pvActive" style="margin-top:10px"></div>
             <div class="btn-row">
               <button id="pvTest" data-i18n="s24">测试连接</button>
               <button id="pvSave" class="primary" data-i18n="s25">保存</button>
@@ -544,7 +548,7 @@ $id('setNav').addEventListener('click', e => {
 });
 $id('setClose').addEventListener('click', () => curWin.hide());
 function renderAll() {
-  renderProvList(); renderProvEditor();
+  renderProvList(); renderProvEditor(); renderActiveProv();
   renderPsList(); renderPeEditor();
   renderPetTab(); renderMemTab(); renderSessList(); renderPrivacyTab(); renderAbout();
   loadBackups();
@@ -596,6 +600,7 @@ async function renderProvEditor() {
     $id('pvKey').placeholder = '未配置';
   }
   hideTestResult();
+  renderActiveProv();
 }
 function applyTemplate(key) {
   const t = PROVIDER_TEMPLATES.find(x => x.key === key) || PROVIDER_TEMPLATES[0];
@@ -617,6 +622,23 @@ $id('pvNew').addEventListener('click', () => {
   name.select();
   toast('已进入新增供应商模式，填写完成后点击「保存」', 'ok');
 });
+/* 当前真正生效的供应商：会话绑定优先，失效则回退到全局选择 / 默认供应商（规则与气泡页一致）。
+   没有这一行时，「配好了却还在用演示模式」只能靠猜。 */
+function renderActiveProv() {
+  const box = $id('pvActive');
+  if (!box) return;
+  const pick = typeof pickProv === 'function' ? pickProv() : defProvObj();
+  const s = curSession();
+  const bound = s && s.providerId ? getProv(s.providerId) : null;
+  const isMock = !!pick && pick.type === 'mock';
+  let text;
+  if (!pick) text = '当前没有可用供应商，请先新增或恢复默认配置';
+  else if (isMock) text = '当前生效：' + pick.name + ' — 回复为内置演示内容，不会调用任何模型。配置真实供应商并勾选「设为默认」后，对话会自动切换。';
+  else text = '当前生效：' + pick.name + ' / ' + (pick.model || '（未填模型名）') + (bound && bound.id !== pick.id ? '（会话原绑定已失效，已自动回退到默认供应商）' : '');
+  box.textContent = text;
+  box.className = 'pv-active' + (isMock ? ' mock' : '');
+}
+
 function hideTestResult() { const t = $id('pvTestResult'); t.className = 'test-line'; t.innerHTML = ''; }
 function provFormVals() {
   return {
@@ -672,6 +694,7 @@ function saveProvider() {
   }
   saveState();
   renderProvList();
+  renderActiveProv();
   if (migrated > 0) toast('已设为默认，' + migrated + ' 个人格自动从演示模式切换到「' + v.name + '」', 'ok');
   return editProvId;
 }

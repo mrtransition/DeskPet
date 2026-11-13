@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.3.0-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.3.1-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -45,6 +45,7 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | 🩺 **健康提醒** | 久坐 / 喝水定时轻提示，默认关闭并折叠在「提醒 → 实验性增强」中；剪贴板感知同样默认关闭，点一下才处理 |
 | 🔊 **语音朗读** | AI 回复可自动朗读或逐条重读，支持系统语音选择与 0.5–2 倍语速；本地 TTS，零网络请求 |
 | 🌏 **中英双语** | 设置页、气泡与宠物右键菜单的界面文案即时切换中文 / English；人格名称、模型名与皮肤名等「内容数据」保持原文，不做翻译 |
+| 🧭 **供应商回退** | 配置好真实供应商后，即使历史会话仍记着演示模式，也会自动切到真实模型；设置 → 模型顶部直接显示「当前生效」的供应商与模型 |
 | 🪶 **轻量** | 主程序约 14 MB · 前端源码约 260 KB 且零构建（无 npm 依赖）；工作 / 睡眠状态可开启 30fps 低帧率模式 |
 
 ## 🚀 快速开始
@@ -52,7 +53,7 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 无需构建，下载即用：
 
 1. 打开本仓库 [`dist/`](dist) 目录，下载两个文件：
-   - `DeskPet.exe`（14.3 MB，主程序）
+   - `DeskPet.exe`（14.5 MB，主程序 v2.3.1）
    - `WebView2Loader.dll`（0.15 MB，引导库）
 2. 将两个文件放入**同一文件夹**，双击 `DeskPet.exe`
 
@@ -187,6 +188,16 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.3.1</b> — 数据模式迁移与「配好了却还在演示模式」修复</summary>
+
+- **数据模式版本号与迁移框架（FR-DAT-005）**：`data.json` 顶层 `schema` 记录数据模式版本，启动时逐版本迁移；迁移前另存 `data.json.pre-v<版本>-<时间戳>`，失败保留原文件并回退默认数据启动。备份恢复前同样迁移，失败则拒绝恢复。详见 [`docs/releases/v2.3.1.md`](docs/releases/v2.3.1.md)。
+- **修复：配好真实供应商后仍返回演示模式（FR-MDL-006）**：默认人格与会话绑定 `p-demo` 时，前端只认会话绑定、不回退，导致真实供应商永远不生效。现在按「会话绑定 → 全局最后选择 → 默认供应商」逐级回退到非演示供应商；手动选演示模式用 `mockPinned` 记住；切换供应商立即落盘。
+- **设置 → 模型新增「当前生效」提示**：直接显示实际使用的供应商与模型，演示模式用醒目提示说明「回复为内置演示内容」。
+- **测试**：`cargo test` 75 passed（新增 7 项）；`cargo build --release` 无警告。
+
+</details>
+
+<details>
 <summary><b>v2.3.0</b> — 智能去除背景与皮肤导入入口收敛</summary>
 
 - **智能去除背景（FR-SKN-002 扩展）**：设置页「皮肤」新增可选去背景步骤。纯前端算法（边缘带量化直方图估色 + 四边洪泛连通域 + Alpha 距离映射 + 可分离盒式羽化）处理白墙 / 绿幕 / 蓝幕等简单背景，无需联网、深度学习或新依赖；提供原图与棋盘格透明结果双栏预览，以及容差 / 羽化 / 边缘采样带实时联动。结果可直接进入 4×2 八态单图切割与对齐流程，也可导出透明 PNG。

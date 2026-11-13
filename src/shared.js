@@ -104,8 +104,49 @@ const getProv = id => S.providers.find(p => p.id === id);
 const getPers = id => S.personas.find(p => p.id === id);
 const defProvObj = () => S.providers.find(p => p.isDefault) || S.providers[0];
 const curSession = () => S.sessions.find(s => s.id === S.currentSessionId);
-function activeProv() { const s = curSession(); const id = (s && s.providerId) || S.settings.lastProviderId; return getProv(id) || defProvObj(); }
+const isMockProv = p => !!p && p.type === 'mock';
+
+/* 会话绑定的供应商是否仍然有效。
+   历史会话常把 providerId 钉在 p-demo（默认状态用人格绑定的 p-demo 开会话）；
+   用户之后在设置里新建 / 设为默认真实供应商时，老会话的绑定不会被批量改写，
+   于是「配好了却还在用演示模式」。这里把「绑定缺失」与「绑定仍是演示模式但用户
+   已经设了真实默认」都视为失效，交由调用方回退到真实默认供应商。 */
+function providerBindingExpired(pv) {
+  if (!pv) return true;
+  if (!isMockProv(pv)) return false;
+  // 用户明确选过演示模式：尊重选择，不再自动切走
+  if (S.settings.mockPinned) return false;
+  const dft = defProvObj();
+  return !!dft && !isMockProv(dft);
+}
+// 优先使用会话绑定；绑定失效时回退到全局最后选择 / 默认供应商
+function pickProv() {
+  const s = curSession();
+  const bound = s && s.providerId ? getProv(s.providerId) : null;
+  if (bound && !providerBindingExpired(bound)) return bound;
+  // 只回退到「非演示」的全局选择：真实供应商被删掉时不应该反手落到演示模式
+  const last = S.settings.lastProviderId ? getProv(S.settings.lastProviderId) : null;
+  if (last && !providerBindingExpired(last)) return last;
+  const dft = defProvObj();
+  if (dft && !providerBindingExpired(dft)) return dft;
+  return bound || last || dft || S.providers[0];
+}
+function activeProv() { return pickProv(); }
 function activePers() { const s = curSession(); const id = (s && s.personaId) || S.settings.lastPersonaId; return getPers(id) || S.personas[0]; }
+/* 切换供应商后立即落盘：可重入的保存有 200ms 防抖，切完立刻关窗会丢掉这次选择，
+   下次打开又回到演示模式（表现为「每次都还是演示模式」）。
+   演示模式是显式选择：同时记住 settings.mockPinned，否则「回退到真实默认」的规则
+   会在下一次解析时把用户手动选回的演示模式再顶掉。 */
+async function setSessionProvider(id) {
+  const p = getProv(id);
+  if (!p) return null;
+  S.settings.lastProviderId = id;
+  S.settings.mockPinned = isMockProv(p);
+  const s = curSession();
+  if (s) s.providerId = id;
+  await saveStateNow();
+  return p;
+}
 
 /* ---- 人格 / 皮肤联动（FR-PSN-005） ----
    切换人格：会话与全局默认同步，并自动切换到该人格绑定的供应商与皮肤；
