@@ -6153,11 +6153,7 @@ fn reveal_file(path: String) -> Result<(), String> {
     if !p.exists() {
         return Err("文件不存在".into());
     }
-    std::process::Command::new("explorer.exe")
-        .arg(format!("/select,{}", p.to_string_lossy()))
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("打开目录失败：{}", e))
+    platform::reveal_in_file_manager(p)
 }
 
 // 启动阶段（还没有 AppHandle）的失败无法写入结构化日志：若设置了 DESKPET_BOOT_LOG，

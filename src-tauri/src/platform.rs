@@ -207,6 +207,15 @@ mod imp {
     pub fn watch_second_launch<F: Fn() + Send + 'static>(on_second_launch: F) {
         single_instance::watch_first(on_second_launch);
     }
+
+    /// 在系统文件管理器中定位文件（只打开文件夹，不执行文件）。
+    pub fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
+        std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{}", path.to_string_lossy()))
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("打开目录失败：{}", e))
+    }
 }
 
 #[cfg(not(windows))]
@@ -246,9 +255,14 @@ mod imp {
     }
 
     pub fn watch_second_launch<F: Fn() + Send + 'static>(_on_second_launch: F) {}
+
+    pub fn reveal_in_file_manager(_path: &std::path::Path) -> Result<(), String> {
+        Err("当前平台尚未适配文件管理器定位".into())
+    }
 }
 
 pub use imp::{
     acquire_single_instance, clipboard_read_text, cursor_pos, foreground_window, mouse_left_down,
-    open_external_url, set_foreground, set_topmost, watch_second_launch, work_area_at,
+    open_external_url, reveal_in_file_manager, set_foreground, set_topmost, watch_second_launch,
+    work_area_at,
 };
