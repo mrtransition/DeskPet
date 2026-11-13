@@ -9,6 +9,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; }
 body { background: var(--bg); display: flex; flex-direction: column; }
 #app { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .win-title { cursor: default; }
+.batch-ops { display: inline-flex; gap: 8px; align-items: center; }
+.row-item .ri-check { flex: none; margin: 0; }
 [data-tauri-drag-region] { -webkit-app-region: drag; }
 /* 智能去除背景：双栏预览 + 参数联动（方案文档路径 A） */
 .bg-panel { margin-top: 10px; }
@@ -322,6 +324,15 @@ body { background: var(--bg); display: flex; flex-direction: column; }
         <div class="sec">
           <h4><span data-i18n="s111">会话历史</span> <span class="tag" data-i18n="d.tagSearch">FR-DAT-002 检索 / 导出 Markdown</span></h4>
           <input id="sessSearch" placeholder="全文检索会话标题与消息…" style="margin-bottom:8px">
+          <div class="btn-row" style="margin-top:0">
+            <button id="sessBatchToggle" data-i18n="d.batchManage">批量管理</button>
+            <span id="sessBatchOps" class="batch-ops" style="display:none">
+              <button id="sessSelectAll" data-i18n="d.selectAll">全选</button>
+              <button id="sessSelectNone" data-i18n="d.selectNone">取消选择</button>
+              <button id="sessBatchDelete" class="danger">删除选中</button>
+            </span>
+            <span id="sessSelCount" class="fnote" style="margin:0"></span>
+          </div>
           <div id="sessList"></div>
         </div>
         <div class="sec">
@@ -2554,51 +2565,123 @@ async function renderPrivacyTab() {
 }
 
 /* ============ 会话与数据 ============ */
+/* FR-DAT-006：会话重命名、批量选择与批量删除。 */
+let sessBatchMode = false;
+const sessSelected = new Set();
+
+function filteredSessions() {
+  const kw = ($id('sessSearch').value || '').trim().toLowerCase();
+  if (!kw) return S.sessions;
+  return S.sessions.filter(s => (s.title || '').toLowerCase().includes(kw) || s.msgs.some(m => (m.content || '').toLowerCase().includes(kw)));
+}
+
+function renderSessBatchBar() {
+  $id('sessBatchOps').style.display = sessBatchMode ? '' : 'none';
+  $id('sessBatchToggle').textContent = sessBatchMode ? t('d.batchExit') : t('d.batchManage');
+  $id('sessBatchDelete').textContent = t('d.batchDelete', { n: sessSelected.size });
+  $id('sessBatchDelete').disabled = sessSelected.size === 0;
+  $id('sessSelCount').textContent = sessBatchMode ? t('d.selected', { n: sessSelected.size }) : '';
+}
+
 function renderSessList() {
   const kw = ($id('sessSearch').value || '').trim().toLowerCase();
   const box = $id('sessList');
   box.innerHTML = '';
-  let list = S.sessions;
-  if (kw) list = list.filter(s => (s.title || '').toLowerCase().includes(kw) || s.msgs.some(m => (m.content || '').toLowerCase().includes(kw)));
+  // 清理已不存在的选择，避免批量删除时残留旧 ID
+  for (const id of [...sessSelected]) {
+    if (!S.sessions.some(x => x.id === id)) sessSelected.delete(id);
+  }
+  const list = filteredSessions();
   if (!list.length) {
     box.appendChild(el('div', 'empty-tip', kw ? t('d.noSessKw', { kw: esc(kw) }) : t('d.noSess')));
+    renderSessBatchBar();
     return;
   }
   list.forEach(s => {
     const pers = getPers(s.personaId);
     const row = el('div', 'row-item');
-    row.innerHTML = '<div class="ri-main"><div class="ri-title">' + esc(s.title || t('d.untitled')) + (s.id === S.currentSessionId ? ' <span class="pv-star">' + t('d.current') + '</span>' : '') + '</div>' +
-      '<div class="ri-sub">' + (pers ? pers.avatar + ' ' + esc(pers.name) : '人格已删除') + ' · ' + (s.msgs.length === 1 ? t('d.msg1') : t('d.msgs', { n: s.msgs.length })) + ' · ' + fmtDT(s.updatedAt) + '</div></div>';
+    if (sessBatchMode) {
+      const cb = el('input', 'ri-check');
+      cb.type = 'checkbox';
+      cb.checked = sessSelected.has(s.id);
+      cb.onchange = () => {
+        if (cb.checked) sessSelected.add(s.id); else sessSelected.delete(s.id);
+        renderSessBatchBar();
+      };
+      row.appendChild(cb);
+    }
+    const main = el('div', 'ri-main');
+    main.innerHTML = '<div class="ri-title">' + esc(s.title || t('d.untitled')) + (s.id === S.currentSessionId ? ' <span class="pv-star">' + t('d.current') + '</span>' : '') + '</div>' +
+      '<div class="ri-sub">' + (pers ? pers.avatar + ' ' + esc(pers.name) : '人格已删除') + ' · ' + (s.msgs.length === 1 ? t('d.msg1') : t('d.msgs', { n: s.msgs.length })) + ' · ' + fmtDT(s.updatedAt) + '</div>';
+    row.appendChild(main);
     const btns = el('div', 'ri-btns');
-    const load = el('button', '', t('d.setCurrent'));
-    load.onclick = () => {
-      S.currentSessionId = s.id;
-      S.settings.lastPersonaId = s.personaId;
-      S.settings.lastProviderId = s.providerId;
-      saveState(); renderSessList();
-      invoke('show_bubble_cmd');
-      toast('已载入会话', 'ok');
-    };
-    const exp = el('button', '', t('d.export'));
-    exp.onclick = async () => {
-      try {
-        const path = await invoke('export_text', { filename: '会话-' + (s.title || s.id) + '.md', content: sessionToMd(s) });
-        toast('已导出：' + path, 'ok');
-      } catch (e) { toast('导出失败：' + e, 'err'); }
-    };
-    const del = el('button', 'danger', t('d.del'));
-    del.onclick = () => {
-      if (!confirm('删除会话「' + (s.title || '未命名') + '」（' + s.msgs.length + ' 条消息）？')) return;
-      S.sessions = S.sessions.filter(x => x.id !== s.id);
-      if (S.currentSessionId === s.id) S.currentSessionId = null;
-      saveState(); renderSessList();
-    };
-    btns.append(load, exp, del);
+    if (!sessBatchMode) {
+      const load = el('button', '', t('d.setCurrent'));
+      load.onclick = () => {
+        S.currentSessionId = s.id;
+        S.settings.lastPersonaId = s.personaId;
+        S.settings.lastProviderId = s.providerId;
+        saveState(); renderSessList();
+        invoke('show_bubble_cmd');
+        toast('已载入会话', 'ok');
+      };
+      const exp = el('button', '', t('d.export'));
+      exp.onclick = async () => {
+        try {
+          const path = await invoke('export_text', { filename: '会话-' + (s.title || s.id) + '.md', content: sessionToMd(s) });
+          toast('已导出：' + path, 'ok');
+        } catch (e) { toast('导出失败：' + e, 'err'); }
+      };
+      const ren = el('button', '', t('d.rename'));
+      ren.onclick = () => {
+        const name = prompt(t('d.renamePrompt'), s.title || '');
+        if (name === null) return;
+        const v = name.trim();
+        if (!v) { toast(t('d.renameEmpty'), 'warn'); return; }
+        s.title = v.slice(0, 80);
+        saveState(); renderSessList();
+        toast(t('d.renamed'), 'ok');
+      };
+      const del = el('button', 'danger', t('d.del'));
+      del.onclick = () => {
+        if (!confirm(t('d.delConfirm', { f: s.title || t('d.untitled'), n: s.msgs.length }))) return;
+        S.sessions = S.sessions.filter(x => x.id !== s.id);
+        if (S.currentSessionId === s.id) S.currentSessionId = null;
+        saveState(); renderSessList();
+      };
+      btns.append(load, exp, ren, del);
+    }
     row.appendChild(btns);
     box.appendChild(row);
   });
+  renderSessBatchBar();
 }
 $id('sessSearch').addEventListener('input', renderSessList);
+$id('sessBatchToggle').addEventListener('click', () => {
+  sessBatchMode = !sessBatchMode;
+  if (!sessBatchMode) sessSelected.clear();
+  renderSessList();
+});
+$id('sessSelectAll').addEventListener('click', () => {
+  filteredSessions().forEach(s => sessSelected.add(s.id));
+  renderSessList();
+});
+$id('sessSelectNone').addEventListener('click', () => {
+  sessSelected.clear();
+  renderSessList();
+});
+$id('sessBatchDelete').addEventListener('click', () => {
+  const n = sessSelected.size;
+  if (!n) { toast(t('d.noSel'), 'warn'); return; }
+  if (!confirm(t('d.batchConfirm', { n }))) return;
+  const ids = new Set(sessSelected);
+  S.sessions = S.sessions.filter(x => !ids.has(x.id));
+  if (ids.has(S.currentSessionId)) S.currentSessionId = null;
+  sessSelected.clear();
+  saveState();
+  renderSessList();
+  toast(t('d.batchDeleted', { n }), 'ok');
+});
 $id('expAllMd').addEventListener('click', async () => {
   if (!S.sessions.length) { toast('暂无会话可导出', 'warn'); return; }
   const all = S.sessions.map(sessionToMd).join('\n\n---\n\n');
