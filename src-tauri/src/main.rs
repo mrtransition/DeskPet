@@ -516,13 +516,9 @@ fn log_event(app: &AppHandle, level: &str, event: &str, msg: &str) {
         let mut text = line.to_string();
         text.push('\n');
         let p = dir.join("deskpet.log");
-        if let Ok(mut len) = std::fs::metadata(&p).map(|m| m.len()) {
-            if len > 200_000 {
-                let _ = std::fs::remove_file(&p);
-                len = 0;
-            }
-            let _ = len;
-        }
+        // 同进程内串行化「检查大小 → 滚动 → 追加」，避免多线程同时轮转造成文件错位。
+        let _guard = LOG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        rotate_log_at(&dir, LOG_MAX_BYTES, LOG_KEEP, text.len() as u64);
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
             let _ = f.write_all(text.as_bytes());
@@ -530,17 +526,76 @@ fn log_event(app: &AppHandle, level: &str, event: &str, msg: &str) {
     }
 }
 
+// NFR-MNT-003：日志轮转。当前日志超过上限时按 .1 → .2 → .3 滚动，只保留最近
+// LOG_KEEP 份；旧版迁移归档最多保留 LOG_LEGACY_KEEP 份且不超过 30 天。
+// 轮转失败（如文件被占用）时继续追加，绝不阻断主流程。
+const LOG_MAX_BYTES: u64 = 1_048_576;
+const LOG_KEEP: usize = 3;
+const LOG_LEGACY_KEEP: usize = 3;
+const LOG_LEGACY_MAX_AGE_SECS: u64 = 30 * 24 * 3600;
+static LOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn rotate_log_at(dir: &std::path::Path, max_bytes: u64, keep: usize, incoming: u64) {
+    if keep == 0 {
+        return;
+    }
+    let p = dir.join("deskpet.log");
+    let Ok(meta) = std::fs::metadata(&p) else { return };
+    if meta.len() + incoming <= max_bytes {
+        return;
+    }
+    // 先删最旧一份，再从后往前滚动，最后把当前日志移到 .1。
+    let _ = std::fs::remove_file(dir.join(format!("deskpet.log.{}", keep)));
+    for i in (1..keep).rev() {
+        let from = dir.join(format!("deskpet.log.{}", i));
+        let to = dir.join(format!("deskpet.log.{}", i + 1));
+        if from.exists() {
+            let _ = std::fs::rename(&from, &to);
+        }
+    }
+    let _ = std::fs::rename(&p, dir.join("deskpet.log.1"));
+}
+
+fn prune_legacy_logs(dir: &std::path::Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut legacy: Vec<(u64, std::path::PathBuf)> = rd
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !name.starts_with("deskpet.log.legacy-") {
+                return None;
+            }
+            let age = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.elapsed().ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(u64::MAX);
+            Some((age, e.path()))
+        })
+        .collect();
+    // age 越小越新：保留最近 LOG_LEGACY_KEEP 份，超出或超过 30 天的直接删除。
+    legacy.sort_by_key(|(age, _)| *age);
+    for (i, (age, path)) in legacy.into_iter().enumerate() {
+        if i >= LOG_LEGACY_KEEP || age > LOG_LEGACY_MAX_AGE_SECS {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 // 升级兼容：v2.0 及之前写的是纯文本日志。首次启动时把旧文件改名保留，
 // 保证 deskpet.log 从本次运行起始终是 JSON Lines（NFR-MNT-001）。
 fn migrate_legacy_log(app: &AppHandle) {
-    if let Ok(dir) = app.path().app_data_dir() {
-        let p = dir.join("deskpet.log");
-        let Ok(text) = std::fs::read_to_string(&p) else { return };
+    let Ok(dir) = app.path().app_data_dir() else { return };
+    let p = dir.join("deskpet.log");
+    if let Ok(text) = std::fs::read_to_string(&p) {
         if has_legacy_log_lines(&text) {
             let legacy = dir.join(format!("deskpet.log.legacy-{}", now_ms()));
             let _ = std::fs::rename(&p, legacy);
         }
     }
+    prune_legacy_logs(&dir);
 }
 
 // 混入任意一行旧版纯文本日志都需要归档（例如先运行旧版、再升级到 v2.1）。
@@ -6913,6 +6968,49 @@ mod tests {
             assert!(!has_legacy_log_lines(""));
             assert!(!has_legacy_log_lines("{\"ts\":\"x\"}\n\n{\"ts\":\"y\"}\n"));
             assert!(has_legacy_log_lines("[D1 00:00:00] 旧日志\n{\"ts\":\"y\"}\n"));
+        }
+
+        #[test]
+        fn log_rotation_keeps_newest_archives() {
+            let dir = std::env::temp_dir().join(format!("deskpet-log-rotate-{}", rand_suffix()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let log = dir.join("deskpet.log");
+            for round in 1..=5 {
+                std::fs::write(&log, vec![b'x'; 32]).unwrap();
+                rotate_log_at(&dir, 16, 3, 0);
+                assert!(!log.exists(), "第 {round} 轮应完成轮转");
+                assert!(dir.join("deskpet.log.1").exists());
+                if round >= 3 {
+                    assert!(dir.join("deskpet.log.3").exists());
+                }
+                assert!(!dir.join("deskpet.log.4").exists(), "只保留最近 3 份归档");
+            }
+            // 未超过上限时不得轮转
+            std::fs::write(&log, b"small").unwrap();
+            rotate_log_at(&dir, 1024, 3, 0);
+            assert!(log.exists());
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn legacy_log_prune_keeps_three_newest() {
+            let dir = std::env::temp_dir().join(format!("deskpet-log-prune-{}", rand_suffix()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            for i in 0..5 {
+                std::fs::write(dir.join(format!("deskpet.log.legacy-{}", i)), "x").unwrap();
+            }
+            std::fs::write(dir.join("deskpet.log"), "{}").unwrap();
+            prune_legacy_logs(&dir);
+            let n = std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("deskpet.log.legacy-"))
+                .count();
+            assert_eq!(n, 3, "旧版日志归档只保留最近 3 份");
+            assert!(dir.join("deskpet.log").exists(), "当前日志不应被清理");
+            let _ = std::fs::remove_dir_all(&dir);
         }
 
         #[test]
