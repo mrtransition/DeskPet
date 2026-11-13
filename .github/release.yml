@@ -1,0 +1,23 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: 新增
+      labels:
+        - feature
+        - enhancement
+    - title: 修复
+      labels:
+        - bug
+        - fix
+    - title: 安全与隐私
+      labels:
+        - security
+    - title: 文档与治理
+      labels:
+        - documentation
+        - governance
+    - title: 其他变更
+      labels:
+        - "*"
