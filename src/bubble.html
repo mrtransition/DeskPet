@@ -322,7 +322,7 @@ function buildContext(s) {
   const pers = getPers(s.personaId);
   let sys = pers ? pers.systemPrompt : '';
   const lastUser = [...s.msgs].reverse().find(m => m.role === 'user');
-  const mems = pickMemories(lastUser ? lastUser.content : '');
+  const mems = pickMemories(lastUser ? lastUser.content : '', pers);
   if (mems.length) sys += '\n\n[用户长期记忆]\n' + mems.map(m => '- ' + m.content).join('\n');
   // FR-MEM-003：模型生成的较早对话摘要作为上下文前缀，替代被压缩掉的消息
   if (s.summary) sys += '\n\n[较早对话摘要]\n' + s.summary;
@@ -415,10 +415,14 @@ function sideEffects(text) {
   const t = String(text || '');
   const rm = t.match(/^记住[:：]?\s*(.{2,120})/);
   if (rm) {
-    S.memories.push({ id: uid('mem'), content: rm[1].trim(), ts: Date.now() });
+    const content = rm[1].trim();
+    S.memories.push({ id: uid('mem'), content, tags: inferMemoryTags(content), ts: Date.now() });
     saveState();
-    pushSys('📝 已写入长期记忆：' + cut(rm[1].trim(), 40) + '（每次对话自动注入）');
-    tEmitTo('pet', 'reminder-fx', { kind: 'happy' });
+    pushSys('📝 已写入长期记忆：' + cut(content, 40) + '（每次对话自动注入）');
+    // P-06：写入记忆时使用当前人格配置的反馈动画
+    const pers = activePers();
+    const fx = (pers && pers.animation && pers.animation.remember) || 'happy';
+    tEmitTo('pet', 'reminder-fx', { kind: fx });
   }
   const rem = parseReminder(t);
   if (rem) {

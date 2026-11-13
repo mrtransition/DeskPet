@@ -15,85 +15,7 @@ use tauri::{
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-use windows_sys::Win32::Foundation::{POINT, RECT};
-use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-};
-use windows_sys::Win32::System::DataExchange::{
-    CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
-};
-use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetForegroundWindow, SetForegroundWindow,
-};
-
-// ================= 单实例运行（FR-SYS-007） =================
-// 命名互斥量判定「是否已有实例」，命名事件把重复启动通知给首个实例。
-// 第二个进程在初始化 Tauri 之前就退出，因此不会产生第二套托盘、调度器与 WebView。
-#[cfg(windows)]
-mod single_instance {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
-    use windows_sys::Win32::System::Threading::{
-        CreateEventW, CreateMutexW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE,
-        INFINITE,
-    };
-
-    const MUTEX_NAME: &str = "Local\\DeskPet-SingleInstance-com.mrtransition.deskpet";
-    const EVENT_NAME: &str = "Local\\DeskPet-SecondLaunch-com.mrtransition.deskpet";
-
-    // 事件句柄需存活到进程结束；等待线程通过 usize 传递（HANDLE 本身不是 Send）
-    static EVENT_HANDLE: AtomicUsize = AtomicUsize::new(0);
-
-    fn wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain(std::iter::once(0)).collect()
-    }
-
-    /// 首个实例返回 true；已有实例时通知对方并返回 false（调用方应立即退出）。
-    pub fn acquire() -> bool {
-        let name = wide(MUTEX_NAME);
-        // bInitialOwner = 0：只把互斥量当作「进程存活标记」，句柄不关闭，随进程退出释放
-        let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
-        let already = handle.is_null() || unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
-        if already {
-            notify_first();
-            return false;
-        }
-        let ev = wide(EVENT_NAME);
-        let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, ev.as_ptr()) };
-        EVENT_HANDLE.store(event as usize, Ordering::SeqCst);
-        true
-    }
-
-    /// 第二个实例：打开首个实例的事件并置位。首个实例可能仍在启动中，短暂重试。
-    fn notify_first() {
-        let name = wide(EVENT_NAME);
-        for _ in 0..40 {
-            let h = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr()) };
-            if !h.is_null() {
-                unsafe { SetEvent(h) };
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-    }
-
-    /// 首个实例：后台等待重复启动通知。事件为自动重置，每次置位只唤醒一次。
-    pub fn watch_first<F: Fn() + Send + 'static>(on_second_launch: F) {
-        let raw = EVENT_HANDLE.load(Ordering::SeqCst);
-        if raw == 0 {
-            return;
-        }
-        std::thread::spawn(move || loop {
-            let r = unsafe { WaitForSingleObject(raw as HANDLE, INFINITE) };
-            if r != windows_sys::Win32::Foundation::WAIT_OBJECT_0 {
-                break;
-            }
-            on_second_launch();
-        });
-    }
-}
+mod platform;
 
 #[cfg(windows)]
 static APP_FOR_SECOND_LAUNCH: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
@@ -141,6 +63,8 @@ const DEFAULT_STATE: &str = r##"{
     {"id":"ps-1","name":"贴心小助手","avatar":"🐱","skin":"blue","providerId":"p-demo",
      "systemPrompt":"你是桌面宠物「团子」，性格温柔贴心，说话简短可爱，回复控制在 120 字内。用户的消息可能包含工作问题或日常闲聊，请友好回应。",
      "greeting":"你好呀～我是团子 🐱 直接在下面输入框和我聊天吧。也可以试试：对我说「记住：我喜欢蓝色」，或者「25 分钟后提醒我喝水」。",
+     "animation":{"enter":"happy","remember":"happy","context":"talk"},
+     "memoryTags":["生活","偏好","健康"],
      "quickActions":[
        {"label":"今天做点什么","prompt":"给我 3 条今天可以做的轻松小事"},
        {"label":"写句鼓励","prompt":"给我一句简短的今日鼓励"},
@@ -148,6 +72,8 @@ const DEFAULT_STATE: &str = r##"{
     {"id":"ps-2","name":"毒舌吐槽役","avatar":"😈","skin":"orange","providerId":"p-demo",
      "systemPrompt":"你是桌面宠物「辣辣」，毒舌但内心关心用户，喜欢吐槽用户的拖延和熬夜，嘴硬心软，回复不超过 80 字。",
      "greeting":"又来了？行吧，有话快说，我忙着睡觉呢 😈",
+     "animation":{"enter":"click","remember":"error","context":"click"},
+     "memoryTags":["情绪","偏好"],
      "quickActions":[
        {"label":"吐槽我一下","prompt":"随便吐槽我两句"},
        {"label":"骂醒我","prompt":"我不想干活了，骂醒我"},
@@ -155,6 +81,8 @@ const DEFAULT_STATE: &str = r##"{
     {"id":"ps-3","name":"专注工作搭子","avatar":"🧢","skin":"mint","providerId":"p-demo",
      "systemPrompt":"你是桌面宠物「工友」，专业简洁的工作助手，回答结构化、要点化，不寒暄不卖萌。",
      "greeting":"工友就位。直接说需求：写大纲 / 翻译 / 总结 / 定时提醒都可以。",
+     "animation":{"enter":"work","remember":"work","context":"work"},
+     "memoryTags":["工作","项目"],
      "quickActions":[
        {"label":"番茄钟","prompt":"25 分钟后提醒我休息，进入专注"},
        {"label":"总结要点","prompt":"我会发送一段文字，请总结为 3 个要点"},
@@ -169,6 +97,7 @@ const DEFAULT_STATE: &str = r##"{
     "bubbleW": 340, "bubbleIdleClose": 60, "enterSend": true, "newSessionPerClick": false,
     "showInTaskbar": false, "alwaysOnTop": true,
     "chatter": "off", "chatterStart": "09:00", "chatterEnd": "22:00",
+    "context": {"enabled": false, "time": true, "idle": true},
     "health": {"enabled": false, "sitMin": 60, "waterMin": 45},
     "dnd": false, "dndStart": "", "dndEnd": "",
     "clipboardWatch": false,
@@ -177,7 +106,7 @@ const DEFAULT_STATE: &str = r##"{
     "guideDone": true,
     "updateUrl": "https://api.github.com/repos/mrtransition/DeskPet/releases/latest",
     "updateAuto": false,
-    "toolSettings": {"enabled": true, "auth": {"get_weather": "deny", "web_search": "deny"}, "openWhitelist": ["github.com", "www.github.com", "developer.mozilla.org", "www.bing.com", "www.baidu.com", "wikipedia.org"]},
+    "toolSettings": {"enabled": true, "auth": {"get_weather": "deny", "web_search": "deny"}, "grants": [], "openWhitelist": ["github.com", "www.github.com", "developer.mozilla.org", "www.bing.com", "www.baidu.com", "wikipedia.org"]},
     "lastPersonaId": "ps-1", "lastProviderId": null
   },
   "stats": {"requests": 0, "tokensIn": 0, "tokensOut": 0}
@@ -507,37 +436,10 @@ fn chatter_in_window(st: &Value) -> bool {
     in_time_window(local_minutes(), start, end)
 }
 
-// ================= Windows 剪贴板（只读，按次/开关授权） =================
+// 平台相关调用统一走 platform 适配层（P-10）：剪贴板 / 外部链接 / 工作区 / 光标。
+// 这里保留薄封装，业务代码仍按本地函数名调用。
 fn clipboard_read_text() -> Option<String> {
-    const CF_UNICODETEXT: u32 = 13;
-    unsafe {
-        if OpenClipboard(std::ptr::null_mut()) == 0 {
-            return None;
-        }
-        let result = if IsClipboardFormatAvailable(CF_UNICODETEXT) != 0 {
-            let h = GetClipboardData(CF_UNICODETEXT);
-            if h.is_null() {
-                None
-            } else {
-                let p = GlobalLock(h);
-                if p.is_null() {
-                    None
-                } else {
-                    let size = GlobalSize(h);
-                    let len = size / 2;
-                    let slice = std::slice::from_raw_parts(p as *const u16, len);
-                    let end = slice.iter().position(|&c| c == 0).unwrap_or(len);
-                    let text = String::from_utf16_lossy(&slice[..end]);
-                    let _ = GlobalUnlock(h);
-                    if text.trim().is_empty() { None } else { Some(text) }
-                }
-            }
-        } else {
-            None
-        };
-        let _ = CloseClipboard();
-        result
-    }
+    platform::clipboard_read_text()
 }
 
 fn cut_chars(s: &str, n: usize) -> String {
@@ -550,15 +452,7 @@ fn cut_chars(s: &str, n: usize) -> String {
 
 // ================= 外部打开（仅 http/https / 白名单可执行文件） =================
 fn open_external_url(url: &str) -> Result<(), String> {
-    let u = reqwest::Url::parse(url.trim()).map_err(|_| "URL 格式无效".to_string())?;
-    if !matches!(u.scheme(), "http" | "https") {
-        return Err("只允许打开 http / https 链接".into());
-    }
-    std::process::Command::new("rundll32.exe")
-        .args(["url.dll,FileProtocolHandler", url.trim()])
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("打开链接失败：{}", e))
+    platform::open_external_url(url)
 }
 
 fn host_allowed(host: &str, whitelist: &[String]) -> bool {
@@ -601,21 +495,10 @@ fn open_whitelisted_app(app: &str) -> Result<(), String> {
         .map_err(|e| format!("启动应用失败：{}", e))
 }
 
-// ================= Win32 工具 =================
+// ================= 平台工具（实现见 platform.rs） =================
 
-#[allow(non_snake_case)]
-fn work_area_at(x: i32, y: i32) -> RECT {
-    unsafe {
-        let pt = POINT { x, y };
-        let mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-        let mut info: MONITORINFO = std::mem::zeroed();
-        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(mon, &mut info) != 0 {
-            info.rcWork
-        } else {
-            RECT { left: 0, top: 0, right: 1920, bottom: 1040 }
-        }
-    }
+fn work_area_at(x: i32, y: i32) -> platform::WorkArea {
+    platform::work_area_at(x, y)
 }
 
 // FR-PET-002：置顶层级枚举「置顶且覆盖任务栏」。
@@ -623,36 +506,20 @@ fn work_area_at(x: i32, y: i32) -> RECT {
 // 周期性重新提升，否则宠物会被盖住。这里把窗口提为 TOPMOST 并保持置顶位。
 fn apply_top_level(win: &WebviewWindow, on: bool) {
     if let Ok(hwnd) = win.hwnd() {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        };
-        let insert = if on { HWND_TOPMOST } else { HWND_NOTOPMOST };
-        unsafe {
-            SetWindowPos(
-                hwnd.0 as _,
-                insert,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-            );
-        }
+        platform::set_topmost(hwnd.0 as isize, on);
     }
 }
 
 fn save_foreground(app: &AppHandle) {
-    let hwnd = unsafe { GetForegroundWindow() };
+    let hwnd = platform::foreground_window();
     let ctx = app.state::<AppCtx>();
-    *ctx.fg_before.lock().unwrap_or_else(|e| e.into_inner()) = hwnd as usize;
+    *ctx.fg_before.lock().unwrap_or_else(|e| e.into_inner()) = hwnd;
 }
 
 fn restore_foreground(app: &AppHandle) {
     let ctx = app.state::<AppCtx>();
     let h = *ctx.fg_before.lock().unwrap_or_else(|e| e.into_inner());
-    if h != 0 {
-        unsafe { SetForegroundWindow(h as _); }
-    }
+    platform::set_foreground(h);
     *ctx.fg_before.lock().unwrap_or_else(|e| e.into_inner()) = 0;
 }
 
@@ -1200,18 +1067,37 @@ fn tick_chatter(app: &AppHandle, chatter_at: &mut std::time::Instant) {
     if std::time::Instant::now() < *chatter_at {
         return;
     }
-    let interval = {
+    // P-07：主动搭话与情境陪伴共用同一个调度节拍，但来源分开记录。
+    // 情境陪伴默认关闭；开启后只使用本地时间与「气泡是否打开」判断，不读取其他信息。
+    let plan = {
         let ctx = app.state::<AppCtx>();
-        let st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
+        let st = state_lock(&ctx);
         if dnd_active(&st) || !chatter_in_window(&st) {
             return;
         }
-        match st["settings"]["chatter"].as_str() {
-            Some("low") => 600,
-            Some("mid") => 300,
-            Some("high") => 150,
-            _ => return,
+        let chatter = match st["settings"]["chatter"].as_str() {
+            Some("low") => Some(600),
+            Some("mid") => Some(300),
+            Some("high") => Some(150),
+            _ => None,
+        };
+        if let Some(secs) = chatter {
+            Some(("chatter", secs, false, false))
+        } else {
+            let c = &st["settings"]["context"];
+            if !c["enabled"].as_bool().unwrap_or(false) {
+                return;
+            }
+            let use_time = c["time"].as_bool().unwrap_or(true);
+            let use_idle = c["idle"].as_bool().unwrap_or(true);
+            if !use_time && !use_idle {
+                return;
+            }
+            Some(("context", 900, use_time, use_idle))
         }
+    };
+    let Some((mode, interval, use_time, use_idle)) = plan else {
+        return;
     };
     *chatter_at = std::time::Instant::now() + Duration::from_secs(interval as u64);
     if bubble_visible(app) {
@@ -1224,16 +1110,69 @@ fn tick_chatter(app: &AppHandle, chatter_at: &mut std::time::Instant) {
     if nano % 100 < 35 {
         return; // 35% 概率跳过，避免打扰感过强
     }
-    let lines = [
-        "要不要喝口水休息一下？",
-        "盯屏幕太久啦，眨眨眼睛吧～",
-        "起来活动活动？我帮你看着桌面。",
-        "有点无聊…点我聊聊天嘛。",
-        "记得抬头看看远处，放松一下眼睛哦。",
-    ];
-    let text = lines[(nano as usize) % lines.len()];
-    let _ = app.emit_to("pet", "chatter", json!({"text": text}));
+    if mode == "context" {
+        let mins = local_minutes();
+        let period = context_period(mins);
+        let text = if use_time {
+            context_line(period)
+        } else {
+            "在忙吗？需要我陪着就说一声～"
+        };
+        let _ = app.emit_to(
+            "pet",
+            "chatter",
+            json!({
+                "text": text,
+                "kind": "context",
+                "basis": {
+                    "source": if use_time { "local-time" } else { "idle" },
+                    "time": local_hhmm(mins),
+                    "period": period,
+                    "requireIdle": use_idle,
+                }
+            }),
+        );
+    } else {
+        let lines = [
+            "要不要喝口水休息一下？",
+            "盯屏幕太久啦，眨眨眼睛吧～",
+            "起来活动活动？我帮你看着桌面。",
+            "有点无聊…点我聊聊天嘛。",
+            "记得抬头看看远处，放松一下眼睛哦。",
+        ];
+        let text = lines[(nano as usize) % lines.len()];
+        let _ = app.emit_to("pet", "chatter", json!({"text": text}));
+    }
     let _ = app.emit_to("pet", "reminder-fx", json!({"kind": "happy"}));
+}
+
+// 本地时间 → HH:MM（local_minutes 已按 UTC+8 计算当天分钟数）。
+fn local_hhmm(minutes: i64) -> String {
+    let m = minutes.rem_euclid(24 * 60);
+    format!("{:02}:{:02}", m / 60, m % 60)
+}
+
+// 情境时段：只做粗粒度划分，避免把具体作息写死成产品承诺。
+fn context_period(minutes: i64) -> &'static str {
+    match (minutes / 60).rem_euclid(24) {
+        5..=8 => "morning",
+        9..=11 => "forenoon",
+        12..=13 => "noon",
+        14..=17 => "afternoon",
+        18..=21 => "evening",
+        _ => "late",
+    }
+}
+
+fn context_line(period: &str) -> &'static str {
+    match period {
+        "morning" => "早上好，今天想先做哪一件小事？",
+        "forenoon" => "上午节奏正好，要不要先啃掉最要紧的那块？",
+        "noon" => "到饭点啦，先吃点东西再继续吧。",
+        "afternoon" => "下午容易犯困，起来走两步、喝口水？",
+        "evening" => "忙了一天，晚上留一点时间给自己吧。",
+        _ => "夜深了，如果还在忙，记得早点休息。",
+    }
 }
 
 // FR-REM-006：久坐 / 喝水健康提醒（主进程计时，不依赖前端存活）。
@@ -1474,7 +1413,27 @@ fn tool_auth_state(app: &AppHandle, name: &str) -> String {
         .to_string()
 }
 
-fn set_tool_auth(app: &AppHandle, name: &str, value: &str) {
+// P-08：授权历史（上限 50 条）。只记录工具名、动作与来源，不记录参数内容。
+fn push_tool_grant(st: &mut Value, name: &str, action: &str, via: &str) {
+    if !st["settings"]["toolSettings"]["grants"].is_array() {
+        st["settings"]["toolSettings"]["grants"] = json!([]);
+    }
+    if let Some(arr) = st["settings"]["toolSettings"]["grants"].as_array_mut() {
+        arr.insert(
+            0,
+            json!({
+                "ts": now_ms(),
+                "tool": name,
+                "label": tool_label(name),
+                "action": action,
+                "via": via,
+            }),
+        );
+        arr.truncate(50);
+    }
+}
+
+fn set_tool_auth(app: &AppHandle, name: &str, value: &str, via: &str) {
     let ctx = app.state::<AppCtx>();
     {
         let mut st = state_lock(&ctx);
@@ -1482,9 +1441,63 @@ fn set_tool_auth(app: &AppHandle, name: &str, value: &str) {
             st["settings"]["toolSettings"]["auth"] = json!({});
         }
         st["settings"]["toolSettings"]["auth"][name] = json!(value);
+        let action = match value {
+            "allow" => "allow",
+            "deny" => "deny",
+            _ => "revoke",
+        };
+        push_tool_grant(&mut st, name, action, via);
     }
     persist_state(&ctx);
     let _ = app.emit("state-changed", json!({"origin": "backend"}));
+}
+
+fn tool_auth_snapshot(app: &AppHandle) -> Value {
+    let ctx = app.state::<AppCtx>();
+    let st = state_lock(&ctx);
+    json!({
+        "auth": st["settings"]["toolSettings"]["auth"].clone(),
+        "grants": st["settings"]["toolSettings"]["grants"].clone(),
+    })
+}
+
+const TOOL_NAMES: [&str; 6] = [
+    "create_reminder",
+    "read_clipboard",
+    "open_url",
+    "open_app",
+    "get_weather",
+    "web_search",
+];
+
+// P-08：设置页通过命令修改授权，主进程统一写入历史，避免前端快照覆盖。
+#[tauri::command]
+fn tool_auth_set(app: AppHandle, name: String, value: String) -> Result<Value, String> {
+    if !TOOL_NAMES.contains(&name.as_str()) {
+        return Err("未知工具".into());
+    }
+    if !matches!(value.as_str(), "allow" | "deny" | "ask") {
+        return Err("授权值无效".into());
+    }
+    set_tool_auth(&app, &name, &value, "settings");
+    Ok(tool_auth_snapshot(&app))
+}
+
+#[tauri::command]
+fn tool_auth_reset(app: AppHandle) -> Result<Value, String> {
+    let changed: Vec<String> = {
+        let ctx = app.state::<AppCtx>();
+        let st = state_lock(&ctx);
+        TOOL_NAMES
+            .iter()
+            .filter(|n| st["settings"]["toolSettings"]["auth"][**n].as_str() != Some("ask"))
+            .map(|n| n.to_string())
+            .collect()
+    };
+    for name in changed {
+        set_tool_auth(&app, &name, "ask", "settings");
+    }
+    Ok(tool_auth_snapshot(&app))
 }
 
 // FR-TOOL-003 / AC-012：首次调用弹窗授权；支持「始终允许/拒绝」，可随时撤销。
@@ -1538,7 +1551,7 @@ async fn request_tool_auth(app: &AppHandle, name: &str, args: &Value) -> bool {
     match tokio::time::timeout(Duration::from_secs(120), rx).await {
         Ok(Ok(d)) => {
             if d.remember {
-                set_tool_auth(app, name, if d.allow { "allow" } else { "deny" });
+                set_tool_auth(app, name, if d.allow { "allow" } else { "deny" }, "remember");
             }
             d.allow
         }
@@ -3341,7 +3354,7 @@ fn merge_state_snapshot(st: &mut Value, state: Value, origin: &str) {
             "petScale", "clickThrough", "dnd", "bubbleW", "showInTaskbar", "alwaysOnTop",
             "bubbleIdleClose", "chatter", "enterSend", "newSessionPerClick", "lowFps", "customSkin",
             "summaryThreshold", "voice", "voiceURI", "voiceRate", "reminderSound", "health",
-            "clipboardWatch", "toolSettings", "updateUrl", "updateAuto", "lang", "dndStart",
+            "clipboardWatch", "context", "toolSettings", "updateUrl", "updateAuto", "lang", "dndStart",
             "dndEnd", "skinPack", "skins", "activeSkin",
         ]
         .iter()
@@ -5323,7 +5336,7 @@ fn pet_save_pos(app: AppHandle, ctx: tauri::State<AppCtx>) -> Result<(), String>
 // 前端收不到可靠的 mouseup，只能靠按键状态判断。
 #[tauri::command]
 fn mouse_left_down() -> bool {
-    unsafe { (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000) != 0 }
+    platform::mouse_left_down()
 }
 
 // 左键按下且光标在宠物窗口外：菜单打开时用于感知点击了其他软件/桌面。
@@ -5336,14 +5349,13 @@ fn pet_click_outside(app: AppHandle) -> Result<bool, String> {
     let pet = app.get_webview_window("pet").ok_or("pet 窗口不存在")?;
     let pos = pet.outer_position().map_err(|e| e.to_string())?;
     let size = pet.outer_size().map_err(|e| e.to_string())?;
-    let mut pt = POINT { x: 0, y: 0 };
-    if unsafe { GetCursorPos(&mut pt) } == 0 {
+    let Some((px, py)) = platform::cursor_pos() else {
         return Ok(false);
-    }
-    let inside = pt.x >= pos.x
-        && pt.x < pos.x + size.width as i32
-        && pt.y >= pos.y
-        && pt.y < pos.y + size.height as i32;
+    };
+    let inside = px >= pos.x
+        && px < pos.x + size.width as i32
+        && py >= pos.y
+        && py < pos.y + size.height as i32;
     Ok(!inside)
 }
 
@@ -5364,9 +5376,8 @@ fn pet_outside_watch_start(app: AppHandle) -> Result<u64, String> {
     std::thread::spawn(move || {
         while MENU_WATCH_GEN.load(Ordering::SeqCst) == gen {
             if mouse_left_down() {
-                let mut pt = POINT { x: 0, y: 0 };
-                if unsafe { GetCursorPos(&mut pt) } != 0 {
-                    let inside = pt.x >= x0 && pt.x < x1 && pt.y >= y0 && pt.y < y1;
+                if let Some((px, py)) = platform::cursor_pos() {
+                    let inside = px >= x0 && px < x1 && py >= y0 && py < y1;
                     if !inside {
                         let _ = app.emit_to("pet", "pet-outside-click", ());
                         break;
@@ -5628,6 +5639,88 @@ fn privacy_info(app: AppHandle, ctx: tauri::State<AppCtx>) -> Value {
         "localOnly": true,
         "legacyPlaintextKeys": legacy_plaintext,
     })
+}
+
+// P-09：本地诊断包。只导出运行环境、计数、脱敏设置快照与日志尾部；
+// 不包含会话正文、记忆正文、提醒内容、供应商密钥或皮肤资源。
+#[tauri::command]
+fn diagnostics_export(app: AppHandle, ctx: tauri::State<AppCtx>) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let log_path = dir.join("deskpet.log");
+    let log_tail = std::fs::read_to_string(&log_path)
+        .map(|s| {
+            let tail: String = s.lines().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+            redact_secrets(&tail)
+        })
+        .unwrap_or_default();
+
+    let (counts, settings, grants_count, grants_recent) = {
+        let st = state_lock(&ctx);
+        let count = |key: &str| st[key].as_array().map(|a| a.len()).unwrap_or(0);
+        let tool = &st["settings"]["toolSettings"];
+        let counts = json!({
+            "providers": count("providers"),
+            "personas": count("personas"),
+            "sessions": count("sessions"),
+            "messages": st["sessions"].as_array().map(|a| a.iter().map(|s| s["msgs"].as_array().map(|m| m.len()).unwrap_or(0)).sum::<usize>()).unwrap_or(0),
+            "memories": count("memories"),
+            "reminders": count("reminders"),
+            "skins": st["settings"]["skins"].as_array().map(|a| a.len()).unwrap_or(0),
+        });
+        // 白名单式设置快照：新增字段不会自动进入诊断包，避免无意泄露。
+        let settings = json!({
+            "lang": st["settings"]["lang"],
+            "chatter": st["settings"]["chatter"],
+            "chatterWindow": [st["settings"]["chatterStart"].clone(), st["settings"]["chatterEnd"].clone()],
+            "context": st["settings"]["context"].clone(),
+            "clipboardWatch": st["settings"]["clipboardWatch"],
+            "health": st["settings"]["health"].clone(),
+            "dnd": [st["settings"]["dnd"].clone(), st["settings"]["dndStart"].clone(), st["settings"]["dndEnd"].clone()],
+            "lowFps": st["settings"]["lowFps"],
+            "alwaysOnTop": st["settings"]["alwaysOnTop"],
+            "updateAuto": st["settings"]["updateAuto"],
+            "tools": {
+                "enabled": tool["enabled"],
+                "auth": tool["auth"].clone(),
+                "openWhitelist": tool["openWhitelist"].clone(),
+            },
+        });
+        let grants = tool["grants"].as_array();
+        (
+            counts,
+            settings,
+            grants.map(|a| a.len()).unwrap_or(0),
+            grants.map(|a| a.iter().take(20).cloned().collect::<Vec<_>>()).unwrap_or_default(),
+        )
+    };
+
+    let report = json!({
+        "schema": 1,
+        "generatedAt": chrono_now(),
+        "app": {
+            "name": "DeskPet",
+            "version": env!("CARGO_PKG_VERSION"),
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "dataDir": dir.to_string_lossy(),
+        },
+        "counts": counts,
+        "settings": settings,
+        "toolGrants": {
+            "count": grants_count,
+            "recent": grants_recent,
+        },
+        "contains": {"chatContent": false, "memoryContent": false, "secrets": false, "skinAssets": false},
+        "logTail": log_tail,
+    });
+
+    let out_dir = app_export_dir(&app)?;
+    let stamp: String = chrono_now().chars().filter(|c| c.is_ascii_digit()).collect();
+    let path = out_dir.join(format!("deskpet-diagnostics-{}.json", stamp));
+    std::fs::write(&path, serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    log_event(&app, "info", "diagnostics.export", &format!("已生成诊断包：{}", path.to_string_lossy()));
+    Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -6082,7 +6175,7 @@ fn report_boot_failure(msg: &str) {
 fn main() {
     // FR-SYS-007：已有实例时只通知对方并退出，绝不初始化第二套 Tauri 运行时
     #[cfg(windows)]
-    if !single_instance::acquire() {
+    if !platform::acquire_single_instance() {
         // 此时还没有 AppHandle 可用，把原因写进环境变量指定的启动失败文件（便携 / 诊断用）
         report_boot_failure("single-instance: 已有实例在运行，已通知对方并退出");
         // 显式退出码 0：重复启动是正常行为，不应被脚本 / 安装器当成失败
@@ -6152,7 +6245,7 @@ fn main() {
             #[cfg(windows)]
             {
                 let _ = APP_FOR_SECOND_LAUNCH.set(app.handle().clone());
-                single_instance::watch_first(|| {
+                platform::watch_second_launch(|| {
                     if let Some(handle) = APP_FOR_SECOND_LAUNCH.get() {
                         focus_existing(handle);
                     }
@@ -6355,6 +6448,7 @@ fn main() {
             open_settings_cmd, open_guide_cmd, set_dnd,
             set_pet_taskbar, set_pet_always_on_top,
             privacy_info,
+            tool_auth_set, tool_auth_reset, diagnostics_export,
             reminder_add, reminder_snooze, reminder_delete,
             take_pending_notices,
             export_text, quit_app, get_app_version, update_check, update_download, reveal_file
@@ -7457,6 +7551,45 @@ mod codex_contract_tests {
             assert!(!html.contains("invoke('codex_pet_import'"), "Codex 导入调用未移除");
             assert!(!html.contains("type: 'image', name: f.name"), "单张图片导入写入皮肤库的流程未移除");
             assert!(html.contains("$id('skinFile')?.addEventListener('change'"), "单图兜底提示缺失");
+        }
+
+        // P-06：默认人格带动画与记忆标签，供前端联动；旧数据由 fill_defaults 补齐
+        #[test]
+        fn default_persona_has_animation_and_memory_tags() {
+            let st = default_state();
+            let ps = &st["personas"][0];
+            assert_eq!(ps["animation"]["enter"], "happy");
+            assert!(ps["memoryTags"].as_array().unwrap().contains(&json!("生活")));
+        }
+
+        // P-07：情境时段划分与文案必须覆盖全天，且默认关闭
+        #[test]
+        fn context_helpers_cover_the_day() {
+            assert_eq!(local_hhmm(0), "00:00");
+            assert_eq!(local_hhmm(9 * 60 + 5), "09:05");
+            assert_eq!(context_period(7 * 60), "morning");
+            assert_eq!(context_period(12 * 60), "noon");
+            assert_eq!(context_period(16 * 60), "afternoon");
+            assert_eq!(context_period(20 * 60), "evening");
+            assert_eq!(context_period(2 * 60), "late");
+            for p in ["morning", "forenoon", "noon", "afternoon", "evening", "late"] {
+                assert!(!context_line(p).is_empty());
+            }
+            assert_eq!(default_state()["settings"]["context"]["enabled"], false);
+        }
+
+        // P-08：授权历史只保留最近 50 条，并记录动作与来源
+        #[test]
+        fn tool_grant_history_is_capped_and_structured() {
+            let mut st = default_state();
+            for _ in 0..60 {
+                push_tool_grant(&mut st, "open_url", "allow", "settings");
+            }
+            let grants = st["settings"]["toolSettings"]["grants"].as_array().unwrap();
+            assert_eq!(grants.len(), 50);
+            assert_eq!(grants[0]["tool"], "open_url");
+            assert_eq!(grants[0]["action"], "allow");
+            assert_eq!(grants[0]["via"], "settings");
         }
 
         #[test]

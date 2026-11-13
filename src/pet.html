@@ -128,6 +128,10 @@ body { cursor: default; }
   z-index: 5;
 }
 #miniBubble.show { display: block; animation: mbIn .25s ease; }
+#miniBubble .ctx-badge {
+  display: inline-block; margin-right: 4px; padding: 0 6px; border-radius: 999px;
+  background: #f6e3d5; color: #a9541f; font-size: 10px; vertical-align: 1px;
+}
 @keyframes mbIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 #miniBubble::after { content: ""; position: absolute; bottom: -5px; left: 22px; width: 10px; height: 10px; background: #fff; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transform: rotate(45deg); }
 </style>
@@ -621,6 +625,8 @@ curWin.onResized(async ev => {
 });
 
 /* ---- 主动搭话 ---- */
+let lastUserAction = Date.now();
+['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, () => { lastUserAction = Date.now(); }, { passive: true }));
 async function showMini(text) {
   miniBubble.dataset.mode = '';
   miniBubble.textContent = text;
@@ -632,12 +638,33 @@ async function showMini(text) {
     await shrink();
   }, 6500);
 }
+// P-07：情境搭话带「情境」徽标与判断依据；点击徽标打开设置，可在同一页关闭。
+async function showContextMini(text, basis) {
+  const when = basis && basis.time ? ' · ' + basis.time : '';
+  const source = basis && basis.source === 'local-time' ? '本地时间' : '闲置状态';
+  miniBubble.dataset.mode = 'context';
+  miniBubble.innerHTML = '<span class="ctx-badge">🕒 情境</span>' + esc(text) +
+    '<br><span style="color:#8a94a3">依据：' + esc(source + when) + ' · 点我查看设置 →</span>';
+  miniBubble.classList.add('show');
+  await grow();
+  clearTimeout(miniTimer);
+  miniTimer = setTimeout(async () => {
+    miniBubble.classList.remove('show');
+    miniBubble.dataset.mode = '';
+    await shrink();
+  }, 9000);
+}
 miniBubble.addEventListener('click', async () => {
   const clip = miniBubble.dataset.mode === 'clip';
+  const context = miniBubble.dataset.mode === 'context';
   miniBubble.classList.remove('show');
   miniBubble.dataset.mode = '';
   clearTimeout(miniTimer);
   await shrink();
+  if (context) {
+    await invoke('open_settings_cmd');
+    return;
+  }
   await invoke('show_bubble_cmd');
   if (clip) tEmitTo('bubble', 'clipboard-process-req');
 });
@@ -647,12 +674,29 @@ tListen('chat-state', ev => {
   const s = ev.payload && ev.payload.state;
   if (['work', 'talk', 'idle', 'error'].includes(s)) setPetState(s);
 });
-tListen('reminder-fx', () => setPetState('happy'));
+tListen('reminder-fx', ev => {
+  const k = ev.payload && ev.payload.kind;
+  setPetState(['idle', 'happy', 'sleep', 'work', 'click', 'drag', 'error', 'talk'].includes(k) ? k : 'happy');
+});
 /* FR-SYS-007：重复启动时，首个实例被唤起并让宠物做一次反馈动画 */
 tListen('second-instance', () => setPetState('happy'));
 /* FR-SYS-008：引导完成 / 跳过后的反馈 */
 tListen('guide-finished', () => setPetState('happy'));
-tListen('chatter', ev => showMini(ev.payload && ev.payload.text));
+tListen('chatter', ev => {
+  const p = ev.payload || {};
+  if (p.kind === 'context') {
+    // 仅当用户确实闲置一段时间才展示，避免「正在操作却被搭话」
+    if (p.basis && p.basis.requireIdle && Date.now() - lastUserAction < 5 * 60 * 1000) return;
+    showContextMini(p.text || '', p.basis || {});
+    return;
+  }
+  showMini(p.text || '');
+});
+/* P-06：人格切换时播放人格配置的进入动画 */
+tListen('persona-fx', ev => {
+  const st = ev.payload && ev.payload.state;
+  if (['idle', 'happy', 'sleep', 'work', 'click', 'drag', 'error', 'talk'].includes(st)) setPetState(st);
+});
 /* FR-REM-007：剪贴板变化提示。点击后才把内容交给气泡处理，未点击不发送任何数据。 */
 tListen('clipboard-changed', ev => {
   const preview = (ev.payload && ev.payload.preview) || '';

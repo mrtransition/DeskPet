@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeskPet 社区画廊</title>
+<style>
+  :root {
+    --bg: #f7f4ee; --card: #fffdf8; --ink: #303b4d; --muted: #6f7a8a;
+    --line: #e6dfd2; --accent: #d9824b; --accent-soft: #f6e3d5;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  header { max-width: 1080px; margin: 0 auto; padding: 48px 20px 20px; }
+  h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: .5px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px;
+    background: var(--accent-soft); color: #a9541f; font-size: 12px; margin-right: 6px; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 8px; }
+  .filters button { border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    border-radius: 999px; padding: 6px 14px; cursor: pointer; font: inherit; }
+  .filters button.on { border-color: var(--accent); background: var(--accent-soft); color: #a9541f; }
+  main { max-width: 1080px; margin: 0 auto; padding: 10px 20px 60px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    overflow: hidden; display: flex; flex-direction: column; }
+  .thumb { height: 170px; display: flex; align-items: center; justify-content: center;
+    background: repeating-conic-gradient(#efe9dd 0% 25%, #f9f5ed 0% 50%) 50% / 18px 18px; }
+  .thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .thumb .emoji { font-size: 62px; }
+  .body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .name { font-weight: 700; font-size: 16px; }
+  .author { color: var(--muted); font-size: 12px; }
+  .summary { color: #4d5768; font-size: 13px; flex: 1; }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line);
+    border-radius: 999px; padding: 1px 8px; }
+  .actions { display: flex; gap: 8px; margin-top: 4px; }
+  .actions a, .actions span { font-size: 13px; text-decoration: none; padding: 6px 10px;
+    border-radius: 8px; border: 1px solid var(--line); color: var(--ink); }
+  .actions a.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .actions span { color: var(--muted); }
+  .note { margin-top: 26px; padding: 16px 18px; background: var(--card);
+    border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); font-size: 13px; }
+  .note a { color: #a9541f; }
+  footer { max-width: 1080px; margin: 0 auto; padding: 0 20px 40px; color: var(--muted); font-size: 12px; }
+  .empty { color: var(--muted); padding: 20px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DeskPet 社区画廊 <span class="badge">MVP</span></h1>
+  <p class="sub">静态展示与推荐：作品来自仓库内可验证的示例与社区投稿。没有账号、没有评分、没有自动安装。</p>
+  <div class="filters" id="filters"></div>
+</header>
+<main>
+  <div class="grid" id="grid"></div>
+  <div class="note">
+    想投稿？按 <a href="../皮肤与图集规范.md">皮肤与图集规范</a> 打包，并在 PR 中附预览图、许可证与导入验证步骤。
+    维护说明见 <a href="README.md">docs/gallery/README.md</a>。
+  </div>
+</main>
+<footer>DeskPet · 画廊清单由 <code>docs/gallery/gallery.json</code> 维护，页面不发起任何第三方请求。</footer>
+<script>
+// 与 gallery.json 保持一致；内联一份是为了双击 index.html 时也能直接查看。
+const ITEMS = [
+  { id:'round-cat', type:'skin', name:'圆猫（八态皮肤包）', author:'DeskPet 内置示例',
+    summary:'圆滚滚的橘白小猫，包含完整八态与状态机，适合作为皮肤包制作模板。', license:'MIT',
+    preview:'../../assets/examples/eight-state-4x2.webp', download:'../../assets/skin-packs/round-cat.deskpet-skin.zip',
+    tags:['猫','八态','模板'], featured:true },
+  { id:'codex-round-cat', type:'skin', name:'圆猫（Codex 宠物包）', author:'DeskPet 内置示例',
+    summary:'同一角色的 Codex Pet Contract 版本，用于验证 8×9 图集导入与帧序映射。', license:'MIT',
+    preview:'../../assets/skin-packs/codex-round-cat/spritesheet.png', download:'../../assets/skin-packs/codex-round-cat-pack.zip',
+    tags:['猫','Codex','图集'], featured:false },
+  { id:'persona-ps-1', type:'persona', name:'贴心小助手「团子」', author:'DeskPet 内置人格',
+    summary:'温柔贴心、回复简短；偏好「生活 / 偏好 / 健康」记忆标签，切换时播放开心动画。', license:'MIT',
+    preview:'', download:'', tags:['人格','温柔','记忆联动'], featured:true },
+  { id:'persona-ps-3', type:'persona', name:'专注工作搭子「工友」', author:'DeskPet 内置人格',
+    summary:'结构化、要点化的工作助手；偏好「工作 / 项目」记忆标签，切换时进入工作动画。', license:'MIT',
+    preview:'', download:'', tags:['人格','工作','记忆联动'], featured:true },
+];
+const TYPE_LABEL = { all:'全部', skin:'皮肤', persona:'人格' };
+let filter = 'all';
+function esc(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function render() {
+  const filters = document.getElementById('filters');
+  filters.innerHTML = Object.keys(TYPE_LABEL).map(k =>
+    '<button data-k="' + k + '" class="' + (filter === k ? 'on' : '') + '">' + TYPE_LABEL[k] + '</button>').join('');
+  filters.querySelectorAll('button').forEach(b => b.onclick = () => { filter = b.dataset.k; render(); });
+  const list = ITEMS.filter(it => filter === 'all' || it.type === filter);
+  const grid = document.getElementById('grid');
+  if (!list.length) { grid.innerHTML = '<div class="empty">暂无条目。</div>'; return; }
+  grid.innerHTML = list.map(it => {
+    const thumb = it.preview
+      ? '<img src="' + esc(it.preview) + '" alt="' + esc(it.name) + '" loading="lazy">'
+      : '<div class="emoji">' + (it.type === 'persona' ? '🐾' : '🎨') + '</div>';
+    const action = it.download
+      ? '<a class="primary" href="' + esc(it.download) + '" download>下载皮肤包</a>'
+      : '<span>内置内容 · 在应用内查看</span>';
+    return '<article class="card"><div class="thumb">' + thumb + '</div><div class="body">' +
+      '<div class="name">' + esc(it.name) + '</div>' +
+      '<div class="author">' + esc(it.author) + ' · ' + esc(it.license) + '</div>' +
+      '<div class="summary">' + esc(it.summary) + '</div>' +
+      '<div class="tags">' + it.tags.map(t => '<span class="tag">' + esc(t) + '</span>').join('') + '</div>' +
+      '<div class="actions">' + action + '</div></div></article>';
+  }).join('');
+}
+render();
+</script>
+</body>
+</html>

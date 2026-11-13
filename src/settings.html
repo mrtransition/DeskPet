@@ -106,7 +106,10 @@ body { background: var(--bg); display: flex; flex-direction: column; }
               <div class="frow"><label data-i18n="s13">名称</label><input id="peName" placeholder="如：贴心小助手"></div>
               <div class="frow"><label data-i18n="s33">绑定供应商</label><select id="peProv"></select></div>
               <div class="frow"><label data-i18n="s34">绑定皮肤</label><select id="peSkin"></select></div>
+              <div class="frow"><label data-i18n="s34a">切换时动画</label><select id="peAnimation"></select></div>
+              <div class="frow"><label data-i18n="s34b">记忆偏好标签</label><input id="peMemTags" placeholder="如：工作,项目（逗号分隔）"></div>
             </div>
+            <div class="fnote" data-i18n="s34c">记忆标签会让人格优先注入同类记忆；写入「记住：…」时会按关键词自动打标签，也可在「记忆」页查看。</div>
             <div class="frow" style="margin-top:9px"><label>System Prompt</label><textarea id="peSys" rows="4" style="font-size:var(--fs-xs);resize:vertical"></textarea></div>
             <div class="frow" style="margin-top:9px"><label data-i18n="s35">开场白（新会话第一条消息）</label><textarea id="peGreet" rows="2" style="font-size:var(--fs-xs);resize:vertical"></textarea></div>
             <div style="margin-top:10px"><label style="font-size:var(--fs-xs);color:var(--t2)" data-i18n="s36">快捷动作（气泡内按钮，3–5 个）</label>
@@ -137,6 +140,15 @@ body { background: var(--bg); display: flex; flex-direction: column; }
             <button id="skinReset" data-i18n="s47">恢复内置矢量皮肤</button>
             <input id="skinSheetFile" type="file" accept="image/png,image/webp" hidden>
             <input id="skinPackFile" type="file" accept=".zip,application/zip" hidden>
+          </div>
+          <div id="skinPackPreview" class="bg-panel" hidden>
+            <div class="bg-preview-head" id="skinPackPreviewHead" data-i18n="skp.head">皮肤包预览</div>
+            <div class="bg-canvas-wrap checker" style="max-height:220px"><img id="skinPackPreviewImg" alt="" style="max-width:100%;max-height:210px;display:block;margin:0 auto"></div>
+            <div class="fnote" id="skinPackPreviewMeta" style="margin:8px 0"></div>
+            <div class="btn-row">
+              <button id="skinPackConfirm" class="primary" data-i18n="skp.confirm">确认导入</button>
+              <button id="skinPackCancel" data-i18n="skp.cancel">取消</button>
+            </div>
           </div>
           <div class="fnote" id="skinFileInfo" data-i18n="s48">导入后优先替代内置矢量形象，仍保留拖拽 / 点击 / 提醒等窗口交互。自定义形象请使用「导入八态单图」（4×2 自动切割）或「导入皮肤包」（.deskpet-skin.zip）；单张图片与 Codex 宠物导入入口已关闭。</div>
           <div class="fnote" data-i18n-html="h49">八态单图规则：单张图按 <b>4 列 × 2 行</b>排列，按行读取 8 个状态，顺序固定为 <code>idle / happy / sleep / work / click / drag / error / talk</code>。导入时逐格切割、裁掉格内留白，并统一画布和底边对齐，切换状态时角色不会跳动；背景需为透明或浅色棋盘格。</div>
@@ -228,6 +240,17 @@ body { background: var(--bg); display: flex; flex-direction: column; }
             <label data-i18n="s83"><input type="radio" name="enterMode" value="0"> Enter 换行 / Ctrl+Enter 发送</label>
             <label data-i18n="s84"><input type="checkbox" id="newPerClick"> 每次点击宠物新开会话</label>
           </div>
+        </div>
+        <div class="sec">
+          <h4><span data-i18n="ctx.title">情境陪伴（试点）</span> <span class="tag" data-i18n="ctx.tag">默认关闭 · 可撤销</span></h4>
+          <div class="inline-opts" style="margin-bottom:8px">
+            <label data-i18n="ctx.enable"><input type="checkbox" id="ctxEnabled"> 允许根据本地时间给出轻量情境搭话</label>
+          </div>
+          <div class="inline-opts">
+            <label data-i18n="ctx.time"><input type="checkbox" id="ctxTime"> 使用本地时间（早晨 / 午间 / 下午 / 晚间）</label>
+            <label data-i18n="ctx.idle"><input type="checkbox" id="ctxIdle"> 仅在你一段时间未操作时提示</label>
+          </div>
+          <div class="fnote" data-i18n="ctx.note">只读取本机时间与「气泡是否打开」，不读取窗口标题、键盘输入或应用列表，不产生网络请求。提示会显示「情境」徽标与判断依据，点击徽标可直接回到这里关闭。</div>
         </div>
         <div class="sec">
           <h4><span data-i18n="s85">语音朗读</span> <span class="tag">FR-VOI-001 · TTS</span></h4>
@@ -340,6 +363,10 @@ body { background: var(--bg); display: flex; flex-direction: column; }
             <label data-i18n="s134"><input type="checkbox" id="toolEnabled"> 允许模型调用本地工具（关闭后所有工具不可用）</label>
           </div>
           <div id="toolAuthList"></div>
+          <h4 style="margin-top:14px"><span data-i18n="gr.title">授权历史</span> <span class="tag">P-08</span></h4>
+          <div class="fnote" style="margin-top:0" data-i18n="gr.note">记录最近 50 次「始终允许 / 始终拒绝 / 撤销」操作（只含工具名与时间，不含调用参数）。逐项改为「每次询问」或点击下方按钮即可撤销全部记忆授权。</div>
+          <div id="grantList"></div>
+          <div class="btn-row" style="margin-top:8px"><button id="grantReset" data-i18n="gr.reset">撤销全部记忆授权</button></div>
           <div class="fnote" style="margin-top:8px" data-i18n-html="h135">工具白名单在编译期固定：创建提醒、读取剪贴板、打开白名单链接、启动白名单应用、查询天气、联网搜索。天气与联网搜索默认拒绝，需在下方显式改为允许；不存在执行任意命令的通道（NFR-SEC-002）。</div>
           <div style="display:flex;gap:8px;margin-top:8px">
             <input id="wlAdd" placeholder="追加允许打开的域名，如 example.com">
@@ -454,6 +481,12 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           <div class="fnote" style="margin:6px 0 8px" data-i18n="g.reopenDesc">回顾模型选择、密钥填写与隐私告知；不会修改现有配置。</div>
           <button id="guideOpen" data-i18n="g.reopenBtn">打开引导</button>
         </details>
+        <details open>
+          <summary data-i18n="diag.title">本地诊断包</summary>
+          <div class="fnote" style="margin:6px 0 8px" data-i18n="diag.note">纯本地生成：包含版本、操作系统、数据目录、条目计数、脱敏设置快照与日志尾部（最近 200 行）；不包含会话正文、记忆正文、提醒内容、密钥或皮肤资源。文件写入应用数据目录的 exports/，是否分享由你决定。</div>
+          <div class="btn-row"><button id="diagExport" data-i18n="diag.btn">生成诊断包</button><button id="diagReveal" data-i18n="diag.reveal">打开导出目录</button></div>
+          <div class="fnote" id="diagLine"></div>
+        </details>
         <details>
           <summary data-i18n="s169">自动更新（FR-SYS-004）</summary>
           <div class="frow"><label data-i18n="s170">更新清单地址（HTTPS JSON）</label><input id="updateUrl" placeholder="https://…/latest.json"></div>
@@ -477,6 +510,8 @@ body { background: var(--bg); display: flex; flex-direction: column; }
 <script>
 'use strict';
 let editProvId = null, editPersId = null;
+// P-06：与宠物八态动画保持一致，人格可选择切换时的进入动画。
+const ANIM_STATES = ['idle', 'happy', 'sleep', 'work', 'click', 'drag', 'error', 'talk'];
 
 function switchTab(tab) {
   $id('setNav').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
@@ -680,6 +715,7 @@ function renderPeEditor() {
   const ps = getPers(editPersId);
   $id('peProv').innerHTML = S.providers.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('');
   $id('peSkin').innerHTML = Object.keys(SKINS).map(k => '<option value="' + k + '">' + SKINS[k].label + '</option>').join('');
+  $id('peAnimation').innerHTML = ANIM_STATES.map(st => '<option value="' + st + '">' + st + '</option>').join('');
   const qa = $id('qaRows');
   qa.innerHTML = '';
   const addQaRow = (label, prompt) => {
@@ -698,11 +734,15 @@ function renderPeEditor() {
     $id('peGreet').value = ps.greeting || '';
     $id('peProv').value = ps.providerId || (S.providers[0] && S.providers[0].id) || '';
     $id('peSkin').value = ps.skin || 'blue';
+    $id('peAnimation').value = (ps.animation && ps.animation.enter) || 'happy';
+    $id('peMemTags').value = (ps.memoryTags || []).join(', ');
     (ps.quickActions || []).forEach(a => addQaRow(a.label, a.prompt));
   } else {
     $id('peAvatar').value = '🐾'; $id('peName').value = ''; $id('peSys').value = ''; $id('peGreet').value = '';
     $id('peProv').value = (defProvObj() || {}).id || '';
     $id('peSkin').value = S.settings.skin;
+    $id('peAnimation').value = 'happy';
+    $id('peMemTags').value = '';
   }
   $id('qaAdd').onclick = () => addQaRow('', '');
 }
@@ -717,6 +757,9 @@ $id('peSave').addEventListener('click', () => {
     name, avatar: $id('peAvatar').value.trim() || '🐱',
     systemPrompt: $id('peSys').value.trim(), greeting: $id('peGreet').value.trim(),
     providerId: $id('peProv').value, skin: $id('peSkin').value, quickActions: qas,
+    // 保留既有 remember / context 等动画配置，只覆盖用户可见的进入动画
+    animation: Object.assign({}, (editPersId && (getPers(editPersId) || {}).animation) || {}, { enter: $id('peAnimation').value || 'happy' }),
+    memoryTags: $id('peMemTags').value.split(/[,，\s]+/).map(x => x.trim()).filter(Boolean).slice(0, 6),
   };
   if (editPersId) {
     Object.assign(getPers(editPersId), fields);
@@ -761,9 +804,25 @@ $id('peImportFile').addEventListener('change', e => {
       const j = JSON.parse(rd.result);
       const list = j.persona ? [j.persona] : (j.personas || []);
       if (!list.length) throw new Error('未找到 persona 字段');
+      // P-11：导入前检测同名人格，由用户决定覆盖或保留两份，避免静默产生重复条目。
+      const dupNames = list.filter(p => p.name && S.personas.some(x => x.name === p.name)).map(p => p.name);
+      const overwrite = dupNames.length
+        ? confirm('检测到同名人格：' + dupNames.join('、') + '\n确定 = 覆盖同名条目；取消 = 保留两份（新条目自动改名）')
+        : false;
       let n = 0;
       list.forEach(p => {
         if (!p.name) return;
+        if (!p.animation || typeof p.animation !== 'object') p.animation = { enter: 'happy' };
+        if (!Array.isArray(p.memoryTags)) p.memoryTags = [];
+        if (overwrite) {
+          const old = S.personas.find(x => x.name === p.name);
+          if (old) {
+            p.id = old.id;
+            Object.assign(old, p);
+            n++;
+            return;
+          }
+        }
         p.id = uid('ps');
         if (!getProv(p.providerId)) p.providerId = (defProvObj() || {}).id || 'p-demo';
         if (!SKINS[p.skin]) p.skin = S.settings.skin || 'blue';
@@ -919,6 +978,10 @@ function renderPetTab() {
   $id('bubbleWVal').textContent = Math.round(S.settings.bubbleW || 340) + 'px';
   $id('idleClose').value = S.settings.bubbleIdleClose || 60;
   $id('chatterSel').value = S.settings.chatter || 'off';
+  const ctx = S.settings.context || (S.settings.context = { enabled: false, time: true, idle: true });
+  $id('ctxEnabled').checked = !!ctx.enabled;
+  $id('ctxTime').checked = ctx.time !== false;
+  $id('ctxIdle').checked = ctx.idle !== false;
   $id('dndChk').checked = !!S.settings.dnd;
   $id('dndStart').value = S.settings.dndStart || '';
   $id('dndEnd').value = S.settings.dndEnd || '';
@@ -1559,6 +1622,31 @@ $id('skinSheetFile').addEventListener('change', e => {
 });
 /* FR-SKN-002：皮肤包由主进程解压校验，渲染层只拿到已转成 data URL 的资源 */
 $id('skinPackPick').addEventListener('click', () => $id('skinPackFile').click());
+// P-11：导入前先预览名称 / 版本 / 状态覆盖 / 体积，并对同名包给出覆盖或取消的选择。
+let pendingSkinPack = null;
+function skinPackSave(pack) {
+  const entry = { id: uid('sk'), type: 'pack', name: pack.name || '导入皮肤', label: pack.name || '导入皮肤', pack, ts: Date.now() };
+  S.settings.skins = S.settings.skins || [];
+  const dup = S.settings.skins.findIndex(s => s.type === 'pack' && s.name === entry.name);
+  if (dup >= 0) { entry.id = S.settings.skins[dup].id; S.settings.skins[dup] = entry; }
+  else S.settings.skins.push(entry);
+  useCustomSkin(entry.id);
+  saveState();
+  renderPetTab();
+  toast('已导入皮肤包：' + pack.name + '（' + Object.keys(pack.states || {}).length + ' 个状态）', 'ok');
+}
+function hideSkinPackPreview() {
+  pendingSkinPack = null;
+  $id('skinPackPreview').hidden = true;
+  $id('skinPackPreviewImg').removeAttribute('src');
+}
+$id('skinPackCancel').addEventListener('click', hideSkinPackPreview);
+$id('skinPackConfirm').addEventListener('click', () => {
+  if (!pendingSkinPack) return;
+  const pack = pendingSkinPack;
+  hideSkinPackPreview();
+  skinPackSave(pack);
+});
 $id('skinPackFile').addEventListener('change', e => {
   const f = e.target.files[0];
   e.target.value = '';
@@ -1571,16 +1659,21 @@ $id('skinPackFile').addEventListener('change', e => {
       const pack = await invoke('skin_pack_import', { data: b64 });
       const total = Object.values(pack.files || {}).reduce((n, v) => n + v.length, 0);
       if (total > 384 * 1024 * 1024) { toast('皮肤包资源过大，请压缩后重试', 'err'); return; }
-      // 同名皮肤包重复导入时覆盖旧条目，避免列表里堆积重复项
-      const entry = { id: uid('sk'), type: 'pack', name: pack.name || '导入皮肤', label: pack.name || '导入皮肤', pack, ts: Date.now() };
-      S.settings.skins = S.settings.skins || [];
-      const dup = S.settings.skins.findIndex(s => s.type === 'pack' && s.name === entry.name);
-      if (dup >= 0) { entry.id = S.settings.skins[dup].id; S.settings.skins[dup] = entry; }
-      else S.settings.skins.push(entry);
-      useCustomSkin(entry.id);
-      saveState();
-      renderPetTab();
-      toast('已导入皮肤包：' + pack.name + '（' + Object.keys(pack.states || {}).length + ' 个状态）', 'ok');
+      const name = pack.name || '导入皮肤';
+      const dup = (S.settings.skins || []).find(s => s.type === 'pack' && s.name === name);
+      const states = Object.keys(pack.states || {});
+      const sounds = Object.keys(pack.sounds || {});
+      const kb = Math.round((pack.byteSize || 0) / 1024);
+      pendingSkinPack = pack;
+      $id('skinPackPreviewHead').textContent = '皮肤包预览 · ' + name;
+      const previewFile = (pack.states || {}).idle || (pack.files && Object.keys(pack.files)[0]);
+      const src = previewFile && pack.files ? pack.files[previewFile] : '';
+      if (src) $id('skinPackPreviewImg').src = src;
+      $id('skinPackPreviewMeta').innerHTML =
+        '名称：' + esc(name) + ' · 版本：' + esc(pack.version || '1.0') + '<br>' +
+        '状态：' + states.length + '/8（' + esc(states.join(', ')) + '） · 音效：' + sounds.length + ' 个 · 资源：' + kb + ' KB' +
+        (dup ? '<br><b style="color:var(--err)">检测到同名皮肤包「' + esc(name) + '」，确认导入将覆盖旧条目。</b>' : '');
+      $id('skinPackPreview').hidden = false;
     } catch (err) { toast('导入失败：' + err, 'err'); }
   };
   rd.onerror = () => toast('读取文件失败', 'err');
@@ -2190,6 +2283,18 @@ $id('bubbleW').addEventListener('input', e => {
 });
 $id('idleClose').addEventListener('change', e => { S.settings.bubbleIdleClose = clampNum(e.target.value, 15, 300, 60); saveState(); });
 $id('chatterSel').addEventListener('change', e => { S.settings.chatter = e.target.value; saveState(); });
+/* P-07：情境陪伴默认关闭；三个开关即时保存，关闭总开关即停止后端情境搭话。 */
+function saveContextSettings() {
+  const ctx = S.settings.context || (S.settings.context = { enabled: false, time: true, idle: true });
+  ctx.enabled = $id('ctxEnabled').checked;
+  ctx.time = $id('ctxTime').checked;
+  ctx.idle = $id('ctxIdle').checked;
+  saveState();
+  toast(ctx.enabled ? '情境陪伴已开启，可随时在这里关闭' : '情境陪伴已关闭', 'ok');
+}
+$id('ctxEnabled').addEventListener('change', saveContextSettings);
+$id('ctxTime').addEventListener('change', saveContextSettings);
+$id('ctxIdle').addEventListener('change', saveContextSettings);
 $id('dndChk').addEventListener('change', e => {
   S.settings.dnd = e.target.checked;
   saveState();
@@ -2265,6 +2370,16 @@ function renderMemTab() {
     inp.value = m.content;
     inp.onchange = () => { m.content = inp.value.trim() || m.content; saveState(); toast('记忆已更新', 'ok'); };
     main.appendChild(inp);
+    const tagsInp = el('input', 'ri-edit');
+    tagsInp.style.marginTop = '4px';
+    tagsInp.placeholder = '标签（逗号分隔，用于人格偏好注入）';
+    tagsInp.value = (Array.isArray(m.tags) ? m.tags : []).join(', ');
+    tagsInp.onchange = () => {
+      m.tags = tagsInp.value.split(/[,，\s]+/).map(x => x.trim()).filter(Boolean).slice(0, 6);
+      saveState();
+      toast('记忆标签已更新', 'ok');
+    };
+    main.appendChild(tagsInp);
     main.appendChild(el('div', 'ri-sub', fmtDT(m.ts)));
     row.appendChild(main);
     const btns = el('div', 'ri-btns');
@@ -2278,7 +2393,7 @@ function renderMemTab() {
 $id('memAddBtn').addEventListener('click', () => {
   const v = $id('memAddInput').value.trim();
   if (!v) { toast('请输入记忆内容', 'warn'); return; }
-  S.memories.push({ id: uid('mem'), content: v, ts: Date.now() });
+  S.memories.push({ id: uid('mem'), content: v, tags: inferMemoryTags(v), ts: Date.now() });
   $id('memAddInput').value = '';
   saveState(); renderMemTab();
   toast('已添加记忆', 'ok');
@@ -2317,16 +2432,25 @@ function renderToolAuth() {
     [['ask', 'd.allow'], ['allow', 'd.always'], ['deny', 'd.deny']].forEach(([v, k]) => {
       const o = el('option', '', t(k)); o.value = v; if (v === cur) o.selected = true; sel.appendChild(o);
     });
-    sel.onchange = () => {
-      ts.auth[name] = sel.value;
-      saveState();
-      toast('「' + label + '」授权已更新', 'ok');
+    sel.onchange = async () => {
+      // P-08：由主进程写入授权与历史，前端再用返回值同步本地快照，避免全量保存覆盖历史。
+      try {
+        const snap = await invoke('tool_auth_set', { name, value: sel.value });
+        ts.auth = snap.auth || ts.auth;
+        ts.grants = snap.grants || ts.grants;
+        renderToolAuth();
+        toast('「' + label + '」授权已更新', 'ok');
+      } catch (e) {
+        toast('授权更新失败：' + e, 'err');
+        renderToolAuth();
+      }
     };
     const wrap = el('div', 'ri-btns');
     wrap.appendChild(sel);
     row.appendChild(wrap);
     box.appendChild(row);
   });
+  renderGrants(ts);
   const wl = $id('wlList');
   wl.innerHTML = '';
   (ts.openWhitelist || []).forEach(d => {
@@ -2341,6 +2465,49 @@ function renderToolAuth() {
     wl.appendChild(chip);
   });
 }
+function renderGrants(ts) {
+  const box = $id('grantList');
+  if (!box) return;
+  box.innerHTML = '';
+  const grants = Array.isArray(ts.grants) ? ts.grants : [];
+  if (!grants.length) {
+    box.appendChild(el('div', 'empty-tip', t('gr.empty')));
+    return;
+  }
+  grants.forEach((g, i) => {
+    const row = el('div', 'row-item');
+    const action = g.action === 'allow' ? t('gr.allow') : (g.action === 'deny' ? t('gr.deny') : t('gr.revoke'));
+    const via = g.via === 'remember' ? t('gr.viaRemember') : t('gr.viaSettings');
+    const time = g.ts ? new Date(g.ts).toLocaleString() : '-';
+    row.innerHTML = '<div class="ri-main"><div class="ri-title">' + esc(g.label || g.tool || '-') + ' · ' + esc(action) + '</div>' +
+      '<div class="ri-sub">' + esc(time) + ' · ' + esc(via) + '</div></div>';
+    const btns = el('div', 'ri-btns');
+    const revoke = el('button', '', t('gr.revokeOne'));
+    revoke.onclick = async () => {
+      try {
+        const snap = await invoke('tool_auth_set', { name: g.tool, value: 'ask' });
+        ts.auth = snap.auth || ts.auth;
+        ts.grants = snap.grants || ts.grants;
+        renderToolAuth();
+        toast(t('gr.revoked'), 'ok');
+      } catch (e) { toast(t('gr.failed') + e, 'err'); }
+    };
+    btns.appendChild(revoke);
+    row.appendChild(btns);
+    box.appendChild(row);
+  });
+}
+$id('grantReset').addEventListener('click', async () => {
+  try {
+    const snap = await invoke('tool_auth_reset');
+    const ts = S.settings.toolSettings;
+    ts.auth = snap.auth || ts.auth;
+    ts.grants = snap.grants || ts.grants;
+    saveState();
+    renderToolAuth();
+    toast(t('gr.resetDone'), 'ok');
+  } catch (e) { toast(t('gr.failed') + e, 'err'); }
+});
 $id('toolEnabled').addEventListener('change', e => {
   S.settings.toolSettings.enabled = e.target.checked;
   saveState();
@@ -2578,6 +2745,25 @@ document.querySelectorAll('input[name=langSel]').forEach(r => r.addEventListener
 $id('updateUrl').addEventListener('change', e => { S.settings.updateUrl = e.target.value.trim(); saveState(); });
 $id('updateAuto').addEventListener('change', e => { S.settings.updateAuto = e.target.checked; saveState(); });
 $id('updateCheck').addEventListener('click', () => checkUpdate(false, true));
+/* P-09：诊断包只在用户点击时生成；生成后不自动上传，由用户决定是否分享。 */
+$id('diagExport').addEventListener('click', async () => {
+  const line = $id('diagLine');
+  line.textContent = t('diag.generating');
+  try {
+    const path = await invoke('diagnostics_export');
+    line.textContent = t('diag.done') + path;
+    toast(t('diag.doneShort'), 'ok');
+  } catch (e) {
+    line.textContent = t('diag.failed') + e;
+    toast(t('diag.failed') + e, 'err');
+  }
+});
+$id('diagReveal').addEventListener('click', async () => {
+  try {
+    const info = await invoke('privacy_info');
+    await invoke('reveal_file', { path: String(info.dataDir || '') + '\\exports' });
+  } catch (e) { toast(String(e), 'err'); }
+});
 $id('guideOpen').addEventListener('click', () => invoke('open_guide_cmd'));
 async function checkUpdate(silent, manual) {
   const line = $id('updateLine');

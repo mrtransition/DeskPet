@@ -140,6 +140,20 @@ DeskPet 的核心目的是成为**轻量、私密、点击即聊的桌面 AI 聊
 
 进入 M2 前，P0 的约束按“持续机制”执行：功能类 PR 填写准入结论、新增集成点新增评审记录、发布说明保留“收敛与移除”章节、默认开启能力变化登记到清单。CI 检查见 `.github/workflows/governance.yml`。
 
+### 5.2 P1 落地状态（2026-11-13）
+
+| 编号 | 工作包 | 状态 | 交付物 / 验证 |
+|---|---|---|---|
+| P-06 | 人格—皮肤—记忆联动试点 | ✅ 已完成 | 人格 `animation` / `memoryTags`、记忆 `tags`、`pickMemories` 标签加权、`persona-fx` 动画事件 |
+| P-07 | 情境感知陪伴试点 | ✅ 已完成 | `settings.context` 默认关闭、本地时间文案 + `basis`、宠物「情境」徽标、设置页可撤销；[INT-011](治理/安全评审/INT-011-context-companion.md) |
+| P-08 | 细粒度授权与撤销面板 | ✅ 已完成 | `toolSettings.grants`（≤50 条）、隐私页授权历史、逐项 / 全部撤销 |
+| P-09 | 本地诊断日志与诊断包 | ✅ 已完成 | `diagnostics_export` 白名单字段 + 日志尾部、写入 `exports/`、关于页按钮；[INT-012](治理/安全评审/INT-012-diagnostics-export.md) |
+| P-10 | 平台适配层抽象 | ✅ 已完成 | `src-tauri/src/platform.rs` 隔离 Windows 调用；`windows-sys` 改为目标依赖；非 Windows 显式降级 |
+| P-11 | 皮肤/人格创作工具链优化 | ✅ 已完成 | 皮肤包导入预览（名称 / 版本 / 状态 / 音效 / 体积）、同名覆盖提示、人格导入冲突提示 |
+| P-12 | 社区画廊 MVP | ✅ 已完成 | 静态 [docs/gallery](gallery/index.html)、`gallery.json`、提交说明；不新增应用内出站 |
+
+验证：`cargo test` 60 passed；`node --check src/shared.js`、`src/i18n.js` 通过；`node scripts/check-governance.mjs` 通过。P1 不提升应用版本号，发布时按[发布说明规范](治理/发布说明规范.md)统一更新。
+
 ---
 
 ## 6. 明确不做与审慎事项

@@ -171,6 +171,37 @@ v2.2.0 已覆盖 SRS 的大部分核心功能，并补齐了 i18n、右键菜单
   - `cargo test`、JS 语法检查、CDP E2E、更新清单校验；
   - 同步更新 README、SRS 状态表与版本号。
 
+### P1 试点 — 体验与生态（P-06 ~ P-12，已完成 2026-11-13）
+
+目标：在 P0 治理基线之上做最小可用试点，不重写架构、不新增默认开启能力。
+
+- [x] **P-06 人格—皮肤—记忆联动**
+  - 人格新增 `animation`（八态进入动画）与 `memoryTags`；
+  - 记忆新增 `tags`，写入「记住：…」时按关键词自动推断；
+  - `pickMemories(text, persona)` 对匹配标签加权；切换人格时向宠物发送 `persona-fx`。
+- [x] **P-07 情境感知陪伴（默认关闭）**
+  - `settings.context { enabled:false, time:true, idle:true }`；
+  - 主进程按本机时间生成时段文案，payload 附带 `basis`；
+  - 宠物窗口显示「情境」徽标，点击打开设置；设置页可关闭。
+- [x] **P-08 细粒度授权与撤销**
+  - `toolSettings.grants` 记录最近 50 次授权变更（不含参数）；
+  - 设置 → 隐私新增授权历史，可逐项改回「每次询问」或一键撤销全部。
+- [x] **P-09 本地诊断包**
+  - `diagnostics_export` 输出白名单字段 + 日志尾部，写入 `exports/`；
+  - 不含会话 / 记忆 / 提醒正文、密钥或皮肤资源，不自动上传。
+- [x] **P-10 平台适配层**
+  - 新增 `src-tauri/src/platform.rs`，隔离单实例、剪贴板、外部链接、光标 / 工作区、置顶；
+  - `windows-sys` 改为 Windows 目标依赖；非 Windows 提供显式降级。
+- [x] **P-11 创作工具链优化**
+  - 皮肤包导入前显示名称 / 版本 / 状态覆盖 / 音效 / 体积预览；
+  - 同名皮肤包提示覆盖，人格导入提示同名冲突；
+  - 保留现有诊断 / 修复 / 打包 / 导出能力。
+- [x] **P-12 社区画廊 MVP**
+  - 新增静态 `docs/gallery/`（`index.html` / `gallery.json` / `README.md`）；
+  - 只展示仓库内可验证示例，不新增应用内网络请求或自动安装。
+- [x] **验证**：`cargo test` 60 passed；`node --check` 通过；`node scripts/check-governance.mjs` 通过。
+- [x] **安全评审**：新增 [INT-011](治理/安全评审/INT-011-context-companion.md)（情境陪伴）与 [INT-012](治理/安全评审/INT-012-diagnostics-export.md)（诊断包）。
+
 ### v2.4.0 — 数据层与工程化（约 2–3 周）
 
 目标：解决 JSON 存储的长期瓶颈，为后续多模态功能打基础。

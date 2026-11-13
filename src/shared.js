@@ -131,6 +131,11 @@ function switchPersona(id) {
     if (s) s.providerId = ps.providerId;
   }
   if (ps.skin && SKINS[ps.skin]) S.settings.skin = ps.skin;
+  // P-06：人格切换时给宠物一个可配置的进入动画，让「人格—皮肤—记忆」联动可感知。
+  try {
+    const state = (ps.animation && ps.animation.enter) || 'happy';
+    tEmitTo('pet', 'persona-fx', { personaId: ps.id, state });
+  } catch (e) { /* 宠物窗口不可用时忽略 */ }
   return ps;
 }
 function switchSkin(name) {
@@ -614,14 +619,36 @@ function fallbackCopy(t, done) {
   ta.remove();
 }
 
-/* ---- 记忆相关度选取（注入不超过 5 条，FR-MEM-002） ---- */
-function pickMemories(text) {
+/* ---- 记忆标签（P-06：人格记忆偏好联动） ----
+   轻量关键词推断，不调用模型、不联网。用户仍可在设置页看到并修改内容。 */
+const MEMORY_TAG_RULES = [
+  ['工作', ['工作', '项目', '会议', '客户', '代码', '加班', '汇报', '需求', 'deadline', 'bug']],
+  ['偏好', ['喜欢', '讨厌', '爱吃', '爱喝', '偏好', '不喜欢', '习惯', '口味', '颜色']],
+  ['健康', ['健康', '运动', '跑步', '睡', '喝水', '药', '医院', '过敏', '体重']],
+  ['生活', ['家人', '朋友', '生日', '宠物', '旅行', '周末', '房子', '城市', '住在']],
+  ['情绪', ['压力', '焦虑', '开心', '难过', '烦', '累', '情绪']],
+];
+function inferMemoryTags(text) {
+  const t = String(text || '').toLowerCase();
+  const tags = [];
+  MEMORY_TAG_RULES.forEach(([tag, words]) => {
+    if (words.some(w => t.includes(w.toLowerCase()))) tags.push(tag);
+  });
+  return tags.length ? tags.slice(0, 3) : ['其他'];
+}
+
+/* ---- 记忆相关度选取（注入不超过 5 条，FR-MEM-002） ----
+   P-06：人格声明 memoryTags 时，带匹配标签的记忆优先注入；未声明则退回纯相关度。 */
+function pickMemories(text, persona) {
   if (!S.memories || !S.memories.length) return [];
   const terms = String(text || '').split(/[\s，。、！？!?.,]+/).filter(w => w.length > 1);
+  const prefer = (persona && Array.isArray(persona.memoryTags)) ? persona.memoryTags : [];
   const now = Date.now();
   const scored = S.memories.map((m) => {
     let sc = 0;
     for (const w of terms) if (m.content.includes(w)) sc += 2;
+    const tags = Array.isArray(m.tags) ? m.tags : [];
+    if (prefer.length && tags.some(t => prefer.includes(t))) sc += 3;
     sc += Math.max(0, 1 - (now - m.ts) / (1000 * 60 * 60 * 24 * 30));
     return { m, sc };
   }).sort((a, b) => b.sc - a.sc);

@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "updated": "2026-11-13",
+  "note": "DeskPet 社区画廊 MVP：静态清单，仅收录仓库内可验证的示例作品。提交新作品请附预览图、许可证与可复现的打包文件。",
+  "items": [
+    {
+      "id": "round-cat",
+      "type": "skin",
+      "name": "圆猫（八态皮肤包）",
+      "author": "DeskPet 内置示例",
+      "summary": "圆滚滚的橘白小猫，包含完整八态与状态机，适合作为皮肤包制作模板。",
+      "license": "MIT",
+      "preview": "../../assets/examples/eight-state-4x2.webp",
+      "download": "../../assets/skin-packs/round-cat.deskpet-skin.zip",
+      "tags": ["猫", "八态", "模板"],
+      "featured": true
+    },
+    {
+      "id": "codex-round-cat",
+      "type": "skin",
+      "name": "圆猫（Codex 宠物包）",
+      "author": "DeskPet 内置示例",
+      "summary": "同一角色的 Codex Pet Contract 版本，用于验证 8×9 图集导入与帧序映射。",
+      "license": "MIT",
+      "preview": "../../assets/skin-packs/codex-round-cat/spritesheet.png",
+      "download": "../../assets/skin-packs/codex-round-cat-pack.zip",
+      "tags": ["猫", "Codex", "图集"],
+      "featured": false
+    },
+    {
+      "id": "persona-ps-1",
+      "type": "persona",
+      "name": "贴心小助手「团子」",
+      "author": "DeskPet 内置人格",
+      "summary": "温柔贴心、回复简短；偏好「生活 / 偏好 / 健康」记忆标签，切换时播放开心动画。",
+      "license": "MIT",
+      "preview": "",
+      "download": "",
+      "tags": ["人格", "温柔", "记忆联动"],
+      "featured": true
+    },
+    {
+      "id": "persona-ps-3",
+      "type": "persona",
+      "name": "专注工作搭子「工友」",
+      "author": "DeskPet 内置人格",
+      "summary": "结构化、要点化的工作助手；偏好「工作 / 项目」记忆标签，切换时进入工作动画。",
+      "license": "MIT",
+      "preview": "",
+      "download": "",
+      "tags": ["人格", "工作", "记忆联动"],
+      "featured": true
+    }
+  ]
+}
