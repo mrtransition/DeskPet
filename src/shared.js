@@ -106,6 +106,48 @@ const defProvObj = () => S.providers.find(p => p.isDefault) || S.providers[0];
 const curSession = () => S.sessions.find(s => s.id === S.currentSessionId);
 const isMockProv = p => !!p && p.type === 'mock';
 
+/* 「真实供应商是否真的能发请求」的判定（演示模式自动切换 / 失效绑定自愈用）。
+   默认状态预置了 DeepSeek / OpenAI / Ollama，但都没有 Key；旧逻辑只要看到
+   BaseURL 就切过去，于是演示模式的第一句话就撞上 401 认证失败。这里要求：
+   - BaseURL 与模型名都填了，且不是「你的资源名」这类中文占位模板；
+   - 云端供应商确实配置过 Key（Key 只存在主进程 keyring，这里只查布尔值）。
+   本地端点（Ollama / LM Studio 等）免 Key，视为可用。 */
+const isLocalBaseUrl = base =>
+  /^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::|\/|$)/i.test(String(base || '').trim());
+const isPlaceholderText = s => /[\u4e00-\u9fa5]/.test(String(s || ''));
+async function provHasKey(p) {
+  if (!p) return false;
+  if (p.apiKey) return true; // 兼容旧数据里残留的明文 Key
+  try { return !!(await invoke('key_has', { id: p.id })); } catch (e) { return false; }
+}
+async function provCallable(p) {
+  if (isMockProv(p)) return true;
+  if (!p || !p.baseUrl || !p.model) return false;
+  if (isLocalBaseUrl(p.baseUrl)) return true;
+  if (isPlaceholderText(p.baseUrl) || isPlaceholderText(p.model)) return false;
+  return provHasKey(p);
+}
+/* 可自动切换的真实供应商：必须真的能发请求，且排除本地端点。
+   本地服务可能根本没启动，自动切过去只会把演示对话变成连接失败；
+   用户把它「设为默认」后由 pickProv 正常生效。 */
+async function firstCallableProv() {
+  const seen = new Set();
+  const queue = [];
+  const add = p => {
+    if (!p || seen.has(p.id)) return;
+    seen.add(p.id);
+    queue.push(p);
+  };
+  add(defProvObj());
+  add(S.settings.lastProviderId ? getProv(S.settings.lastProviderId) : null);
+  (S.providers || []).forEach(add);
+  for (const p of queue) {
+    if (isLocalBaseUrl(p.baseUrl)) continue;
+    if (await provCallable(p)) return p;
+  }
+  return null;
+}
+
 /* 会话绑定的供应商是否仍然有效。
    历史会话常把 providerId 钉在 p-demo（默认状态用人格绑定的 p-demo 开会话）；
    用户之后在设置里新建 / 设为默认真实供应商时，老会话的绑定不会被批量改写，

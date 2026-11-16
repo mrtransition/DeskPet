@@ -8127,6 +8127,52 @@ mod codex_contract_tests {
             assert_eq!(st["settings"]["mockPinned"], json!(false), "演示模式默认未显式钉住");
         }
 
+        // 「演示模式对话却提示认证失败（401）」回归：
+        // 默认状态预置了 DeepSeek / OpenAI / Ollama（有 BaseURL、没 Key）。旧逻辑只按
+        // BaseURL 就自动切走，导致演示模式的第一句话被发到未配置 Key 的云端供应商。
+        #[test]
+        fn demo_mode_never_auto_switches_to_keyless_provider() {
+            let js = include_str!("../../src/shared.js");
+            assert!(js.contains("async function firstCallableProv()"), "缺少可自动切换供应商的判定");
+            assert!(js.contains("async function provCallable(p)"), "缺少「供应商能否发请求」的判定");
+            assert!(
+                js.contains("await invoke('key_has', { id: p.id })"),
+                "自动切换前必须确认该供应商确实配置了 Key"
+            );
+            assert!(
+                js.contains("isLocalBaseUrl(p.baseUrl)")
+                    && js.contains("isPlaceholderText(p.baseUrl)")
+                    && js.contains("isPlaceholderText(p.model)"),
+                "本地端点与中文占位模板不得参与自动切换"
+            );
+            let html = include_str!("../../src/bubble.html");
+            assert!(
+                html.contains("if (isMockProv(prov) && !S.settings.mockPinned)"),
+                "显式选择演示模式（mockPinned）后不得自动切走"
+            );
+            assert!(
+                html.contains("isMockProv(dft) && !(await provCallable(prov))"),
+                "旧版本钉在无 Key 供应商上的会话必须先回到演示默认"
+            );
+            assert!(
+                !html.contains("S.providers.find(p => p.type !== 'mock' && p.baseUrl)"),
+                "「只要有 BaseURL 就切」的旧实现会让演示模式撞 401"
+            );
+            // 默认状态确实存在「有 BaseURL、没 Key」的模板供应商：这正是旧逻辑的触发条件
+            let st = default_state();
+            let keyless = st["providers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|p| {
+                    p["type"] != json!("mock")
+                        && !p["baseUrl"].as_str().unwrap_or("").is_empty()
+                        && p["apiKey"].as_str().unwrap_or("").is_empty()
+                })
+                .count();
+            assert!(keyless > 0, "默认状态应保留可配置的真实供应商模板");
+        }
+
         // FR-DAT-005：默认数据必须带当前数据模式号
         #[test]
         fn default_state_carries_data_schema() {

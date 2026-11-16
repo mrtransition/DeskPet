@@ -442,9 +442,25 @@ async function generate() {
     return;
   }
   let prov = activeProv();
-  // 已配置真实供应商却仍解析到演示模式：先自动切到真实默认并落盘，不让用户在无提示下继续得到内置回复
-  if (isMockProv(prov)) {
-    const real = S.providers.find(p => p.type !== 'mock' && p.baseUrl);
+  // 旧版本（v2.3.1）的自动切换只认 BaseURL，可能把会话钉在「模板地址、没填 Key」的云端
+  // 供应商上。默认仍是演示模式时，这类绑定不是用户主动选择的：先回到默认，
+  // 避免升级后第一句话继续得到 401。补全 Key 或设为默认后仍会正常切过去。
+  const dft = defProvObj();
+  let healedFrom = null;
+  if (!isMockProv(prov) && isMockProv(dft) && !(await provCallable(prov))) {
+    healedFrom = prov;
+    prov = dft;
+    const stale = curSession();
+    if (stale) stale.providerId = prov.id;
+    S.settings.lastProviderId = prov.id;
+    await saveStateNow();
+    renderHead();
+  }
+  // 演示模式下自动切到真实供应商：只在找到「确实能发请求」的供应商时切换。
+  // 仅按 BaseURL 就切（模板预置地址但没填 Key）会让演示模式的第一句话直接撞 401；
+  // 用户在 ⚡ 里明确选过演示模式（mockPinned）时也尊重选择，不再切走。
+  if (isMockProv(prov) && !S.settings.mockPinned) {
+    const real = await firstCallableProv();
     if (real) {
       await setSessionProvider(real.id);
       prov = getProv(real.id);
@@ -454,6 +470,9 @@ async function generate() {
         pushSys('已将本次对话切换到「' + real.name + '」，后续回复来自真实模型（可在 ⚡ 里改回演示模式）', { ephemeral: true });
       }
     }
+  }
+  if (healedFrom && isMockProv(prov)) {
+    pushSys('「' + healedFrom.name + '」还没有配置 API Key，已回到演示模式；补全 Key 后可在 ⚡ 里切回', { ephemeral: true });
   }
   // 会话绑定已失效（例如供应商被删除）时必须显式说明，不能让回复来源含糊
   const sess = curSession();
@@ -547,6 +566,11 @@ function finishStream(ok, errInfo, rawErr, opts) {
   liveEl = null;
   if (!ok) {
     const info = errInfo || { status: null, message: rawErr || '未知错误' };
+    // FR-MDL-012：401/403 必须引导到配置页，而不是把服务端原文（如 Authentication Fails）直接丢给用户
+    if (info.status === 401 || info.status === 403) {
+      info.message = String(info.message || '')
+        + '\n\n认证失败通常是 API Key 未填写或已失效：请到「设置 → 模型」检查该供应商的 Key，或在 ⚡ 菜单里切回「演示模式」。';
+    }
     if (s) s.msgs.push({ role: 'error', title: errTitle(info), content: info.message });
     appendMsg({ role: 'error', title: errTitle(info), content: info.message });
     if (info.retryAfter) startCooldown(info.retryAfter);

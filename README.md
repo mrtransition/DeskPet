@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.3.1-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.3.2-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -53,7 +53,7 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 无需构建，下载即用：
 
 1. 打开本仓库 [`dist/`](dist) 目录，下载两个文件：
-   - `DeskPet.exe`（14.5 MB，主程序 v2.3.1）
+   - `DeskPet.exe`（14.5 MB，主程序 v2.3.2）
    - `WebView2Loader.dll`（0.15 MB，引导库）
 2. 将两个文件放入**同一文件夹**，双击 `DeskPet.exe`
 
@@ -188,6 +188,15 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.3.2</b> — 修复演示模式对话误报 401</summary>
+
+- **修复：演示模式对话提示「认证失败（401）」（FR-MDL-006 回归）**：v2.3.1 的自动切换只看 BaseURL，默认数据里预置的 DeepSeek / OpenAI 模板（未填 Key）被误当成可用真实供应商，于是演示模式的第一句话就发出空 Key 请求并收到 401。现在只有「BaseURL / 模型名齐全、不是占位模板、且确实配置过 Key」的云端供应商才参与自动切换；显式选择演示模式（`mockPinned`）后不再被切走；旧版本遗留的失效会话绑定会自动回到演示默认。
+- **401/403 错误引导**：错误卡片在服务端原文后追加「检查 API Key / 切回演示模式」的可操作提示，不再只显示 `Authentication Fails` 之类的原始响应。
+- **测试**：`cargo test` 76 passed（新增演示模式自动切换回归 1 项）；`cargo build --release` 通过。详见 [`docs/releases/v2.3.2.md`](docs/releases/v2.3.2.md)。
+
+</details>
+
+<details>
 <summary><b>v2.3.1</b> — 数据模式迁移与「配好了却还在演示模式」修复</summary>
 
 - **数据模式版本号与迁移框架（FR-DAT-005）**：`data.json` 顶层 `schema` 记录数据模式版本，启动时逐版本迁移；迁移前另存 `data.json.pre-v<版本>-<时间戳>`，失败保留原文件并回退默认数据启动。备份恢复前同样迁移，失败则拒绝恢复。详见 [`docs/releases/v2.3.1.md`](docs/releases/v2.3.1.md)。
