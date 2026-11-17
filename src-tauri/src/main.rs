@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Position, Size,
     WebviewUrl, WebviewWindow, WebviewWindowBuilder,
@@ -6427,6 +6430,9 @@ async fn update_check(app: AppHandle, manual: Option<bool>) -> Result<Value, Str
     if newer && !m.url.is_empty() && !m.url.starts_with("https://") {
         return Ok(json!({"ok": false, "message": "更新下载地址必须使用 HTTPS"}));
     }
+    // NFR-SEC-004：校验信息缺失时仍展示新版本，但前端不提供下载按钮，
+    // 避免用户下载到无法验证的安装包。
+    let verifiable = !m.sha256.is_empty() && !m.signature.is_empty();
     Ok(json!({
         "ok": true,
         "current": current,
@@ -6434,17 +6440,26 @@ async fn update_check(app: AppHandle, manual: Option<bool>) -> Result<Value, Str
         "newer": newer,
         "notes": cut_chars(&m.notes, 600),
         "url": m.url,
+        "sha256": m.sha256,
+        "signature": m.signature,
+        "verifiable": verifiable,
         "checkedAt": now_ms(),
     }))
 }
 
-/// 更新清单解析结果（FR-SYS-004）。
+/// 更新清单解析结果（FR-SYS-004 / NFR-SEC-004）。
 #[derive(Debug)]
 struct Manifest {
     version: String,
     notes: String,
     url: String,
+    sha256: String,
+    signature: String,
 }
+
+/// NFR-SEC-004：内置更新签名公钥（Ed25519 raw 32 字节，base64）。
+/// 数组支持密钥轮换：签名只需被其中任意一把验证通过。私钥离线保管，绝不入库。
+const UPDATE_ED25519_PUBKEYS: &[&str] = &["S8JEiWr1tcNvvrSL+sne2qaSSnF/0FyItQ9xZsjSzXg="];
 
 fn https_string(v: &Value, key: &str) -> String {
     v.get(key)
@@ -6454,9 +6469,87 @@ fn https_string(v: &Value, key: &str) -> String {
         .unwrap_or_default()
 }
 
+/// 只接受 64 位十六进制 SHA-256；兼容 `sha256:...` 前缀与反引号。
+fn normalize_sha256(raw: &str) -> Option<String> {
+    let s = raw.trim().trim_matches('`').trim();
+    let s = s
+        .strip_prefix("sha256:")
+        .or_else(|| s.strip_prefix("SHA256:"))
+        .unwrap_or(s)
+        .trim();
+    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(s.to_ascii_lowercase())
+    } else {
+        None
+    }
+}
+
+/// 只接受 Ed25519 签名长度的 base64（88 字符），避免把整段正文误当签名。
+fn normalize_signature(raw: &str) -> String {
+    let s = raw.trim().trim_matches('`').trim();
+    if s.len() <= 128
+        && !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '='))
+    {
+        s.to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// 从发布说明正文读取机器可读校验行（兼容 `- SHA256: ...` / `SHA256: ...`）。
+fn meta_value(text: &str, keys: &[&str]) -> Option<String> {
+    for line in text.lines() {
+        let l = line
+            .trim()
+            .trim_start_matches(|c: char| c == '-' || c == '*' || c == '>' || c.is_whitespace())
+            .trim();
+        let Some((k, v)) = l.split_once(':') else { continue };
+        let k = k.trim().trim_matches('`').to_ascii_lowercase().replace('_', "-");
+        if keys.iter().any(|x| *x == k) {
+            let v = v.trim().trim_matches('`').trim();
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn manifest_sha256(j: &Value, notes: &str) -> Result<String, String> {
+    if let Some(raw) = j.get("sha256").and_then(|x| x.as_str()) {
+        return normalize_sha256(raw)
+            .ok_or_else(|| "更新清单的 sha256 必须是 64 位十六进制".to_string());
+    }
+    if let Some(raw) = j.get("digest").and_then(|x| x.as_str()) {
+        if let Some(sha) = normalize_sha256(raw) {
+            return Ok(sha);
+        }
+    }
+    Ok(meta_value(notes, &["sha256", "sha-256", "digest"])
+        .and_then(|v| normalize_sha256(&v))
+        .unwrap_or_default())
+}
+
+fn manifest_signature(j: &Value, notes: &str) -> String {
+    for key in ["signature", "ed25519-signature", "ed25519Signature"] {
+        if let Some(raw) = j.get(key).and_then(|x| x.as_str()) {
+            let sig = normalize_signature(raw);
+            if !sig.is_empty() {
+                return sig;
+            }
+        }
+    }
+    meta_value(notes, &["ed25519-signature", "signature", "ed25519"])
+        .map(|v| normalize_signature(&v))
+        .unwrap_or_default()
+}
+
 /// 同时支持两种清单格式：
-/// 1. 默认的 GitHub Releases API（`.../releases/latest`）：版本在 `tag_name`，下载地址在 `assets[]`；
-/// 2. 自定义最小清单：`{ "version": "2.3.0", "notes": "...", "url": "https://..." }`。
+/// 1. 默认的 GitHub Releases API（`.../releases/latest`）：版本在 `tag_name`，下载地址在 `assets[]`，
+///    校验信息从 `body` 的 `SHA256:` / `Ed25519-Signature:` 行读取，或取 asset 的 `digest`；
+/// 2. 自定义最小清单：`{ "version": "2.3.0", "notes": "...", "url": "https://...", "sha256": "...", "signature": "..." }`。
 /// 查找顺序为 最小清单字段 → GitHub 字段，因此自定义清单里用户的显式取值优先。
 fn parse_manifest(j: &Value) -> Result<Manifest, String> {
     let version = j
@@ -6475,6 +6568,8 @@ fn parse_manifest(j: &Value) -> Result<Manifest, String> {
         .or_else(|| j.get("body").and_then(|x| x.as_str()))
         .unwrap_or("")
         .to_string();
+    let mut sha256 = manifest_sha256(j, &notes)?;
+    let signature = manifest_signature(j, &notes);
     // 下载地址优先级：显式 url → GitHub assets 里的安装包 → browser_download_url。
     // 注意 GitHub Releases API 的顶层 url 是 api.github.com 的自我引用，不是安装包，必须排除，
     // 否则「下载安装包」会把一份 JSON 存成 zip。
@@ -6491,11 +6586,20 @@ fn parse_manifest(j: &Value) -> Result<Manifest, String> {
                             .is_some_and(|u| u.starts_with("https://"))
                 })
             };
-            url = pick(".zip")
-                .or_else(|| pick(".exe"))
-                .and_then(|a| a.get("browser_download_url").and_then(|u| u.as_str()))
-                .unwrap_or("")
-                .to_string();
+            let picked = pick(".zip").or_else(|| pick(".exe"));
+            if let Some(a) = picked {
+                url = a
+                    .get("browser_download_url")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                // GitHub 新 API 会在 asset 上提供 digest（sha256:...），优先于正文行。
+                if sha256.is_empty() {
+                    if let Some(d) = a.get("digest").and_then(|x| x.as_str()) {
+                        sha256 = normalize_sha256(d).unwrap_or_default();
+                    }
+                }
+            }
         }
     }
     if url.is_empty() {
@@ -6504,13 +6608,73 @@ fn parse_manifest(j: &Value) -> Result<Manifest, String> {
             url = direct;
         }
     }
-    Ok(Manifest { version, notes, url })
+    Ok(Manifest { version, notes, url, sha256, signature })
 }
 
-// FR-SYS-004：用户确认后手动下载安装包到 exports 目录，再由用户自行运行；
-// 应用只负责下载与校验大小，绝不自动执行。
+/// NFR-SEC-004：签名对象为 SHA-256 小写 hex 字符串（UTF-8 字节），
+/// 采用 Ed25519；内置公钥可轮换，任意一把验签通过即可。
+fn verify_update_signature_with_keys(
+    sha256_hex: &str,
+    signature_b64: &str,
+    keys: &[&str],
+) -> Result<(), String> {
+    let sig_raw = B64
+        .decode(signature_b64.trim())
+        .map_err(|_| "签名不是合法的 base64".to_string())?;
+    let sig_arr: [u8; 64] = sig_raw
+        .as_slice()
+        .try_into()
+        .map_err(|_| "签名长度必须为 64 字节".to_string())?;
+    let sig = Signature::from_bytes(&sig_arr);
+    let msg = sha256_hex.as_bytes();
+    let mut last = String::new();
+    for pk in keys {
+        let raw = B64
+            .decode(pk)
+            .map_err(|_| "内置更新公钥格式错误".to_string())?;
+        let raw_arr: [u8; 32] = raw
+            .as_slice()
+            .try_into()
+            .map_err(|_| "内置更新公钥长度必须为 32 字节".to_string())?;
+        let vk = VerifyingKey::from_bytes(&raw_arr)
+            .map_err(|_| "内置更新公钥无效".to_string())?;
+        match vk.verify_strict(msg, &sig) {
+            Ok(()) => return Ok(()),
+            Err(e) => last = e.to_string(),
+        }
+    }
+    Err(format!("Ed25519 签名不匹配（{}）", last))
+}
+
+fn verify_update_signature(sha256_hex: &str, signature_b64: &str) -> Result<(), String> {
+    verify_update_signature_with_keys(sha256_hex, signature_b64, UPDATE_ED25519_PUBKEYS)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
+// FR-SYS-004 / NFR-SEC-004：用户确认后手动下载安装包，先校验 SHA-256 与 Ed25519 签名，
+// 通过后才落盘；随后由用户自行运行。应用绝不自动执行安装程序。
 #[tauri::command]
-async fn update_download(app: AppHandle, url: String) -> Result<String, String> {
+async fn update_download(
+    app: AppHandle,
+    url: String,
+    sha256: String,
+    signature: String,
+) -> Result<String, String> {
+    let expected = normalize_sha256(&sha256)
+        .ok_or_else(|| "更新清单未提供有效的 SHA-256 校验值，已拒绝下载（NFR-SEC-004）".to_string())?;
+    let sig = normalize_signature(&signature);
+    if sig.is_empty() {
+        return Err("更新清单未提供 Ed25519 签名，已拒绝下载（NFR-SEC-004）".into());
+    }
     let u = reqwest::Url::parse(url.trim()).map_err(|_| "下载地址无效".to_string())?;
     if u.scheme() != "https" {
         return Err("下载地址必须使用 HTTPS（NFR-SEC-004）".into());
@@ -6547,12 +6711,36 @@ async fn update_download(app: AppHandle, url: String) -> Result<String, String> 
         return Err("安装包超过 200 MB，已中止".into());
     }
     record_outbound(&app, &host, "update-dl", "", Some(status), true, t0.elapsed().as_millis() as u64, 0);
+    // 校验必须在写盘前完成：失败时不留下任何可被误运行的文件。
+    let actual = sha256_hex(&bytes);
+    if actual != expected {
+        log_event(
+            &app,
+            "warn",
+            "update.verify_failed",
+            &format!("SHA-256 不匹配：期望 {}，实际 {}", &expected[..12], &actual[..12]),
+        );
+        return Err("SHA-256 校验失败：安装包可能被篡改或下载不完整，已拒绝保存".into());
+    }
+    if let Err(e) = verify_update_signature(&expected, &sig) {
+        log_event(&app, "warn", "update.verify_failed", &format!("Ed25519 签名校验失败：{}", e));
+        return Err(format!("{}，已拒绝保存", e));
+    }
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("updates");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let safe: String = name.chars().filter(|c| !r#"\/*:"<>?|"#.contains(*c)).collect();
     let path = dir.join(format!("{}-{}", now_ms(), safe));
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-    log_event(&app, "info", "update.downloaded", &format!("已下载更新包（{} 字节），等待用户手动安装", bytes.len()));
+    log_event(
+        &app,
+        "info",
+        "update.verified",
+        &format!(
+            "更新包已通过 SHA-256 与 Ed25519 校验（{} 字节，sha256 {}…），等待用户手动安装",
+            bytes.len(),
+            &expected[..12]
+        ),
+    );
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -6967,6 +7155,101 @@ mod tests {
             assert!(e.contains("version"), "错误信息应指出 version：{e}");
             assert!(e.contains("tag_name"), "错误信息应提示 GitHub 的 tag_name：{e}");
             assert!(parse_manifest(&json!({"tag_name": "latest"})).is_err(), "非数字版本号应拒绝");
+        }
+
+        // NFR-SEC-004：自定义最小清单可直接携带 sha256 / signature
+        #[test]
+        fn update_manifest_reads_checksums_from_minimal_manifest() {
+            let sha = "A".repeat(64);
+            let j = json!({
+                "version": "2.3.3",
+                "url": "https://example.com/DeskPet.zip",
+                "sha256": sha,
+                "signature": "c2lnbmF0dXJl"
+            });
+            let m = parse_manifest(&j).expect("带校验值的清单应可解析");
+            assert_eq!(m.sha256, "a".repeat(64), "sha256 应统一为小写");
+            assert_eq!(m.signature, "c2lnbmF0dXJl");
+        }
+
+        // NFR-SEC-004：GitHub Release 正文的机器可读行与 asset digest 都能提供哈希
+        #[test]
+        fn update_manifest_reads_checksums_from_github_body_and_digest() {
+            let sha = "b".repeat(64);
+            let j = json!({
+                "tag_name": "v2.3.3",
+                "body": format!("更新说明\n\nSHA256: {}\nEd25519-Signature: c2lnbmF0dXJl\n", sha),
+                "assets": [
+                    {"name": "DeskPet-v2.3.3-win-x64.zip",
+                     "browser_download_url": "https://example.com/pet.zip",
+                     "digest": format!("sha256:{}", sha)}
+                ]
+            });
+            let m = parse_manifest(&j).expect("GitHub 清单应可解析");
+            assert_eq!(m.sha256, sha);
+            assert_eq!(m.signature, "c2lnbmF0dXJl");
+            assert_eq!(m.url, "https://example.com/pet.zip");
+
+            // 正文没有 SHA256 时回退到 asset digest
+            let j2 = json!({
+                "tag_name": "v2.3.3",
+                "body": "更新说明",
+                "assets": [
+                    {"name": "DeskPet.zip",
+                     "browser_download_url": "https://example.com/pet.zip",
+                     "digest": format!("sha256:{}", sha)}
+                ]
+            });
+            assert_eq!(parse_manifest(&j2).unwrap().sha256, sha);
+        }
+
+        // NFR-SEC-004：格式错误的 sha256 必须直接拒绝，不能静默降级成「无校验」
+        #[test]
+        fn update_manifest_rejects_bad_sha256() {
+            let j = json!({"version": "2.3.3", "url": "https://example.com/a.zip", "sha256": "1234"});
+            let e = parse_manifest(&j).unwrap_err();
+            assert!(e.contains("sha256"), "错误信息应指出 sha256：{e}");
+        }
+
+        // NFR-SEC-004：Ed25519 验签通过；篡改哈希或换错公钥都必须失败
+        #[test]
+        fn update_signature_verifies_and_rejects_tampering() {
+            use ed25519_dalek::Signer;
+            let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+            let pk = B64.encode(sk.verifying_key().to_bytes());
+            let sha = "c".repeat(64);
+            let sig = B64.encode(sk.sign(sha.as_bytes()).to_bytes());
+            assert!(verify_update_signature_with_keys(&sha, &sig, &[pk.as_str()]).is_ok());
+            assert!(
+                verify_update_signature_with_keys(&"d".repeat(64), &sig, &[pk.as_str()]).is_err(),
+                "哈希被替换后签名必须失败"
+            );
+            let other = B64.encode(ed25519_dalek::SigningKey::from_bytes(&[8u8; 32]).verifying_key().to_bytes());
+            assert!(
+                verify_update_signature_with_keys(&sha, &sig, &[other.as_str()]).is_err(),
+                "非发布公钥不得通过验签"
+            );
+        }
+
+        #[test]
+        fn update_hash_matches_known_vector_and_builtin_key_shape() {
+            assert_eq!(
+                sha256_hex(b"abc"),
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            );
+            assert_eq!(
+                B64.decode(UPDATE_ED25519_PUBKEYS[0]).expect("内置公钥必须是合法 base64").len(),
+                32,
+                "内置 Ed25519 公钥必须是 32 字节"
+            );
+            // 用发布私钥对固定消息的签名做自检：确认内置公钥、base64 与验签路径一致。
+            // 轮换密钥时同步替换此签名（node scripts/update-keygen.mjs）。
+            let msg = "0".repeat(64);
+            let sig = "onXbTWC7TdvBuTxSXc3GRnApY/yjNw6pBxJF4vqeCzpaPkZ2RSiYdCizUGrN88DMz08A2Ig4HqFxvFAIf5jyDQ==";
+            assert!(
+                verify_update_signature(&msg, sig).is_ok(),
+                "内置发布公钥应能验证已知签名"
+            );
         }
 
         // FR-SYS-008：老用户升级不得被首次引导打扰（默认 guideDone = true）

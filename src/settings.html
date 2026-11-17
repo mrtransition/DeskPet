@@ -2958,35 +2958,40 @@ $id('diagReveal').addEventListener('click', async () => {
 $id('guideOpen').addEventListener('click', () => invoke('open_guide_cmd'));
 async function checkUpdate(silent, manual) {
   const line = $id('updateLine');
-  if (!silent) line.textContent = '正在检查更新…';
+  if (!silent) line.textContent = t('up.checking');
   try {
     const r = await invoke('update_check', { manual: !!manual });
-    if (!r.ok) { if (!silent) line.textContent = '✗ ' + (r.message || '检查失败'); return; }
+    if (!r.ok) { if (!silent) line.textContent = '✗ ' + (r.message || t('up.checkFail', { e: '' })); return; }
     if (!r.newer) {
-      line.textContent = '✓ 已是最新版本（当前 ' + r.current + '）';
-      if (!silent) toast('已是最新版本', 'ok');
+      line.textContent = t('up.latest', { v: r.current });
+      if (!silent) toast(t('up.toastLatest'), 'ok');
       return;
     }
-    line.innerHTML = '发现新版本 <b>' + esc(r.latest) + '</b>（当前 ' + esc(r.current) + '）' +
-      (r.notes ? '<br>' + esc(r.notes) : '') + '<br>' +
-      (r.url ? '<button id="updateDl">下载安装包</button>' : '清单未提供下载地址');
-    if (silent) toast('有新版本：' + r.latest, 'ok');
+    // NFR-SEC-004：没有完整 SHA-256 / Ed25519 校验信息时不提供下载入口
+    const dlBlock = !r.url
+      ? esc(t('up.noUrl'))
+      : (r.verifiable
+        ? esc(t('up.verified')) + '<br><button id="updateDl">' + esc(t('up.download')) + '</button>'
+        : '<span class="warn">' + esc(t('up.unverified')) + '</span>');
+    line.innerHTML = t('up.found', { latest: esc(r.latest), current: esc(r.current) }) +
+      (r.notes ? '<br>' + esc(r.notes) : '') + '<br>' + dlBlock;
+    if (silent) toast(t('up.toastNew', { v: r.latest }), 'ok');
     const dl = $id('updateDl');
     if (dl) dl.onclick = async () => {
-      if (!confirm('下载安装包到本地？\n下载完成后需要你手动运行安装程序，应用不会自动执行。')) return;
+      if (!confirm(t('up.confirmDl'))) return;
       dl.disabled = true;
-      line.textContent = '正在下载…（大文件可能需要一会儿）';
+      line.textContent = t('up.downloading');
       try {
-        const path = await invoke('update_download', { url: r.url });
-        line.innerHTML = '✓ 已下载到：<b>' + esc(path) + '</b><br>请手动运行该安装包完成更新。';
+        const path = await invoke('update_download', { url: r.url, sha256: r.sha256, signature: r.signature });
+        line.innerHTML = t('up.done', { path: esc(path) });
         invoke('reveal_file', { path }).catch(() => { });
       } catch (e) {
-        line.textContent = '✗ 下载失败：' + e;
+        line.textContent = t('up.fail', { e });
         dl.disabled = false;
       }
     };
   } catch (e) {
-    if (!silent) line.textContent = '✗ 检查失败：' + e;
+    if (!silent) line.textContent = t('up.checkFail', { e });
   }
 }
 

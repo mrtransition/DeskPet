@@ -39,6 +39,7 @@ const requiredFiles = [
   'docs/治理/默认开启能力清单.md',
   'docs/治理/工具调用能力边界.md',
   'docs/治理/隐私与安全白皮书.md',
+  'docs/治理/更新安全.md',
   'docs/治理/安全评审流程.md',
   'docs/治理/发布说明规范.md',
   'docs/治理/发布说明模板.md',

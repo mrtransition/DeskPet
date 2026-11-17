@@ -4,11 +4,11 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.3.2-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.3.3-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
-[![Size](https://img.shields.io/badge/安装包-14.3_MB-93A3B5?style=flat-square)](#快速开始)
+[![Size](https://img.shields.io/badge/安装包-15.4_MB-93A3B5?style=flat-square)](#快速开始)
 
 透明置顶 · 托盘常驻 · 多模型接入 · 密钥零泄露 · 数据全程本地
 
@@ -53,7 +53,7 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 无需构建，下载即用：
 
 1. 打开本仓库 [`dist/`](dist) 目录，下载两个文件：
-   - `DeskPet.exe`（14.5 MB，主程序 v2.3.2）
+   - `DeskPet.exe`（15.4 MB，主程序 v2.3.3）
    - `WebView2Loader.dll`（0.15 MB，引导库）
 2. 将两个文件放入**同一文件夹**，双击 `DeskPet.exe`
 
@@ -177,7 +177,7 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 - [x] CSP 渲染层内容安全策略（v2.2.0）；隐私披露与更新签名待补
 - [ ] 数据备份 / 一键恢复与安装器（计划 v2.4）
 - [ ] SQLite 存储与会话全文检索增强（当前为 JSON 原子写盘 + 备份回退）
-- [x] 自动更新（HTTPS 更新清单 + 手动下载安装，不做静默安装；签名校验待补）
+- [x] 安全的更新下载（HTTPS 清单 + SHA-256 / Ed25519 双校验，校验通过才保存；手动安装，不做静默安装）
 - [x] 界面中英双语覆盖（设置页 / 气泡 / 宠物菜单的界面文案已接入 i18n；人格、模型、皮肤等内容数据保持原文）
 - [x] 语音朗读（TTS，系统语音包，零联网）
 - [ ] 语音输入（ASR，P3，需本地运行时）
@@ -188,6 +188,17 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.3.3</b> — 更新包 SHA-256 与 Ed25519 校验</summary>
+
+- **更新完整性（NFR-SEC-004）**：下载安装包后先比对 SHA-256，再用编译期内置的 Ed25519 公钥验签；任一缺失或失败都拒绝保存，只写 `update.verify_failed` 诊断日志。应用仍只下载、不静默安装。
+- **清单兼容**：自定义清单读取 `sha256` / `signature`；GitHub Releases 读取 asset `digest` 或正文 `SHA256:` / `Ed25519-Signature:` 两行，无需额外请求。
+- **发布工具链**：新增 `scripts/update-keygen.mjs` 与 `scripts/sign-update.mjs`；私钥默认写入被忽略的 `.temp/`，公钥指纹与发布流程见 [`docs/治理/更新安全.md`](docs/治理/更新安全.md)。
+- **界面**：更新检查中英文提示接入 i18n；缺少校验信息时说明原因并禁用下载按钮。
+- **测试**：`cargo test` 81 passed；`cargo build --release` 通过。详见 [`docs/releases/v2.3.3.md`](docs/releases/v2.3.3.md)。
+
+</details>
+
+<details>
 <summary><b>v2.3.2</b> — 修复演示模式对话误报 401</summary>
 
 - **修复：演示模式对话提示「认证失败（401）」（FR-MDL-006 回归）**：v2.3.1 的自动切换只看 BaseURL，默认数据里预置的 DeepSeek / OpenAI 模板（未填 Key）被误当成可用真实供应商，于是演示模式的第一句话就发出空 Key 请求并收到 401。现在只有「BaseURL / 模型名齐全、不是占位模板、且确实配置过 Key」的云端供应商才参与自动切换；显式选择演示模式（`mockPinned`）后不再被切走；旧版本遗留的失效会话绑定会自动回到演示默认。
