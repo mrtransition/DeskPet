@@ -105,6 +105,7 @@ const DEFAULT_STATE: &str = r##"{
     "context": {"enabled": false, "time": true, "idle": true},
     "health": {"enabled": false, "sitMin": 60, "waterMin": 45},
     "dnd": false, "dndStart": "", "dndEnd": "",
+    "reminderCatchUp": true, "reminderCatchUpMin": 1440,
     "clipboardWatch": false,
     "lang": "zh", "voice": false, "voiceURI": "", "voiceRate": 1,
     "summaryThreshold": 24,
@@ -1371,9 +1372,25 @@ fn start_scheduler(app: AppHandle) {
             sit_water_next: false,
         };
         let mut tick: u64 = 0;
+        let mut last_tick = now_ms();
         loop {
             std::thread::sleep(Duration::from_secs(1));
             tick = tick.wrapping_add(1);
+            // FR-REM-008：休眠 / 挂起恢复后调度线程会一次跳过多拍。记录间隔，
+            // 到期提醒仍交给统一补发策略处理（默认最多补发 24 小时内的提醒）。
+            let before = now_ms();
+            if before.saturating_sub(last_tick) > 120_000 {
+                log_event(
+                    &app,
+                    "info",
+                    "reminder.resume_gap",
+                    &format!(
+                        "调度中断约 {} 秒，按补发策略处理到期提醒",
+                        before.saturating_sub(last_tick) / 1000
+                    ),
+                );
+            }
+            last_tick = before;
             tick_reminders(&app);
             tick_chatter(&app, &mut chatter_at);
             tick_health(&app, &mut health);
@@ -1389,12 +1406,36 @@ fn start_scheduler(app: AppHandle) {
     });
 }
 
-// 纯函数便于回归测试：返回（本次触发的提醒，状态是否变化）。
+// FR-REM-008：补发策略的默认值与硬上限。秒级抖动（正常调度）始终播报；
+// 只有真正“错过”的提醒才受开关与时间上限约束，避免重启 / 休眠后补发过旧内容。
+const REMINDER_TICK_TOLERANCE_MS: i64 = 90_000;
+const REMINDER_CATCH_UP_DEFAULT_MIN: i64 = 1_440;
+const REMINDER_CATCH_UP_MAX_MIN: i64 = 10_080;
+
+fn reminder_catch_up_config(st: &Value) -> (bool, i64) {
+    let enabled = st["settings"]["reminderCatchUp"].as_bool().unwrap_or(true);
+    let minutes = st["settings"]["reminderCatchUpMin"]
+        .as_i64()
+        .unwrap_or(REMINDER_CATCH_UP_DEFAULT_MIN)
+        .clamp(1, REMINDER_CATCH_UP_MAX_MIN);
+    (enabled, minutes * 60_000)
+}
+
+// 纯函数便于回归测试：返回（本次触发的提醒，状态是否变化，跳过的条数）。
 // 重复提醒必须“先触发、再顺延”，否则每日/间隔提醒会静默跳过播报。
-fn process_reminders(rems: &mut Vec<Value>, now: i64) -> (Vec<Value>, bool) {
+// 时区 / DST：due 使用绝对时间戳，不受时区切换影响；每日 / 每周按固定间隔推进，
+// 因此跨 DST 时墙体时间可能偏移最多 1 小时，但绝不重复触发同一次提醒。
+fn process_reminders(
+    rems: &mut Vec<Value>,
+    now: i64,
+    catch_up: bool,
+    max_late_ms: i64,
+) -> (Vec<Value>, bool, usize) {
     let mut fired: Vec<Value> = vec![];
     let mut keep: Vec<Value> = vec![];
     let mut changed = false;
+    let mut skipped = 0usize;
+    let max_late = max_late_ms.max(0);
     for r in rems.iter() {
         let enabled = r["enabled"].as_bool().unwrap_or(true);
         let due = r["due"].as_i64().unwrap_or(0);
@@ -1409,7 +1450,13 @@ fn process_reminders(rems: &mut Vec<Value>, now: i64) -> (Vec<Value>, bool) {
             "interval" => Some(r["intervalMin"].as_i64().unwrap_or(30).max(1) * 60_000),
             _ => None,
         };
-        fired.push(r.clone());
+        let late = now.saturating_sub(due);
+        // 正常调度抖动始终播报；错过太久的提醒按策略跳过，不补发旧内容。
+        if late <= REMINDER_TICK_TOLERANCE_MS || (catch_up && late <= max_late) {
+            fired.push(r.clone());
+        } else {
+            skipped += 1;
+        }
         changed = true;
         if let Some(step) = step {
             let mut nr = r.clone();
@@ -1420,22 +1467,26 @@ fn process_reminders(rems: &mut Vec<Value>, now: i64) -> (Vec<Value>, bool) {
             nr["due"] = json!(nd);
             keep.push(nr);
         }
+        // once：无论是否补发都移除，避免过期提醒反复进入调度。
     }
     *rems = keep;
-    (fired, changed)
+    (fired, changed, skipped)
 }
 
 fn tick_reminders(app: &AppHandle) {
     let now = now_ms();
-    let (fired, snapshot) = {
+    let (fired, snapshot, skipped) = {
         let ctx = app.state::<AppCtx>();
         let mut st = ctx.state.lock().unwrap_or_else(|e| e.into_inner());
         let mut fired: Vec<Value> = vec![];
         let mut changed = false;
+        let mut skipped = 0usize;
+        let (catch_up, max_late) = reminder_catch_up_config(&st);
         if let Some(rems) = st["reminders"].as_array_mut() {
-            let (f, c) = process_reminders(rems, now);
+            let (f, c, s) = process_reminders(rems, now, catch_up, max_late);
             fired = f;
             changed = c;
+            skipped = s;
         }
         // 持锁期间仅做序列化（快照），写盘必须在锁释放后进行（见 write_state_file 注释）
         let snap = if changed {
@@ -1443,12 +1494,20 @@ fn tick_reminders(app: &AppHandle) {
         } else {
             None
         };
-        (fired, snap)
+        (fired, snap, skipped)
     };
     if let Some(s) = snapshot {
         let ctx = app.state::<AppCtx>();
         write_state_file(&ctx, &s);
         let _ = app.emit("state-changed", json!({"origin": "backend"}));
+    }
+    if skipped > 0 {
+        log_event(
+            app,
+            "info",
+            "reminder.skipped",
+            &format!("{} 条提醒超过补发上限，已跳过并顺延 / 移除", skipped),
+        );
     }
     if fired.is_empty() {
         return;
@@ -3772,6 +3831,7 @@ fn merge_state_snapshot(st: &mut Value, state: Value, origin: &str) {
             "petScale", "clickThrough", "dnd", "bubbleW", "showInTaskbar", "alwaysOnTop",
             "bubbleIdleClose", "chatter", "enterSend", "newSessionPerClick", "lowFps", "disableGpu",
             "customSkin", "summaryThreshold", "voice", "voiceURI", "voiceRate", "reminderSound",
+            "reminderCatchUp", "reminderCatchUpMin",
             "health", "clipboardWatch", "context", "toolSettings", "updateUrl", "updateAuto", "lang",
             "dndStart", "dndEnd", "skinPack", "skins", "activeSkin",
         ]
@@ -7675,10 +7735,12 @@ mod tests {
                 rem("once", now - 1, "once"),
                 rem("future", now + 60_000, "daily"),
             ];
-            let (fired, changed) = process_reminders(&mut rems, now);
+            let (fired, changed, skipped) =
+                process_reminders(&mut rems, now, true, REMINDER_CATCH_UP_DEFAULT_MIN * 60_000);
             let ids: Vec<&str> = fired.iter().filter_map(|r| r["id"].as_str()).collect();
             assert_eq!(ids, vec!["daily", "weekly", "interval", "once"]);
             assert!(changed);
+            assert_eq!(skipped, 0);
             // once 被移除；其余重复项保留且 due 已推进到未来
             assert_eq!(rems.len(), 4);
             for r in &rems {
@@ -7702,12 +7764,58 @@ mod tests {
                 rem("stale", now - 3 * 86_400_000, "daily"),
                 json!({"id":"bad","content":"bad","due":now - 1,"rule":"interval","intervalMin":0,"enabled":true}),
             ];
-            let (fired, changed) = process_reminders(&mut rems, now);
-            assert_eq!(fired.len(), 2); // off 不触发
+            let (fired, changed, skipped) =
+                process_reminders(&mut rems, now, true, REMINDER_CATCH_UP_DEFAULT_MIN * 60_000);
+            assert_eq!(fired.len(), 1); // off 不触发；stale 超过 24 小时补发上限被跳过
+            assert_eq!(skipped, 1);
             assert!(changed);
             // intervalMin 非法时按 1 分钟兜底，继续推进到未来
             let bad = rems.iter().find(|r| r["id"] == "bad").unwrap();
             assert!(bad["due"].as_i64().unwrap() > now);
+        }
+
+        // FR-REM-008：错过但仍在补发上限内的提醒只补发一次；
+        // 超过上限或关闭补发时不播报，重复提醒仍顺延到未来。
+        #[test]
+        fn reminders_catch_up_once_and_respect_limit() {
+            let now = 1_700_000_000_000;
+            let mut rems = vec![
+                rem("inside", now - 3_600_000, "once"),
+                rem("outside", now - 25 * 3_600_000, "once"),
+                rem("daily_stale", now - 25 * 3_600_000, "daily"),
+            ];
+            let (fired, changed, skipped) =
+                process_reminders(&mut rems, now, true, REMINDER_CATCH_UP_DEFAULT_MIN * 60_000);
+            let ids: Vec<&str> = fired.iter().filter_map(|r| r["id"].as_str()).collect();
+            assert_eq!(ids, vec!["inside"], "24 小时内只补发一次，过期项不得播报");
+            assert_eq!(skipped, 2);
+            assert!(changed);
+            assert!(rems.iter().all(|r| r["id"] != "inside" && r["id"] != "outside"));
+            let daily = rems.iter().find(|r| r["id"] == "daily_stale").unwrap();
+            assert!(daily["due"].as_i64().unwrap() > now, "跳过后仍必须顺延");
+
+            // 关闭补发：错过 10 分钟的提醒也不再播报，但重复项继续顺延
+            let mut rems = vec![
+                rem("missed", now - 600_000, "once"),
+                rem("repeat", now - 600_000, "interval"),
+            ];
+            rems[1]["intervalMin"] = json!(30);
+            let (fired, _, skipped) = process_reminders(&mut rems, now, false, 86_400_000);
+            assert!(fired.is_empty());
+            assert_eq!(skipped, 2);
+            let repeat = rems.iter().find(|r| r["id"] == "repeat").unwrap();
+            assert!(repeat["due"].as_i64().unwrap() > now);
+        }
+
+        // 调度抖动（秒级延迟）不属于“错过”，即使关闭补发也必须正常播报。
+        #[test]
+        fn reminders_tick_jitter_still_fires_when_catch_up_off() {
+            let now = 1_700_000_000_000;
+            let mut rems = vec![rem("jitter", now - 2_000, "once")];
+            let (fired, _, skipped) = process_reminders(&mut rems, now, false, 0);
+            assert_eq!(fired.len(), 1);
+            assert_eq!(skipped, 0);
+            assert!(rems.is_empty());
         }
 
         #[test]

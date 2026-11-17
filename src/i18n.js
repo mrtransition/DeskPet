@@ -225,6 +225,9 @@ const I18N = {
     "s178": "追加允许打开的域名，如 example.com",
     "s179": "关闭硬件加速（显卡驱动异常或界面闪烁时使用，下次启动生效，FR-INT-006）",
     "s180": "开启后会在下次启动时为 WebView2 追加 --disable-gpu，可缓解部分显卡驱动导致的闪烁或黑屏；代价是滚动与动画更依赖 CPU。关闭开关并重启即可恢复。",
+    "s181": "错过提醒后补发一次（重启 / 休眠恢复后生效）",
+    "s182": "补发上限（分钟，超过则跳过，默认 1440）：",
+    "s183": "补发只针对真正错过的提醒，同一提醒最多播报一次；超过上限的旧提醒会被跳过并顺延（重复提醒）或移除（一次性提醒）。时区与 DST 变化不会重复触发；每日 / 每周按绝对间隔推进，跨 DST 的墙体时间最多偏移 1 小时。",
     "bg.title": "智能去除背景",
     "bg.tag": "可选 · 纯色 / 简单背景",
     "bg.note": "可选步骤：选择 JPG / PNG / WebP 图片（推荐 4 列 × 2 行八态单图），自动去掉纯色或简单背景，生成透明 PNG 后再进入「八态单图」切割与对齐流程。仅适合白墙、绿幕、蓝幕等简单背景，无法处理发丝、毛发与半透明物体。",
@@ -508,7 +511,7 @@ const I18N = {
     "n220.i1": "单实例运行：重复启动只唤起已有宠物，不再产生第二套托盘与提醒调度器",
     "n220.i2": "首次启动引导：三步完成模型选择、密钥填写与隐私告知，可跳过并随时重新打开",
     "n220.i3": "渲染层启用内容安全策略（CSP）：禁止内联脚本、插件与内嵌框架，仅允许本地资源与 IPC",
-    "n220.i4": "硬件加速开关、日志轮转、备份恢复与会话批量管理仍在后续里程碑",
+    "n220.i4": "硬件加速开关、日志轮转、备份恢复与会话批量管理已在后续版本补齐；无障碍、安全模式与自动清理仍在后续里程碑",
   },
   en: {
     "nav.model": "Models",
@@ -730,6 +733,9 @@ const I18N = {
     "s178": "Add an allowed domain, e.g. example.com",
     "s179": "Disable hardware acceleration (use when a GPU driver causes flicker; takes effect after restart, FR-INT-006)",
     "s180": "On the next launch WebView2 is started with --disable-gpu, which can help with flicker or black screens caused by some GPU drivers. Scrolling and animations then rely more on the CPU; turn the switch off and restart to restore GPU acceleration.",
+    "s181": "Re-issue a missed reminder once (after restart or resume from sleep)",
+    "s182": "Catch-up limit (minutes; older reminders are skipped, default 1440):",
+    "s183": "Catch-up only applies to reminders that were actually missed, and each reminder is announced at most once. Reminders older than the limit are skipped and either rescheduled (repeating) or removed (one-shot). Timezone or DST changes never trigger duplicates; daily / weekly reminders advance by absolute intervals, so wall-clock time may shift by up to one hour across DST.",
     "bg.title": "Remove background",
     "bg.tag": "Optional · solid / simple backgrounds",
     "bg.note": "Optional step: pick a JPG / PNG / WebP image (a 4×2 eight-state sheet is recommended), automatically remove a solid or simple background, then feed the transparent PNG into the eight-state split and alignment flow. Best for white walls, green screens and blue screens; hair, fur and translucent objects are not supported.",
@@ -1013,7 +1019,7 @@ const I18N = {
     "n220.i1": "Single instance: launching again just brings the existing pet forward — no second tray icon or reminder scheduler",
     "n220.i2": "First-run guide: model choice, key setup and privacy notice in three steps, skippable and reopenable",
     "n220.i3": "Content Security Policy enabled for the renderer: inline scripts, plugins and frames are blocked; only local assets and IPC are allowed",
-    "n220.i4": "Hardware-acceleration toggle, log rotation, backup/restore and bulk session management remain in later milestones",
+    "n220.i4": "Hardware acceleration, log rotation, backup/restore and bulk session management have since shipped; accessibility, safe mode and automatic cleanup remain in later milestones",
   },
 };
 

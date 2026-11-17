@@ -287,6 +287,11 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           <div class="inline-opts" style="margin-top:9px">
             <label data-i18n="s99"><input type="checkbox" id="reminderSound"> 提醒播报音（皮肤包提供音效时自动使用）</label>
           </div>
+          <div class="inline-opts" style="margin-top:9px">
+            <label data-i18n="s181"><input type="checkbox" id="reminderCatchUpChk"> 错过提醒后补发一次（重启 / 休眠恢复后生效）</label>
+          </div>
+          <div class="frow"><label data-i18n="s182">补发上限（分钟，超过则跳过，默认 1440）：</label><input id="reminderCatchUpMin" type="number" min="1" max="10080" step="30"></div>
+          <div class="fnote" style="margin:6px 0 8px" data-i18n="s183">补发只针对真正错过的提醒，同一提醒最多播报一次；超过上限的旧提醒会被跳过并顺延（重复提醒）或移除（一次性提醒）。时区与 DST 变化不会重复触发；每日 / 每周按绝对间隔推进，跨 DST 的墙体时间最多偏移 1 小时。</div>
           <div class="fnote" style="margin:0 0 8px" data-i18n="s101">对我说「25 分钟后提醒我喝水」「每天 8:30 提醒我站会」即可创建；触发时宠物会跳出来播报，支持稍后 5 分钟。提醒由主进程调度器驱动。</div>
           <details class="adv">
             <summary data-i18n="adv.title">实验性增强（默认关闭，不属于宠物核心能力）</summary>
@@ -435,7 +440,7 @@ body { background: var(--bg); display: flex; flex-direction: column; }
             <li data-i18n="n220.i1">单实例运行：重复启动只唤起已有宠物，不再产生第二套托盘与提醒调度器</li>
             <li data-i18n="n220.i2">首次启动引导：三步完成模型选择、密钥填写与隐私告知，可跳过并随时重新打开</li>
             <li data-i18n="n220.i3">渲染层启用内容安全策略（CSP）：禁止内联脚本、插件与内嵌框架，仅允许本地资源与 IPC</li>
-            <li data-i18n="n220.i4">硬件加速开关、日志轮转、备份恢复与会话批量管理仍在后续里程碑</li>
+            <li data-i18n="n220.i4">硬件加速开关、日志轮转、备份恢复与会话批量管理已在后续版本补齐；无障碍、安全模式与自动清理仍在后续里程碑</li>
           </ul>
         </details>
         <details>
@@ -1041,6 +1046,8 @@ function renderPetTab() {
   $id('waterMin').value = hs.waterMin ?? 45;
   $id('clipWatch').checked = !!S.settings.clipboardWatch;
   if ($id('reminderSound')) $id('reminderSound').checked = S.settings.reminderSound !== false;
+  $id('reminderCatchUpChk').checked = S.settings.reminderCatchUp !== false;
+  $id('reminderCatchUpMin').value = S.settings.reminderCatchUpMin ?? 1440;
   const em = document.querySelector('input[name=enterMode][value="' + (S.settings.enterSend !== false ? 1 : 0) + '"]');
   if (em) em.checked = true;
   $id('newPerClick').checked = !!S.settings.newSessionPerClick;
@@ -2376,6 +2383,12 @@ $id('reminderSound').addEventListener('change', e => {
   S.settings.reminderSound = e.target.checked;
   saveState();
 });
+['reminderCatchUpChk', 'reminderCatchUpMin'].forEach(k => $id(k).addEventListener('change', () => {
+  S.settings.reminderCatchUp = $id('reminderCatchUpChk').checked;
+  S.settings.reminderCatchUpMin = Math.round(clampNum($id('reminderCatchUpMin').value, 1, 10080, 1440));
+  $id('reminderCatchUpMin').value = S.settings.reminderCatchUpMin;
+  saveState();
+}));
 $id('disableGpuChk').addEventListener('change', e => {
   S.settings.disableGpu = e.target.checked;
   saveState();
@@ -2784,7 +2797,8 @@ $id('impConfigFile').addEventListener('change', e => {
       });
       const st = j.settings || {};
       ['petScale', 'skin', 'clickThrough', 'lowFps', 'disableGpu', 'bubbleW', 'bubbleIdleClose', 'enterSend',
-        'newSessionPerClick', 'showInTaskbar', 'alwaysOnTop', 'chatter', 'dnd',
+        'newSessionPerClick', 'showInTaskbar', 'alwaysOnTop', 'chatter', 'dnd', 'reminderSound',
+        'reminderCatchUp', 'reminderCatchUpMin',
         'summaryThreshold', 'voice', 'voiceURI', 'voiceRate'].forEach(k => {
         if (st[k] !== undefined) S.settings[k] = st[k];
       });
@@ -2792,6 +2806,8 @@ $id('impConfigFile').addEventListener('change', e => {
       S.settings.bubbleW = clampNum(S.settings.bubbleW, 240, 480, 340);
       S.settings.summaryThreshold = Math.round(clampNum(S.settings.summaryThreshold, 4, 100, 24));
       S.settings.voiceRate = clampNum(S.settings.voiceRate, 0.5, 2, 1);
+      S.settings.reminderCatchUp = S.settings.reminderCatchUp !== false;
+      S.settings.reminderCatchUpMin = Math.round(clampNum(S.settings.reminderCatchUpMin, 1, 10080, 1440));
       if (!SKINS[S.settings.skin]) S.settings.skin = 'blue';
       if (st.customSkin !== undefined) {
         const cs = st.customSkin;

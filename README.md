@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.3.4-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.3.5-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -48,13 +48,14 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | 🧭 **供应商回退** | 配置好真实供应商后，即使历史会话仍记着演示模式，也会自动切到真实模型；设置 → 模型顶部直接显示「当前生效」的供应商与模型 |
 | 🪶 **轻量** | 主程序约 15 MB · 前端源码约 260 KB 且零构建（无 npm 依赖）；工作 / 睡眠状态可开启 30fps 低帧率模式 |
 | ⚙️ **显卡兼容** | 设置可关闭硬件加速；下次启动以 `--disable-gpu` 运行 WebView2，缓解部分驱动导致的闪烁 / 黑屏；默认保持加速，取消勾选并重启即可恢复 |
+| ⏰ **提醒可靠** | 重启 / 休眠恢复后错过的提醒最多补发一次；默认只补 24 小时内的提醒，可配置上限或关闭，不重复打扰 |
 
 ## 🚀 快速开始
 
 无需构建，下载即用：
 
 1. 打开本仓库 [`dist/`](dist) 目录，下载两个文件：
-   - `DeskPet.exe`（15.4 MB，主程序 v2.3.4）
+   - `DeskPet.exe`（15.4 MB，主程序 v2.3.5）
    - `WebView2Loader.dll`（0.15 MB，引导库）
 2. 将两个文件放入**同一文件夹**，双击 `DeskPet.exe`
 
@@ -189,6 +190,19 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.3.5</b> — 提醒补发策略</summary>
+
+- **补发一次（FR-REM-008）**：重启或休眠恢复后，错过的同一提醒最多播报一次，不会重复打扰。
+- **明确上限**：默认只补发 24 小时内的提醒，可配置 1–10080 分钟；超过上限的提醒跳过，重复提醒顺延、一次性提醒移除。
+- **可关闭**：设置 → 提醒与免打扰新增「错过提醒后补发一次」开关与上限输入。
+- **时区 / DST**：按绝对时间锚定，不重复触发；跨 DST 的每日 / 每周提醒墙体时间最多偏移 1 小时。
+- **诊断**：新增 `reminder.skipped` / `reminder.resume_gap` 日志，只记录条数与秒数，不含提醒正文。
+- **文档**：新增 [`docs/提醒补发策略.md`](docs/提醒补发策略.md)。
+- **测试**：`cargo test` 84 passed。详见 [`docs/releases/v2.3.5.md`](docs/releases/v2.3.5.md)。
+
+</details>
+
+<details>
 <summary><b>v2.3.4</b> — 硬件加速开关与显卡兼容回退</summary>
 
 - **关闭硬件加速（NFR-INT-006）**：设置 → 宠物与交互新增开关，默认关闭；下次启动为 WebView2 追加 `--disable-gpu`，用于缓解部分显卡驱动导致的闪烁、黑屏或透明区域花屏。
