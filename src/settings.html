@@ -232,7 +232,11 @@ body { background: var(--bg); display: flex; flex-direction: column; }
           <div class="inline-opts" style="margin-top:9px">
             <label data-i18n="s73"><input type="checkbox" id="lowFpsChk"> 低帧率模式：非交互状态（工作 / 睡眠）限制为 30fps（FR-PET-010）</label>
           </div>
+          <div class="inline-opts" style="margin-top:9px">
+            <label data-i18n="s179"><input type="checkbox" id="disableGpuChk"> 关闭硬件加速（显卡驱动异常或界面闪烁时使用，下次启动生效，FR-INT-006）</label>
+          </div>
           <div class="fnote" data-i18n="s74">默认置顶且不占用任务栏；关闭置顶后宠物位于普通窗口层级，可能被其他窗口遮挡。低帧率模式通过离散化动画步进降低 CPU 占用，不影响交互反馈。</div>
+          <div class="fnote" data-i18n="s180">开启后会在下次启动时为 WebView2 追加 --disable-gpu，可缓解部分显卡驱动导致的闪烁或黑屏；代价是滚动与动画更依赖 CPU。关闭开关并重启即可恢复。</div>
         </div>
         <div class="sec">
           <h4 data-i18n="s75">气泡与输入</h4>
@@ -1015,6 +1019,7 @@ function renderPetTab() {
   $id('topMost').checked = S.settings.alwaysOnTop !== false;
   $id('taskbarChk').checked = !!S.settings.showInTaskbar;
   $id('lowFpsChk').checked = S.settings.lowFps !== false;
+  $id('disableGpuChk').checked = S.settings.disableGpu === true;
   $id('voiceChk').checked = !!S.settings.voice;
   $id('voiceRate').value = clampNum(S.settings.voiceRate, 0.5, 2, 1);
   $id('voiceRateVal').textContent = (parseFloat($id('voiceRate').value) || 1).toFixed(1);
@@ -2371,6 +2376,11 @@ $id('reminderSound').addEventListener('change', e => {
   S.settings.reminderSound = e.target.checked;
   saveState();
 });
+$id('disableGpuChk').addEventListener('change', e => {
+  S.settings.disableGpu = e.target.checked;
+  saveState();
+  toast(t('perf.gpuRestart'), 'ok');
+});
 $id('clipWatch').addEventListener('change', e => {
   S.settings.clipboardWatch = e.target.checked;
   saveState();
@@ -2773,7 +2783,7 @@ $id('impConfigFile').addEventListener('change', e => {
         n++;
       });
       const st = j.settings || {};
-      ['petScale', 'skin', 'clickThrough', 'lowFps', 'bubbleW', 'bubbleIdleClose', 'enterSend',
+      ['petScale', 'skin', 'clickThrough', 'lowFps', 'disableGpu', 'bubbleW', 'bubbleIdleClose', 'enterSend',
         'newSessionPerClick', 'showInTaskbar', 'alwaysOnTop', 'chatter', 'dnd',
         'summaryThreshold', 'voice', 'voiceURI', 'voiceRate'].forEach(k => {
         if (st[k] !== undefined) S.settings[k] = st[k];

@@ -4,7 +4,7 @@
 
 **桌面上养一只 AI 小猫：点击它，就能和任何大模型聊天。**
 
-[![Version](https://img.shields.io/badge/version-2.3.3-3D7FE0?style=flat-square)](#版本历史)
+[![Version](https://img.shields.io/badge/version-2.3.4-3D7FE0?style=flat-square)](#版本历史)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-0078D4?style=flat-square&logo=windows)](#快速开始)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square)](https://v2.tauri.app)
 [![License: MIT](https://img.shields.io/badge/license-MIT-34B37F?style=flat-square)](LICENSE)
@@ -46,14 +46,15 @@ DeskPet 是一款基于 **Tauri v2** 的 Windows 桌面宠物应用：一只透�
 | 🔊 **语音朗读** | AI 回复可自动朗读或逐条重读，支持系统语音选择与 0.5–2 倍语速；本地 TTS，零网络请求 |
 | 🌏 **中英双语** | 设置页、气泡与宠物右键菜单的界面文案即时切换中文 / English；人格名称、模型名与皮肤名等「内容数据」保持原文，不做翻译 |
 | 🧭 **供应商回退** | 配置好真实供应商后，即使历史会话仍记着演示模式，也会自动切到真实模型；设置 → 模型顶部直接显示「当前生效」的供应商与模型 |
-| 🪶 **轻量** | 主程序约 14 MB · 前端源码约 260 KB 且零构建（无 npm 依赖）；工作 / 睡眠状态可开启 30fps 低帧率模式 |
+| 🪶 **轻量** | 主程序约 15 MB · 前端源码约 260 KB 且零构建（无 npm 依赖）；工作 / 睡眠状态可开启 30fps 低帧率模式 |
+| ⚙️ **显卡兼容** | 设置可关闭硬件加速；下次启动以 `--disable-gpu` 运行 WebView2，缓解部分驱动导致的闪烁 / 黑屏；默认保持加速，取消勾选并重启即可恢复 |
 
 ## 🚀 快速开始
 
 无需构建，下载即用：
 
 1. 打开本仓库 [`dist/`](dist) 目录，下载两个文件：
-   - `DeskPet.exe`（15.4 MB，主程序 v2.3.3）
+   - `DeskPet.exe`（15.4 MB，主程序 v2.3.4）
    - `WebView2Loader.dll`（0.15 MB，引导库）
 2. 将两个文件放入**同一文件夹**，双击 `DeskPet.exe`
 
@@ -188,6 +189,17 @@ cargo build --release --target x86_64-pc-windows-gnu --manifest-path src-tauri/C
 ## 📋 版本历史
 
 <details open>
+<summary><b>v2.3.4</b> — 硬件加速开关与显卡兼容回退</summary>
+
+- **关闭硬件加速（NFR-INT-006）**：设置 → 宠物与交互新增开关，默认关闭；下次启动为 WebView2 追加 `--disable-gpu`，用于缓解部分显卡驱动导致的闪烁、黑屏或透明区域花屏。
+- **安全合并参数**：保留已有 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`，不覆盖、不重复追加；取消勾选并重启即恢复硬件加速。
+- **诊断**：启用时写 `perf.gpu_disabled` 日志；不产生网络请求，不读取硬件型号。
+- **文档**：新增 [`docs/硬件加速与显卡兼容.md`](docs/硬件加速与显卡兼容.md)。
+- **测试**：`cargo test` 82 passed；`cargo build --release` 通过。详见 [`docs/releases/v2.3.4.md`](docs/releases/v2.3.4.md)。
+
+</details>
+
+<details>
 <summary><b>v2.3.3</b> — 更新包 SHA-256 与 Ed25519 校验</summary>
 
 - **更新完整性（NFR-SEC-004）**：下载安装包后先比对 SHA-256，再用编译期内置的 Ed25519 公钥验签；任一缺失或失败都拒绝保存，只写 `update.verify_failed` 诊断日志。应用仍只下载、不静默安装。

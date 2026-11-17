@@ -100,6 +100,7 @@ const DEFAULT_STATE: &str = r##"{
     "petScale": 1, "skin": "blue", "petPos": null, "clickThrough": false, "lowFps": true,
     "bubbleW": 340, "bubbleIdleClose": 60, "enterSend": true, "newSessionPerClick": false,
     "showInTaskbar": false, "alwaysOnTop": true,
+    "disableGpu": false,
     "chatter": "off", "chatterStart": "09:00", "chatterEnd": "22:00",
     "context": {"enabled": false, "time": true, "idle": true},
     "health": {"enabled": false, "sitMin": 60, "waterMin": 45},
@@ -3769,10 +3770,10 @@ fn merge_state_snapshot(st: &mut Value, state: Value, origin: &str) {
     } else {
         [
             "petScale", "clickThrough", "dnd", "bubbleW", "showInTaskbar", "alwaysOnTop",
-            "bubbleIdleClose", "chatter", "enterSend", "newSessionPerClick", "lowFps", "customSkin",
-            "summaryThreshold", "voice", "voiceURI", "voiceRate", "reminderSound", "health",
-            "clipboardWatch", "context", "toolSettings", "updateUrl", "updateAuto", "lang", "dndStart",
-            "dndEnd", "skinPack", "skins", "activeSkin",
+            "bubbleIdleClose", "chatter", "enterSend", "newSessionPerClick", "lowFps", "disableGpu",
+            "customSkin", "summaryThreshold", "voice", "voiceURI", "voiceRate", "reminderSound",
+            "health", "clipboardWatch", "context", "toolSettings", "updateUrl", "updateAuto", "lang",
+            "dndStart", "dndEnd", "skinPack", "skins", "activeSkin",
         ]
         .iter()
         .filter(|k| !st["settings"][*k].is_null())
@@ -6766,6 +6767,41 @@ fn report_boot_failure(msg: &str) {
 
 // ================= 入口 =================
 
+// NFR-INT-006：硬件加速开关必须在 WebView2 创建前生效，因此要在 Tauri Builder 之前
+// 读取 data.json。这里只读单个布尔值，不解析 / 迁移 / 写回数据，避免影响正常启动流程。
+static GPU_DISABLED_AT_BOOT: AtomicBool = AtomicBool::new(false);
+
+fn disable_gpu_from_state(v: &Value) -> bool {
+    v["settings"]["disableGpu"].as_bool().unwrap_or(false)
+}
+
+fn merge_webview_args(existing: &str, disable_gpu: bool) -> String {
+    let mut args: Vec<&str> = existing.split_whitespace().collect();
+    if disable_gpu && !args.iter().any(|a| *a == "--disable-gpu") {
+        args.push("--disable-gpu");
+    }
+    args.join(" ")
+}
+
+/// 在 WebView2 初始化前注入 `--disable-gpu`。保留用户 / 系统已有的浏览器参数，
+/// 重复启动也不会叠加；关闭开关后下次启动不再注入。
+fn apply_gpu_preference() {
+    let Some(appdata) = std::env::var_os("APPDATA") else { return };
+    let path = std::path::PathBuf::from(appdata)
+        .join("com.mrtransition.deskpet")
+        .join("data.json");
+    let Ok(text) = std::fs::read_to_string(path) else { return };
+    let Ok(v) = serde_json::from_str::<Value>(&text) else { return };
+    let disabled = disable_gpu_from_state(&v);
+    GPU_DISABLED_AT_BOOT.store(disabled, Ordering::Relaxed);
+    let existing = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+    let merged = merge_webview_args(&existing, disabled);
+    if merged != existing {
+        // 安全：仅拼接固定的 --disable-gpu，不接收外部字符串作为参数。
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", merged);
+    }
+}
+
 fn main() {
     // FR-SYS-007：已有实例时只通知对方并退出，绝不初始化第二套 Tauri 运行时
     #[cfg(windows)]
@@ -6775,6 +6811,9 @@ fn main() {
         // 显式退出码 0：重复启动是正常行为，不应被脚本 / 安装器当成失败
         std::process::exit(0);
     }
+
+    // NFR-INT-006：必须在任何 WebView2 窗口创建之前执行
+    apply_gpu_preference();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -7039,6 +7078,14 @@ fn main() {
             }
 
             migrate_legacy_log(app.handle());
+            if GPU_DISABLED_AT_BOOT.load(Ordering::Relaxed) {
+                log_event(
+                    app.handle(),
+                    "info",
+                    "perf.gpu_disabled",
+                    "已按用户设置以 --disable-gpu 启动 WebView2（NFR-INT-006）",
+                );
+            }
             log_event(app.handle(), "info", "app.started", "DeskPet 桌面版启动完成");
             Ok(())
         })
@@ -7249,6 +7296,22 @@ mod tests {
             assert!(
                 verify_update_signature(&msg, sig).is_ok(),
                 "内置发布公钥应能验证已知签名"
+            );
+        }
+
+        // NFR-INT-006：硬件加速开关默认关闭“禁用 GPU”，且能正确合并 WebView2 参数
+        #[test]
+        fn gpu_preference_defaults_off_and_merges_args() {
+            assert!(!disable_gpu_from_state(&default_state()));
+            assert!(disable_gpu_from_state(&json!({"settings": {"disableGpu": true}})));
+            assert_eq!(merge_webview_args("", false), "");
+            assert_eq!(merge_webview_args("--foo", false), "--foo");
+            assert_eq!(merge_webview_args("", true), "--disable-gpu");
+            assert_eq!(merge_webview_args("--foo", true), "--foo --disable-gpu");
+            assert_eq!(
+                merge_webview_args("--foo --disable-gpu", true),
+                "--foo --disable-gpu",
+                "重复启动或旧环境变量已存在时不得叠加参数"
             );
         }
 
